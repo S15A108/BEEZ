@@ -75,11 +75,14 @@ class Settings(BaseSettings):
 
     # Provisional #135 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133 and #134.
-    # Document review (AI-A10) model-call limit. BE's read limit (55s) and nginx (60s)
-    # must stay longer than this value (S15P31A108-382). Parsed per request.
-    # A 6,800-character API spec took 31-38 s, beyond the first 30 s default
-    # (S15P31A108-383); app.services.document_review.DEFAULT_TIMEOUT_SECONDS.
-    document_review_llm_timeout_seconds: str = "50"
+    # Document review (AI-A10) model-call limits, parsed per request (0 < value <= 120).
+    # Review/RERUN is called by the BE worker outside any HTTP request; the BE worker
+    # read limit (DOCUMENT_REVIEW_WORKER_READ_TIMEOUT, 120s) must stay longer (S15P31A108-391).
+    # A 6,800-character API spec took 31-38 s and a RERUN 40 s (S15P31A108-383).
+    document_review_llm_timeout_seconds: str = "110"
+    # DISCUSS/REQUEST is still answered inside the user's request: keep it below the BE
+    # chat read limit (DOCUMENT_REVIEW_READ_TIMEOUT, 55s) and nginx /api/ (60s).
+    document_review_chat_llm_timeout_seconds: str = "50"
 
     bee_chat_enabled: bool = False
     bee_chat_max_body_bytes: str = "2097152"

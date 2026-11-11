@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import * as schemas from '@/features/documents/schemas'
 import {
+  beeReviewRequestSchema,
   documentBeeReviewSchema,
   documentReviewSubmissionDetailSchema,
   documentReviewSubmissionSchema,
@@ -223,6 +224,8 @@ const service = {
       },
       options,
     ),
+  // 새 검토는 접수(202)되면 요청 상태(RUNNING)를, 같은 키로 이미 끝난 검토는 201로 검토 결과를 돌려준다.
+  // 검토 결과에는 id가 있고 요청 상태에는 없어서 모양으로 가른다. 받는 쪽은 'id' in 결과로 구분한다(S15P31A108-391).
   requestBeeReview: (
     projectId: string,
     documentId: string,
@@ -230,7 +233,7 @@ const service = {
     options?: RequestOptions,
   ) =>
     callEndpoint(
-      documentBeeReviewSchema,
+      z.union([documentBeeReviewSchema, beeReviewRequestSchema]),
       {
         method: 'POST',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/bee-reviews`,

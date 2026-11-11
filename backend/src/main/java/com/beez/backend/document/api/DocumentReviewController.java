@@ -52,13 +52,17 @@ public class DocumentReviewController {
     }
 
     @PostMapping("/documents/{documentId}/bee-reviews")
-    @Operation(summary = "비비 문서 검토 요청·결과 수신")
-    @ResponseStatus(HttpStatus.CREATED)
-    public DocumentBeeReviewResponse review(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+    @Operation(summary = "비비 문서 검토 접수",
+            description = "검토는 서버 워커가 한다. 접수했거나 아직 도는 중이면 202 와 요청 상태(작업본의 bee_review_request 와 같은 모양), "
+                    + "같은 키로 이미 끝난 검토면 201 과 검토 결과를 돌려준다(S15P31A108-391).")
+    public org.springframework.http.ResponseEntity<Object> review(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
             @PathVariable long documentId, @Valid @RequestBody DocumentReviewRequest input,
             @RequestHeader("Idempotency-Key") String key) {
         origins.requireTrustedOrigin(request);
-        return reviews.review(caller, projectId, documentId, input.expectedRevision(), key);
+        var accepted = reviews.review(caller, projectId, documentId, input.expectedRevision(), key);
+        return accepted.review() != null
+                ? org.springframework.http.ResponseEntity.status(HttpStatus.CREATED).body(accepted.review())
+                : org.springframework.http.ResponseEntity.status(HttpStatus.ACCEPTED).body(accepted.request());
     }
 
     @PatchMapping("/documents/{documentId}/bee-reviews/{reviewId}/suggestions/{suggestionId}")

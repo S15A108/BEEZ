@@ -120,7 +120,7 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
 
     long pid() { return project.projectId(); }
     DocumentWorkingCopyResponse copy() { return reviews.get(author, pid(), document); }
-    DocumentBeeReviewResponse review() { return reviews.review(author, pid(), document, copy().revision(), UUID.randomUUID().toString()); }
+    DocumentBeeReviewResponse review() { return reviewNow(author, pid(), document, copy().revision(), UUID.randomUUID().toString()); }
     long id(String value) { return Long.parseLong(value); }
     String key() { return UUID.randomUUID().toString(); }
     void code(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String code) {
@@ -187,7 +187,7 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
         code(() -> chat.discuss(author, pid(), document, id(review.id()), suggestion + 999, new MessageRequest("말"), key()), "not_found");
         // 다른 문서의 검토·제안
         long second = upload("# 다른 계획\n로그인한다.\n", DocumentKind.API_SPEC);
-        var secondReview = reviews.review(author, pid(), second, 1, key());
+        var secondReview = reviewNow(author, pid(), second, 1, key());
         code(() -> chat.discuss(author, pid(), document, id(secondReview.id()), id(secondReview.suggestions().getFirst().id()), new MessageRequest("말"), key()), "not_found");
         code(() -> chat.discuss(author, pid(), document, id(review.id()), id(secondReview.suggestions().getFirst().id()), new MessageRequest("말"), key()), "not_found");
         assertThat(messageCount()).isZero();
@@ -431,7 +431,7 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
         var first = submitted();
         reviews.withdraw(author, pid(), document, id(first.id()), key());
         reviews.edit(author, pid(), document, new WorkingCopyUpdateRequest(2, "# 계획\n로그인한다.\n표시한다.\n수정했다.\n", "plan.md"));
-        var next = reviews.review(author, pid(), document, 3, key());
+        var next = reviewNow(author, pid(), document, 3, key());
         reviews.decideSuggestion(author, pid(), document, id(next.id()), id(next.suggestions().getFirst().id()), new SuggestionDecisionRequest(3, "SKIP"));
         var second = reviews.submit(author, pid(), document, new DocumentSubmissionRequest(3, next.id()), key());
         assertThat(second.id()).isNotEqualTo(first.id());
@@ -519,5 +519,11 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
         var withdraw = api.post(base + "/review-submissions/" + submission.id() + "/withdraw", "{}", "Origin", ORIGIN, "Idempotency-Key", "h4");
         assertThat(withdraw.statusCode()).isEqualTo(200);
         assertThat(JSON.readTree(withdraw.body()).get("status").asString()).isEqualTo("EDITING");
+    }
+
+    /** 접수 + 워커 처리(S15P31A108-391). 동기 호출이던 때와 같은 결과·오류 코드를 돌려준다. */
+    com.beez.backend.document.dto.DocumentBeeReviewResponse reviewNow(com.beez.backend.common.auth.CallerContext caller,
+            long projectId, long documentId, long revision, String key) {
+        return com.beez.backend.document.support.DocumentReviewFixtures.reviewNow(reviews, jdbc, caller, projectId, documentId, revision, key);
     }
 }

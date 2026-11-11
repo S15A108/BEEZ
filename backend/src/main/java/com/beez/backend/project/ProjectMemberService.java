@@ -1,5 +1,6 @@
 package com.beez.backend.project;
 
+import com.beez.backend.presence.PresenceStore;
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
 import com.beez.backend.agenttoken.AgentTokenRepository;
@@ -52,11 +53,12 @@ public class ProjectMemberService {
     private final InvitationService invitations;
     private final ProjectActivities activities;
     private final EntityManager em;
+    private final PresenceStore presence;
 
     public ProjectMemberService(ProjectAccessChecker access, ProjectService projectService,
                                 ProjectMemberRepository members, AccountRepository accounts, AgentTokenRepository tokens,
                                 TaskHandoverService handover, InvitationService invitations, ProjectActivities activities,
-                                EntityManager em) {
+                                EntityManager em, PresenceStore presence) {
         this.access = access;
         this.projectService = projectService;
         this.members = members;
@@ -66,6 +68,7 @@ public class ProjectMemberService {
         this.invitations = invitations;
         this.activities = activities;
         this.em = em;
+        this.presence = presence;
     }
 
     /** MEM-A06. 활성 팀원만, id 내림차순 커서. 에이전트 연결 여부는 페이지 단위로 한 번에 읽는다. */
@@ -231,6 +234,7 @@ public class ProjectMemberService {
         members.saveAndFlush(member);
         activities.membershipEnded(caller, member, reason);
         tokens.revokeAllOfMember(projectId, member.getAccountId(), now);
+        presence.removeMemberAfterCommit(projectId, member.getId());   // MON-A06 위치 정보 정리 (커밋 뒤)
     }
 
     // ------------------------------------------------------------------

@@ -118,7 +118,7 @@ class DocumentReviewRealGmsE2ETest extends IntegrationTestSupport {
             jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leaderId, reference);
         }
         // One real GMS call. All supplied text is synthetic.
-        var result = reviews.review(author, projectId, document, 1, "live-gms-e2e");
+        var result = reviewNow(author, projectId, document, 1, "live-gms-e2e");
         assertThat(result.contractVersion()).isEqualTo(2);
         assertThat(result.reviewStatus()).isEqualTo("COMPLETE");
         assertThat(result.unavailableReferences()).isEmpty();
@@ -126,5 +126,11 @@ class DocumentReviewRealGmsE2ETest extends IntegrationTestSupport {
         assertThat(result.references()).hasSize(3);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=false", Integer.class, projectId)).isEqualTo(1);
+    }
+
+    /** 접수 + 워커 처리(S15P31A108-391). 동기 호출이던 때와 같은 결과·오류 코드를 돌려준다. */
+    com.beez.backend.document.dto.DocumentBeeReviewResponse reviewNow(com.beez.backend.common.auth.CallerContext caller,
+            long projectId, long documentId, long revision, String key) {
+        return com.beez.backend.document.support.DocumentReviewFixtures.reviewNow(reviews, jdbc, caller, projectId, documentId, revision, key);
     }
 }

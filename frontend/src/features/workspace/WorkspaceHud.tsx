@@ -41,6 +41,8 @@ import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 import { Button } from '@/components/ui/button'
 import { countText, describeContent, statusLabel } from '@/lib/display'
+import { presenceQuery } from '@/features/presence/presenceQuery'
+import { presenceView } from '@/features/presence/presenceText'
 import { formatAgo, formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -159,6 +161,8 @@ export function WorkspaceHud({
   const isLeader = project.my_role === 'LEADER'
   const started = onboarding.baseline_published
   const statusOf = useAgentStatusOf(project.id)
+  // 팀원 접속 상태(MON-A07). 아직 못 받았거나 서버에 없는 API면 undefined/null 이라 접속 점 없이 보인다.
+  const presence = useQuery(presenceQuery(project.id)).data
   // 집계는 따로 받는다. 하나가 실패해도(dev 백엔드에 작업 집계 API가 아직 없음) 다른 숫자와 시작 안내는 그대로 보인다
   // (PR #72 전수 리뷰 TC-5). 실패한 칸은 0 대신 '—'.
   const documentCounts = useQuery({
@@ -453,7 +457,7 @@ export function WorkspaceHud({
   const chatOpen = pane === 'chat'
   // 팀 목록(SCR-06 수정안 · 팀 현황): 사람마다 지금 하는 일과 연결된 에이전트를 한 줄씩.
   // 비비는 목록에 넣지 않고 단축 바 가운데 버튼으로만 연다(사용자 요청 10-30). 검토·회의 중일 때만 BibiStatusRow가 한 줄 붙는다.
-  // API 없음: 접속 점·위치·마지막 접속(MON-A07 presence, PR #42 요청)과 에이전트가 하는 일(MON-A05 보고)은 계약이 생기면 줄에 붙인다.
+  // 접속 점·위치·마지막 접속은 MON-A07 presence. 에이전트가 하는 일(MON-A05 보고)은 API 없음이라 계약이 생기면 줄에 붙인다.
   const taskOrder = ['IN_PROGRESS', 'WAITING', 'DRAFT', 'READY']
   const taskOf = (memberId: string) =>
     tasks
@@ -476,18 +480,29 @@ export function WorkspaceHud({
       .toSorted((a, b) => Number(b.id === me?.id) - Number(a.id === me?.id))
       .map((member) => {
         const task = taskOf(member.id)
+        const seen = presenceView(
+          presence?.find((item) => item.member_id === member.id),
+        )
         return {
+          online: seen.online,
           key: member.id,
           initial: member.name.slice(0, 1),
           color: member.color,
           name: `${member.name}${member.id === me?.id ? ' · 나' : ''}`,
-          // API 없음: 접속·위치(presence)가 없어 나만 '사무실 내 자리'로 두고, 다른 팀원은 하는 일만 보여 준다.
-          place: member.id === me?.id ? '사무실 내 자리' : undefined,
-          detail: task
-            ? `${task.key} ${taskText[task.status]}`
-            : [member.role === 'LEADER' ? '인간 팀장' : '팀원', member.domain]
-                .filter(Boolean)
-                .join(' · '),
+          // 위치는 presence(MON-A07)에서 온다. 아직 못 받았으면 나만 '사무실 내 자리'로 두고, 다른 팀원은 하는 일만 보여 준다.
+          place:
+            seen.place ??
+            (member.id === me?.id && !presence ? '사무실 내 자리' : undefined),
+          detail: [
+            seen.detail,
+            task
+              ? `${task.key} ${taskText[task.status]}`
+              : [member.role === 'LEADER' ? '인간 팀장' : '팀원', member.domain]
+                  .filter(Boolean)
+                  .join(' · '),
+          ]
+            .filter(Boolean)
+            .join(' · '),
           open: () =>
             task ? openPane('tasks', task.id) : openPane('settings', 'team'),
         }
@@ -506,6 +521,7 @@ export function WorkspaceHud({
         const mine = member.id === me?.id
         return {
           key: `agent:${member.id}`,
+          online: undefined,
           initial: 'AI',
           color: undefined,
           name: `${member.name}의 에이전트`,
@@ -786,15 +802,32 @@ export function WorkspaceHud({
                   onClick={row.open}
                   className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 text-left hover:bg-muted"
                 >
-                  <span
-                    aria-hidden="true"
-                    className="grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold"
-                    style={{
-                      backgroundColor: `${row.color ?? '#8a8378'}26`,
-                      color: row.color ?? '#57534e',
-                    }}
-                  >
-                    {row.initial}
+                  <span className="relative shrink-0">
+                    <span
+                      aria-hidden="true"
+                      className="grid size-7 place-items-center rounded-full text-[11px] font-bold"
+                      style={{
+                        backgroundColor: `${row.color ?? '#8a8378'}26`,
+                        color: row.color ?? '#57534e',
+                      }}
+                    >
+                      {row.initial}
+                    </span>
+                    {row.online !== undefined && (
+                      <>
+                        {/* 접속 점(MON-A07): 접속 중은 초록, 오프라인은 회색 */}
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-background',
+                            row.online ? 'bg-emerald-500' : 'bg-stone-400',
+                          )}
+                        />
+                        <span className="sr-only">
+                          {row.online ? '접속 중' : '오프라인'}
+                        </span>
+                      </>
+                    )}
                   </span>
                   <span className="min-w-0">
                     {/* 이름 13px·줄높이 20px, 위치 등 12px·18px(사용자 요청 11-02) */}

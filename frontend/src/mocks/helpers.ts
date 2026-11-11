@@ -29,6 +29,8 @@ export interface MockContext {
   account?: Account
   member?: Member
   project?: MockProject
+  /** 요청의 Idempotency-Key. 공통 재생을 쓰지 않고 직접 키를 다루는 동작(DOC-A16)만 읽는다(S15P31A108-391). */
+  idempotencyKey?: string
 }
 
 export interface MockReply {
