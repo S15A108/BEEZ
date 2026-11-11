@@ -125,6 +125,8 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 502 | AI·모델 실패 | ai_unavailable, model_unavailable, model_output_truncated(AI 내부, 출력 상한에 끊김), ai_output_too_long(기획 질문·설계 초안 작업 실패 코드. BE 가 위 코드를 이렇게 저장·노출, 재시도 가능) |
 | 503 | 처리 기반 이용 불가 | processing_unavailable |
 | 504 | 분석 시간 초과 | ai_timeout, model_timeout, review_timeout(문서 비비 검토 시간 초과, DOC-A16) |
+| 409 | 작업 계획 문서 초안 | insufficient_documents(승인 문서에서 고른 발췌 없음), draft_in_progress(같은 사람의 호출 진행 중). TSK-A08 |
+| 429 | 작업 계획 문서 초안 호출 제한 | draft_limit_exceeded(시간당 횟수 초과). TSK-A08 |
 
 현재 backend의 공통 오류 응답과 snake_case 설정을 따른다. 신규 업무 code·페이지·문자열 ID는 구현 시 이 계약과 맞춘다. 검증이 NEEDS_INPUT/NEEDS_REVIEW/ERROR로 저장된 경우는 HTTP 전송 실패와 구분한다. 409 뒤에는 최신 리소스를 다시 조회한다.
 

@@ -141,6 +141,7 @@
 - [VAL-A03 작업 검증 이력](#val-a03)
 - [VAL-A04 검증 실행 재시도](#val-a04)
 - [TSK-A07 작업 상태 보고](#tsk-a07)
+- [TSK-A08 작업 계획 문서 초안](#tsk-a08)
 - [CTX-A01 개발 컨텍스트 패킷 조회](#ctx-a01)
 - [CTX-A02 공유 작업 기록 검색](#ctx-a02)
 - [CTX-A03 작업 기록 상세](#ctx-a03)
@@ -11229,6 +11230,141 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - (BE 구현, -269) 작업 완료 검증(작은 범위, 11/5 결정). COMPLETED에 `changed_design_item_ids`(실제로 바꾼 설계 항목)를 실을 수 있다. 서버는 정렬·중복 제거해 완료 보고에 저장하고, 응답 `completion_review`에 계획과의 규칙 대조 결과(범위 이탈 후보·바꾸기로 했는데 보고 안 한 항목·못 채운/확인 안 한 완료 기준·인수인계 기록 유무)를 싣는다. **표시만 한다** — 범위 이탈 후보가 있어도 전이는 위 규칙 그대로다(담당자 확인 전 보류 AC-18안은 하지 않음). delta 있는 COMPLETED의 재전송 판정에 `changed_design_item_ids`도 들어간다(순서는 무관, 보내지 않음과 빈 목록은 다른 보고). AI 분석·설계 일치 검사(보고된 변경 vs 현재 승인 계약)·TRC-07 기록 분리는 이번 범위가 아니다([13-completion-review](../design/13-completion-review.md)).
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
 - (BE 구현, -287) 활동: 상태가 실제로 바뀐 보고만 커밋 직전 같은 트랜잭션에서 남긴다(행위자 = 보고자). 유형은 보고 이름이 아니라 실제 전이로 정한다 — START `TASK_STARTED`, RESUME `TASK_RESUMED`, WAIT `TASK_WAITING`, delta 없는 COMPLETED `TASK_COMPLETED`, delta 있는 COMPLETED `TASK_COMPLETION_REPORTED`(재검증 대기), CANCEL `TASK_CANCELLED`. 키는 `task:{id}:lock:{저장 뒤 lock_version}:{event}`. 멱등 재전송(같은 START·같은 delta 완료 보고·COMPLETED/CANCEL 재전송)은 남기지 않는다. DELTA 검증 통과로 서버가 완료하면(S4) SYSTEM 행위자로 `TASK_COMPLETED`를 한 건 더 남긴다([공통 계약](../design/10-notification-activity-contract.md) 6.2). delta 있는 COMPLETED는 DELTA 검증을 먼저 접수하므로, 그 검증이 규칙만으로 끝나면(NEEDS_INPUT·NEEDS_REVIEW) 같은 요청 안에서 `VALIDATION_FINISHED`(행위자 = 보고자)가 `TASK_COMPLETION_REPORTED`보다 **먼저** 남는다(전이 활동은 커밋 직전에 남기 때문). 타임라인에서 두 활동의 순서에 기대지 않는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="tsk-a08"></a>
+
+## TSK-A08. 작업 계획 문서 초안
+
+### POST `/api/projects/{id}/task-plan-drafts`
+
+승인된 문서 발췌로 작업 계획의 목표·범위·접근 방법·완료 기준 초안과 연결할 설계 항목 후보를 받는다. **저장하지 않는다.** 응답을 화면이 폼의 빈 칸에 채우고, 사람이 확인해 TSK-A01·A04로 저장해야 비로소 계획이 된다.
+
+관련 요구사항: PLN-02·03·06, TSK 계획 작성
+담당: BE: 오서현 / AI: 확인 필요(AI-A14) / FE: 확인 필요
+상태: 구현(S15P31A108-385). AI·BE·FE 계약 합의 전 초안이다. 실제 모델 호출 측정은 AI 실연동 뒤 기록한다.
+
+#### 인증
+
+`MEMBER`(사람). 세션 인증과 역할·소유 조건을 검사한다. 에이전트는 쓸 수 없다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+저장하지 않는 조회성 호출이라 `Idempotency-Key`를 받지 않는다. 호출 횟수와 동시 호출은 아래 규칙으로 막는다.
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `title` | `string` | Y | 작업 제목. 1~200자 |
+| `memo` | `string` | N | 메모. 최대 2000자. 화면은 이미 적은 작업 목표를 보낸다 |
+
+```json
+{
+  "title": "주문 생성 API 만들기",
+  "memo": "결제 연동은 나중에"
+}
+```
+
+#### Response
+
+HTTP `200`. 저장된 것이 없으므로 ID가 없다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `status` | `DRAFTED\|INSUFFICIENT` | Y | `INSUFFICIENT`이면 문서에서 계획 칸을 채울 근거를 찾지 못했다 |
+| `plan` | object | Y | `goal`(string), `included_scope`(string[]), `excluded_scope`(string[]), `approach`(string), `completion_criteria`(string[]). 근거가 없는 칸은 빈 값이다 |
+| `evidence` | object[] | Y | 원문에서 정확히 확인된 인용. `field`(어느 칸의 근거), `document_id`, `document_type`(`PLAN\|REQUIREMENTS\|API_SPEC\|ERD`), `document_version_id`, `version_no`, `location`, `quote` |
+| `unsupported_fields` | string[] | Y | 글은 있지만 확인된 인용이 없는 칸 이름 |
+| `design_ref_candidates` | object[] | Y | 연결 후보. 현재 baseline의 승인 설계 항목만 온다. `design_item_id`, `design_item_version_id`(현재 승인 버전, 저장 때 `design_refs`에 그대로 쓴다), `key`, `kind`, `title`, `reason` |
+| `new_design_item_candidates` | object[] | Y | 문서에는 있으나 승인된 설계 항목에 없는 내용의 신규 항목 제안. `kind`, `content`(DesignItemContent), `rationale`, `evidence[]`(`document_id`, `document_type`, `document_version_id`, `version_no`, `location`, `quote`). **저장하지 않는다.** 화면은 보여 주기만 하고 `unlinked`로 더할 수 있다 |
+| `unlinked` | `{text: string}[]` | Y | 연결할 설계 항목이 없는 내용 |
+| `baseline_id` | `ID` | Y | 초안을 만든 기준 |
+
+```json
+{
+  "status": "DRAFTED",
+  "plan": {
+    "goal": "고객이 고른 메뉴로 주문을 만들고 주문 번호를 돌려주는 API를 만든다.",
+    "included_scope": ["주문 생성 요청 처리", "주문 번호 발급"],
+    "excluded_scope": ["결제 연동", "환불"],
+    "approach": "주문을 저장하고 번호를 발급해 응답한다.",
+    "completion_criteria": ["주문 요청 시 주문 번호가 응답된다"]
+  },
+  "evidence": [
+    {
+      "field": "goal",
+      "document_id": "10",
+      "document_type": "REQUIREMENTS",
+      "document_version_id": "101",
+      "version_no": 2,
+      "location": "요구사항 명세서 · 12~14행",
+      "quote": "메뉴를 고르고 결제하면 주문 번호를 받는다"
+    }
+  ],
+  "unsupported_fields": ["approach"],
+  "design_ref_candidates": [
+    {
+      "design_item_id": "501",
+      "design_item_version_id": "511",
+      "key": "API-04",
+      "kind": "API_CONTRACT",
+      "title": "POST /orders",
+      "reason": "주문 생성 API라서"
+    }
+  ],
+  "new_design_item_candidates": [],
+  "unlinked": [{ "text": "주문 번호 형식은 설계 항목에 없음" }],
+  "baseline_id": "401"
+}
+```
+
+#### 처리 규칙
+
+- 사람이 누를 때만 부른다. 작업 계획 폼의 `문서로 초안 받기`가 이 API의 유일한 호출 경로다. 계획 저장 흐름(TSK-A01·A04)은 바뀌지 않는다.
+- 현재 baseline의 **승인 문서 4종**에서 색인(문서 검색)으로 제목·메모와 가까운 발췌를 고른다. 발췌 한 개가 4,000자를 넘으면 잘라 쓰지 않고 제외하고, 전체 12,000자 안에서 가까운 순으로 쓴다. 승인 설계 항목은 최대 100개를 연결 후보용으로 AI에 보낸다.
+- 연결 후보의 `design_item_id`는 서버가 **현재 baseline의 폐기되지 않은 승인 항목**인지 확인하고, 없으면 버린다. AI가 낸 신규 항목 후보는 `DesignContentValidator`로 내용을 검증해 통과하지 못하면 버리고, 승인된 같은 종류·같은 설명의 항목이 이미 있으면 신규 후보에서 빼고 연결 후보로 돌린다.
+- 인용은 AI가 발췌 원문에서 정확히 확인한 것만 남는다(AI-A14). 확인된 인용이 없는 칸은 `unsupported_fields`에 올라간다.
+- `no_contract_change`는 서버도 AI도 정하지 않는다. 화면에서 사람이 정한다.
+- **비용·시간 가드**: 같은 사람이 같은 프로젝트에서 동시에 한 번만 부를 수 있다(409 `draft_in_progress`). 한 시간에 `beez.task-plan-draft.max-calls-per-hour`(기본 20)번까지 부를 수 있다(429 `draft_limit_exceeded`, `llm_usage`에서 센다).
+- **시간 제한 사슬**: AI 모델 호출 30초(`TASK_PLAN_DRAFTS_LLM_TIMEOUT_SECONDS`) < BE 읽기 40초(`TASK_PLAN_DRAFT_READ_TIMEOUT`) < nginx `/api/` 60초.
+- 사용량은 `llm_usage`에 `BEE_DRAFT`로 기록한다. 성공은 AI가 준 usage, 모델 호출 뒤 실패는 오류 본문의 usage, 본문을 받지 못한 실패는 토큰 수 미확인 한 줄이다.
+
+#### 오류
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 제목이 비었거나 200자 초과, 메모 2000자 초과 |
+| 401 | `unauthenticated` | 비로그인·에이전트 |
+| 404 | `not_found` | 프로젝트 멤버가 아님 |
+| 409 | `baseline_missing` | 기준 v1이 아직 없음 |
+| 409 | `index_not_ready` | 문서 색인이 아직 끝나지 않음 |
+| 409 | `baseline_changed` | 검색 중 기준이 바뀜 |
+| 409 | `insufficient_documents` | 고른 발췌가 없음(승인된 문서 내용을 찾지 못함). AI를 부르지 않는다 |
+| 409 | `draft_in_progress` | 같은 사람의 초안 호출이 진행 중 |
+| 429 | `draft_limit_exceeded` | 시간당 호출 횟수 초과 |
+| 504 | `ai_timeout` | AI 모델 시간 초과 또는 BE 읽기 시간 초과 |
+| 502 | `ai_output_too_long` | AI 출력이 토큰 상한에 끊김(AI `model_output_truncated`, S15P31A108-382) |
+| 502 | `ai_unavailable` | AI 장애·연결 실패·응답 형식 이상 |
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

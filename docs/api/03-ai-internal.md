@@ -2272,3 +2272,87 @@ BE는 권한과 현재 baseline을 확인한 뒤 검색 결과와 명시적 관�
 공개 CTX-A05와 화면에서 위 코드·상태를 사용하는지는 BE·FE 확인이 필요하다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="ai-a14"></a>
+
+## AI-A14. 작업 계획 문서 초안
+
+### POST `/v1/task-plan-drafts`
+
+**상태: AI 내부 계약 구현(S15P31A108-385), 계약 합의 전 초안.** BE가 고른 승인 문서 발췌와 승인 설계 항목으로 작업 계획 칸 초안, 확인된 인용, 연결 후보, 신규 설계 항목 후보를 만든다. 아무것도 저장하거나 승인하지 않는다. 공개 API는 [TSK-A08](01-backend-rest.md#tsk-a08)이다.
+
+관련 요구사항: PLN-02·03·06, TSK 계획 작성
+담당: BE: 오서현 / AI: 확인 필요 / FE: —
+
+#### 인증
+
+`INTERNAL_SERVICE`. 내부 Bearer 토큰으로 인증한다. 외부 사용자 세션이나 에이전트 토큰은 허용하지 않는다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `request_key` | `string` | Y | 호출 추적 키. 사용량 `request_key`에 이 값이 포함된다 |
+| `task` | object | Y | `title`(1~200자), `memo`(선택, 최대 2000자) |
+| `excerpts` | object[] | Y | 1~12개. `excerpt_id`, `document_id`, `document_type`(`PLAN\|REQUIREMENTS\|API_SPEC\|ERD`), `document_version_id`, `version_no`, `location`, `text`(1~4000자, 원문 그대로) |
+| `design_items` | object[] | N | 최대 100개. 현재 baseline의 승인 항목 `design_item_id`, `kind`, `key`, `summary`(최대 300자) |
+
+본문은 알 수 없는 필드를 받지 않는다. 발췌와 항목의 ID는 각각 중복될 수 없다. 본문 최대 크기는 `TASK_PLAN_DRAFTS_MAX_BODY_BYTES`(기본 524,288)다.
+
+#### Response
+
+HTTP `200`. `{result, origin: "MODEL", model, usage[]}`. `result`는 [TSK-A08 응답](01-backend-rest.md#tsk-a08)과 같은 모양이다. 다만 `design_ref_candidates`는 `design_item_id`와 `reason`만 가지며 버전 ID·키·제목은 BE가 채운다.
+
+AI는 모델 출력을 입력에 비춰 확인한다.
+
+- `evidence`·신규 항목의 `evidence`: 발췌 `excerpt_id`가 입력에 있고 `quote`가 그 발췌 `text`에 그대로 들어 있어야 한다. 아니면 버린다. 문서 ID·버전·위치는 발췌에서 가져온다.
+- 계획 칸에 글은 있지만 확인된 인용이 없으면 `unsupported_fields`에 담는다. 글을 지우지는 않는다.
+- `design_ref_candidates`: 입력의 `design_items`에 있는 ID만, 중복 없이 남긴다.
+- `new_design_item_candidates`: `DesignItemContent` 검증(종류별 필수 필드 포함)을 통과하고 확인된 인용이 하나 이상 있어야 한다.
+- 계획 칸이 모두 비어 있으면 `status`는 `INSUFFICIENT`다.
+- 출력은 목표 400자, 접근 방법 600자, 목록 6개·항목당 200자, 인용 8개, 연결 후보 5개, 신규 후보 3개, `unlinked` 5개로 제한한다(입력 3~8천·출력 1천 토큰 목표).
+- **예산을 조금 넘긴 응답은 넘친 부분만 걸러 성공으로 돌려준다.** 설정한 출력 예산(목표·접근 방법 글자 수, 목록 개수·항목 글자 수, 인용 글자 수, 후보 개수)을 넘긴 응답은 글을 중간에서 자르지 않고 전체 항목 단위로만 처리한다. 개수가 넘치면 앞에서부터 예산만큼 남기고, 글자 수가 넘친 목록 항목·인용·후보 이유는 그 항목만 버리고, 글자 수가 넘친 목표·접근 방법은 그 칸을 비운다. 인용은 원문 확인이 목적이라 자르지 않는다. 버려진 인용의 칸은 `unsupported_fields`에 올라간다. 예산을 **2배 넘게**(예산 0·1은 2개 넘게) 어긴 응답은 지시를 따르지 않은 것으로 보고 고치지 않고 `model_unavailable`로 거절한다. 구조·타입·ID·인용 검증은 걸러 낸 뒤에도 그대로 한다. 걸러 낸 개수는 진단 로그(`task_plan_trimmed`)에 항목 이름별로만 남기고 내용은 남기지 않는다.
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 413 | `request_too_large` | 본문 크기 초과 |
+| 415 | `unsupported_media_type` | JSON이 아님 |
+| 422 | `invalid_ai_input` | 발췌·항목 ID 중복 등 업무 구조 모순 |
+| 502 | `model_unavailable` | 모델 호출 실패 또는 출력 계약 위반(실제 사용량은 `failed`로 남김) |
+| 502 | `model_output_truncated` | 모델 답이 출력 토큰 상한에서 끊김(S15P31A108-382) |
+| 503 | `task_plan_drafts_not_configured` | 시간 제한·출력 상한 설정값이 범위를 벗어남 |
+| 504 | `model_timeout` | 모델 시간 초과 |
+
+설정(요청마다 범위를 확인한다): `TASK_PLAN_DRAFTS_LLM_TIMEOUT_SECONDS`(기본 30, 0 초과 120 이하), `TASK_PLAN_DRAFTS_LLM_OUTPUT_TOKEN_LIMIT`(기본 4096, 양의 정수, 공급자 모델 한도 적용), `TASK_PLAN_DRAFTS_LLM_OUTPUT_TOKEN_PARAMETER`(`max_completion_tokens` 또는 `max_tokens`), `TASK_PLAN_DRAFTS_LLM_REASONING_EFFORT`(기본 `low`, 빈 값이면 옵션 생략). 출력 토큰 예산은 내부 추론을 포함한다. 기존 GMS 연결을 사용하며 자동 증액·추가 재호출하지 않는다.
+
+운영 응답 예산은 아래 환경변수로 조정한다. 프롬프트와 응답 검증에 동일하게 적용한다. 상한을 넘긴 응답을 임의로 잘라 성공 처리하지 않는다. API 스키마의 최대 크기는 호환성을 위한 별도 계약으로 유지한다.
+
+| 환경변수 (`TASK_PLAN_DRAFTS_` 접두사) | 기본값 | 허용 범위 |
+| --- | --- | --- |
+| `GOAL_CHARS` | 160 | 1~400 |
+| `APPROACH_CHARS` | 240 | 1~600 |
+| `LIST_ITEMS` | 3 | 1~6 (범위·완료 기준 각각) |
+| `LIST_ENTRY_CHARS` | 100 | 1~200 |
+| `EVIDENCE_ITEMS` | 5 | 0~8 |
+| `QUOTE_CHARS` | 160 | 1~1000 (신규 항목 근거 포함) |
+| `LINK_CANDIDATES` | 3 | 0~5 |
+| `REASON_CHARS` | 100 | 1~200 |
+| `NEW_ITEMS` | 3 | 0~3 |
+| `UNLINKED_ITEMS` | 3 | 0~5 |
+
+BE 입력 예산도 환경변수로 관리한다: `TASK_PLAN_DRAFT_RETRIEVAL_LIMIT`(12, 1~12), `TASK_PLAN_DRAFT_MAX_EXCERPT_CHARS`(4000, 1~4000), `TASK_PLAN_DRAFT_TOTAL_EXCERPT_CHARS`(12000, 단일 발췌 예산 이상), `TASK_PLAN_DRAFT_MAX_DESIGN_ITEMS`(100, 0~100), `TASK_PLAN_DRAFT_DESIGN_SUMMARY_CHARS`(300, 1~300). 문서 발췌는 글자 예산이며 모델 토큰 수와 같지 않다. 계층형 색인 확장은 이번 범위에서 제외한다. 설정 변경 후 해당 서비스를 재시작한다. 로컬 AI는 `ai/.env`, Compose는 실행 시 읽는 환경변수/`--env-file`에서 설정한다.
+
+385 입력 최적화: BE는 검색 점수와 질의 단어 일치로 재정렬하고, 제목만 있는 청크·본문 중복을 제외한다. 단독 Markdown 표는 일치하는 행과 원래 헤더를 보낸다(문장 혼합·의미 검색만 일치하는 표는 유지). `TASK_PLAN_DRAFT_SELECTED_EXCERPTS`(6, 1~12), `TASK_PLAN_DRAFT_SIMILARITY_DROP`(0.15, 0~2: 최상위 유사도와 허용 차이), `TASK_PLAN_DRAFT_LEXICAL_WEIGHT`(0.2, 0~1)를 조정할 수 있다. 질의 단어가 있는 청크는 상대 점수 필터의 예외다. 이는 전체 DB 하이브리드 검색이나 검색 품질 보증이 아닌, 이미 검색된 후보의 로컬 재정렬이다.
+
+승인 설계는 현재 baseline 전체에서 질의 단어·원문에 명시된 키로 관련 항목을 선택하고 확정된 명시 의존을 1단계만 추가한다. 모델 입력 개수 제한과 신규 후보 중복 검사 범위를 분리한다. 원문 인용은 압축된 입력뿐 아니라 BE의 원래 청크에서도 실제 부분 문자열인지 대조한다. 유효한 인용이 사라진 필드는 `unsupported_fields`로 표시하고, 유효 근거 없는 신규 후보는 제외한다.
+
+AI의 `TASK_PLAN_DRAFTS_INPUT_TOKEN_LIMIT`(4096), `TASK_PLAN_DRAFTS_INPUT_RESERVE_TOKENS`(128)는 시스템 지시문·JSON·프레이밍 예비분을 포함한 **오프라인 cl100k 추정 예산**이다. 실제 gpt-6-luna/GMS 청구 토큰과 같음을 보장하지 않는다. 순위가 높은 발췌와 설계를 번갈아 넣고, 넘치는 항목은 통째로 제외한다. 발췌가 하나도 들어가지 않으면 유료 생성 호출 전 422로 종료한다. 원문·인증 정보를 로그에 쓰지 않으며, `task_plan_input`과 `task_plan_completion`의 `call_hash`로 추정 입력량·실제 입출력/추론 토큰·종료 사유·생성 시간을 대조한다. 추론 토큰이 공급자 응답에 없으면 0이 아닌 미확인(`None`)이다. usage API/DB 계약에는 진단 필드를 추가하지 않는다.
+
+사용량 `feature`는 `BEE_DRAFT`다. 문서 발췌는 신뢰할 수 없는 입력이라 모델에 지시가 아닌 데이터로 알린다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
