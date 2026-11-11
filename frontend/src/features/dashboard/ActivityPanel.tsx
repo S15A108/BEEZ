@@ -115,7 +115,7 @@ export function ActivityPanel({
   const statusOf = useAgentStatusOf(projectId)
   const memberName = (memberId: string) =>
     members.data?.items.find((member) => member.id === memberId)?.name ??
-    `팀원 #${memberId}`
+    '알 수 없는 팀원'
   const actorName = (item: Activity) => {
     if (item.actor_type === 'BEE') return '비비'
     if (item.actor_type === 'SYSTEM') return '시스템'
@@ -179,7 +179,8 @@ export function ActivityPanel({
       )
     },
     by_feature: (row) => FEATURE_LABELS[row.key] ?? row.key,
-    by_task: (row) => row.label ?? `작업 #${row.key}`,
+    // 서버는 작업 키를 label로 준다. 없으면 프로젝트에서 그 작업을 찾지 못한 것이다.
+    by_task: (row) => row.label ?? '알 수 없는 작업',
     // 서버가 검증별 줄에 이름(label)을 주지 않는다. 번호 대신 무슨 호출인지만 보인다.
     by_validation: () => '계획 검증',
   }
@@ -326,8 +327,7 @@ export function ActivityPanel({
                                         openPane('tasks', item.current_task_id)
                                       }
                                     >
-                                      {item.task_title ??
-                                        `작업 #${item.current_task_id}`}
+                                      {item.task_title ?? '이름 없는 작업'}
                                     </Button>
                                   ) : (
                                     <span className="text-muted-foreground">

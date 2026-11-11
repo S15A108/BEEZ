@@ -183,7 +183,12 @@ describe('비비 답변 근거', () => {
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('설계 질문'), '질문')
     await user.click(screen.getByRole('button', { name: '보내기' }))
-    expect(await screen.findByText('템플릿 응답')).toBeInTheDocument()
+    expect(
+      await screen.findByText('문서의 원문을 직접 확인해 주세요.'),
+    ).toBeInTheDocument()
+    // 모델 답을 쓰지 못한 응답에는 꼬리표가 없다(오너 결정 11-11). 줄 글자가 '찾은 문서 1개'뿐이다.
+    expect(screen.getByText('찾은 문서 1개')).toBeInTheDocument()
+    expect(screen.queryByText('템플릿 응답')).not.toBeInTheDocument()
     expect(
       screen.getByText('이 답변에서 확인된 근거가 없어요.'),
     ).toBeInTheDocument()

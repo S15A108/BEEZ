@@ -84,7 +84,7 @@ it('연결·대기 작업·통과한 계획을 분리하며 누락 비용을 0�
   expect(within(row).getByText('대기', { exact: true })).toBeInTheDocument()
   expect(within(row).getByText('통과')).toBeInTheDocument()
   expect(within(row).getByText('선행 작업 대기')).toBeInTheDocument()
-  await user.click(within(row).getByRole('button', { name: '작업 #8' }))
+  await user.click(within(row).getByRole('button', { name: '이름 없는 작업' }))
   expect(useWorkspaceStore.getState().focusId).toBe('8')
   expect(useWorkspaceStore.getState().pane).toBe('tasks')
   await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
@@ -544,14 +544,16 @@ describe('활동 타임라인', () => {
     await user.click(
       await screen.findByRole('button', { name: '다음 작업 현황' }),
     )
-    expect(await screen.findByText('팀원 #2')).toBeInTheDocument()
+    expect(await screen.findByText('알 수 없는 팀원')).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
     const filters = screen.getByRole('group', { name: '보기' })
     expect(
       await within(filters).findByRole('button', { name: '민수의 에이전트' }),
     ).toBeInTheDocument()
     expect(
-      within(filters).queryByRole('button', { name: '팀원 #2의 에이전트' }),
+      within(filters).queryByRole('button', {
+        name: '알 수 없는 팀원의 에이전트',
+      }),
     ).not.toBeInTheDocument()
   })
 
@@ -748,7 +750,7 @@ describe('에이전트별 사용량', () => {
     expect(screen.queryByText('기간별 사용량')).not.toBeInTheDocument()
   })
 
-  it('작업별 줄은 서버가 준 작업 키를 쓰고, 없으면 작업 번호를 쓴다', async () => {
+  it('작업별 줄은 서버가 준 작업 키를 쓰고, 없으면 알 수 없는 작업으로 보인다', async () => {
     vi.mocked(dashboardApi.usage).mockResolvedValue(
       usageWith({
         call_count: 3,
@@ -765,7 +767,7 @@ describe('에이전트별 사용량', () => {
       await screen.findByRole('button', { name: 'T-3' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: '작업 #502' }),
+      screen.getByRole('button', { name: '알 수 없는 작업' }),
     ).toBeInTheDocument()
   })
 

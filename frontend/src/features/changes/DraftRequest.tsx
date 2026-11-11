@@ -7,6 +7,7 @@ import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { lineRangeText } from '@/lib/display'
 import { draftRequestFormSchema } from './schemas'
 import type { DraftRequestFormValues, GenerateDraftResponse } from './schemas'
 
@@ -218,7 +219,7 @@ export function DraftRequest({
                       {result.generation.sources.map((source, index) => (
                         <li key={`${source.document_version_id}:${index}`}>
                           {titleOf(source.document_id)} v{source.version_no} ·{' '}
-                          {source.location}
+                          {lineRangeText(source.location)}
                         </li>
                       ))}
                     </ul>

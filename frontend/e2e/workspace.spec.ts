@@ -127,7 +127,10 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
     .getByLabel('설계 질문')
     .fill('로그인 요구사항의 근거는 무엇인가요?')
   await dialog.getByRole('button', { name: '보내기' }).click()
-  await expect(dialog.getByText('템플릿 응답', { exact: true })).toBeVisible()
+  // 예시 환경의 비비 답은 모델 답이 아니라(TEMPLATE) 꼬리표가 없다(오너 결정 11-11).
+  await expect(dialog.getByText(/찾은 문서 \d+개/)).toBeVisible()
+  await expect(dialog.getByText('모델 생성', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByText('템플릿 응답', { exact: true })).toHaveCount(0)
   await expect(dialog.getByRole('log')).toContainText('로그인 요구사항의 근거')
   expect(errors).toEqual([])
   await dialog.getByRole('button', { name: '닫기', exact: true }).click()
@@ -166,7 +169,10 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
   await page.getByRole('button', { name: '대시보드', exact: true }).click()
   const dashboard = page.getByRole('dialog')
   await dashboard.getByRole('tab', { name: '활동 타임라인' }).click()
-  await dashboard.getByRole('button', { name: '변경 요청 #71' }).first().click()
+  await dashboard
+    .getByRole('button', { name: '변경 요청 보기' })
+    .first()
+    .click()
   await expect(
     page.getByRole('region', { name: '발행 후 분석 상태' }),
   ).toContainText('상태 확인 필요')

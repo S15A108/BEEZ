@@ -275,11 +275,10 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                   {message.scope === 'INCLUDE_DRAFTS' && (
                     <Badge variant="outline">초안 포함</Badge>
                   )}
-                  <Badge variant="outline">
-                    {message.answer.origin === 'MODEL'
-                      ? '모델 생성'
-                      : '템플릿 응답'}
-                  </Badge>
+                  {/* 모델 답을 쓰지 못한 응답(TEMPLATE)은 본문이 이미 그렇다고 말해 꼬리표를 붙이지 않는다(오너 결정 11-11). */}
+                  {message.answer.origin === 'MODEL' && (
+                    <Badge variant="outline">모델 생성</Badge>
+                  )}
                 </span>
                 <Button
                   type="button"
