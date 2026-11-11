@@ -158,6 +158,12 @@ Object.assign(messages, {
   candidate_discarded: '이미 폐기한 후보예요. 목록을 새로고침해 주세요.',
   candidate_adopted: '이미 채택한 후보예요. 목록을 새로고침해 주세요.',
   draft_in_progress: '초안을 만드는 중이에요. 끝난 뒤 다시 시도해 주세요.',
+  // S15P31A108-389: 문서에서 후보를 자동으로 만든다. 같은 문서 버전은 한 번만 만들고, 실패해도 정한 횟수까지만 다시 시도한다.
+  draft_already_generated:
+    '이 문서 버전은 이미 후보를 만들었어요. 문서를 고쳐 새 버전을 승인하면 다시 만들 수 있어요.',
+  candidate_duplicate: '이미 같은 설계 항목이 있어요. 이 후보는 폐기해 주세요.',
+  draft_retry_limit_exceeded:
+    '다시 시도할 수 있는 횟수를 다 썼어요. 설계 항목을 직접 추가하거나 문서를 고쳐 새 버전을 승인해 주세요.',
   question_superseded:
     '문서가 다시 분석되어 질문이 바뀌었어요. 목록을 새로고침해 주세요.',
   design_already_published:

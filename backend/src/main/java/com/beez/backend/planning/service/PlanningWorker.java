@@ -17,11 +17,25 @@ public class PlanningWorker {
 
     private final PlanningQuestionGenerator questions;
     private final DesignDraftRunner drafts;
+    private final AutoDraftIntake autoIntake;
     private final boolean enabled;
+    private final boolean autoDraftEnabled;
 
-    public PlanningWorker(PlanningQuestionGenerator questions, DesignDraftRunner drafts,
-                          @Value("${beez.planning.worker-enabled:true}") boolean enabled) {
-        this.questions = questions; this.drafts = drafts; this.enabled = enabled;
+    public PlanningWorker(PlanningQuestionGenerator questions, DesignDraftRunner drafts, AutoDraftIntake autoIntake,
+                          @Value("${beez.planning.worker-enabled:true}") boolean enabled,
+                          @Value("${beez.planning.auto-draft-enabled:false}") boolean autoDraftEnabled) {
+        this.questions = questions; this.drafts = drafts; this.autoIntake = autoIntake; this.enabled = enabled; this.autoDraftEnabled = autoDraftEnabled;
+    }
+
+    /** 승인·색인된 4종 문서에서 후보 생성 작업을 자동 접수한다(S15P31A108-389). 운영에서는 비용을 확인한 뒤 켠다. */
+    @Scheduled(fixedDelayString = "${beez.planning.auto-draft-poll-millis:10000}")
+    public void pollAutoIntake() {
+        if (!enabled || !autoDraftEnabled) return;
+        try {
+            autoIntake.runOnce();
+        } catch (RuntimeException e) {
+            log.error("설계 항목 후보 자동 접수 중 오류가 발생했습니다. 예외 종류={}", e.getClass().getSimpleName());
+        }
     }
 
     @Scheduled(fixedDelayString = "${beez.planning.poll-millis:3000}")

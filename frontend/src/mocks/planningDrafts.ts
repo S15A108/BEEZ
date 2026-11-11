@@ -5,6 +5,7 @@ import type {
 } from '../api/contracts/common'
 import type { DraftCandidate, DraftJob } from '../features/planning/schemas'
 import {
+  MockApiError,
   fail,
   findById,
   mockHash,
@@ -250,10 +251,70 @@ function candidatesFor(
 }
 
 // 작업은 조회할 때마다 PENDING → RUNNING → 결과(COMPLETED/FAILED) 순으로 한 걸음씩 나아간다.
+// 문서에서 뽑는 후보: 부분마다 하나씩(예시). 시나리오 failed 면 마지막 부분이 출력 상한으로 끊긴다.
+function documentCandidates(
+  job: DraftJob,
+  failedPart: boolean,
+): DraftCandidate[] {
+  const kinds = ['REQUIREMENT', 'API_CONTRACT', 'POLICY'] as const
+  const total = job.parts?.total ?? 3
+  return Array.from({ length: failedPart ? total - 1 : total }, (_, index) => {
+    const kind = kinds[index % kinds.length]
+    const after =
+      kind === 'API_CONTRACT'
+        ? {
+            description: `예시 API ${index + 1}`,
+            method: 'GET',
+            path: `/api/example/${index + 1}`,
+          }
+        : { description: `문서에서 뽑은 예시 ${index + 1}` }
+    return {
+      id: `${job.id}${String(index + 1).padStart(2, '0')}`,
+      job_id: job.id,
+      candidate_key: `draft-doc-${job.id}-${index + 1}`,
+      change: 'CREATE' as const,
+      kind,
+      status: 'PENDING' as const,
+      after,
+      changed_fields: [],
+      conflicting_fields: [],
+      sources: [
+        { location: `${index + 1}. 예시 절`, quote: '문서의 한 문장이에요.' },
+      ],
+      answer_refs: [],
+      support: 'DOCUMENT' as const,
+      rationale: '문서에 적혀 있어요.',
+    }
+  })
+}
+
 function advance(context: MockContext, jobs: DraftJob[]) {
   jobs.forEach((job, index) => {
     if (job.status === 'PENDING') job.status = 'RUNNING'
-    else if (job.status === 'RUNNING') {
+    else if (job.status === 'RUNNING' && job.mode === 'DOCUMENT_ONLY') {
+      const total = job.parts?.total ?? 3
+      if (draftScenario() === 'failed') {
+        job.status = 'FAILED'
+        job.error_code = 'ai_output_too_long'
+        job.retryable = true
+        job.parts = {
+          total,
+          completed: total - 1,
+          failed: 1,
+          failed_error_codes: ['ai_output_too_long'],
+        }
+        job.candidates = documentCandidates(job, true)
+      } else {
+        job.status = 'COMPLETED'
+        job.parts = {
+          total,
+          completed: total,
+          failed: 0,
+          failed_error_codes: [],
+        }
+        job.candidates = documentCandidates(job, false)
+      }
+    } else if (job.status === 'RUNNING') {
       if (draftScenario() === 'failed') {
         job.status = 'FAILED'
         job.error_code = 'ai_unavailable'
@@ -414,15 +475,71 @@ export function planningDraftRoutes(
         )
       )
         fail(409, 'draft_in_progress', '초안을 만드는 중이에요.')
-      const jobs: DraftJob[] = versions.map((version) => ({
-        id: nextId(database),
-        document_version_id: version.id,
-        status: 'PENDING',
-        created_at: now(),
-        updated_at: now(),
-        candidates: [],
-      }))
-      project.draft_jobs.push(...jobs)
+      const documentOnly = body.mode === 'DOCUMENT_ONLY'
+      // 문서에서 뽑는 작업: 이미 끝났으면 다시 만들지 않고, 실패했으면 실패한 부분만 다시 돌리며 시도 횟수에 상한이 있다.
+      const retried: DraftJob[] = []
+      if (documentOnly) {
+        for (const version of versions) {
+          const last = project
+            .draft_jobs!.filter(
+              (job) =>
+                job.document_version_id === version.id &&
+                job.mode === 'DOCUMENT_ONLY',
+            )
+            .at(-1)
+          if (!last) continue
+          if (last.status === 'COMPLETED')
+            fail(
+              409,
+              'draft_already_generated',
+              '이 문서 버전은 이미 후보를 만들었어요.',
+            )
+          if ((last.attempt_no ?? 1) >= (last.max_attempts ?? 3))
+            fail(
+              409,
+              'draft_retry_limit_exceeded',
+              '다시 시도할 수 있는 횟수를 다 썼어요.',
+            )
+          last.status = 'PENDING'
+          delete last.error_code
+          last.attempt_no = (last.attempt_no ?? 1) + 1
+          last.updated_at = now()
+          retried.push(last)
+        }
+      }
+      const jobs: DraftJob[] = [
+        ...retried,
+        ...versions
+          .filter(
+            (version) =>
+              !retried.some((job) => job.document_version_id === version.id),
+          )
+          .map((version): DraftJob => ({
+            id: nextId(database),
+            document_version_id: version.id,
+            status: 'PENDING',
+            mode: documentOnly ? 'DOCUMENT_ONLY' : 'WITH_ANSWERS',
+            ...(documentOnly
+              ? {
+                  trigger: 'MANUAL' as const,
+                  attempt_no: 1,
+                  max_attempts: 3,
+                  parts: {
+                    total: 3,
+                    completed: 0,
+                    failed: 0,
+                    failed_error_codes: [],
+                  },
+                }
+              : {}),
+            created_at: now(),
+            updated_at: now(),
+            candidates: [],
+          })),
+      ]
+      project.draft_jobs.push(
+        ...jobs.filter((job) => !project.draft_jobs!.includes(job)),
+      )
       return {
         status: 202,
         data: {
@@ -452,6 +569,50 @@ export function planningDraftRoutes(
           findCandidate(project.draft_jobs!, params.candidate_id),
         ),
       }
+    case 'PLN-A05-ADOPT-BATCH':
+    case 'PLN-A05-DISCARD-BATCH': {
+      const adoptBatch = id === 'PLN-A05-ADOPT-BATCH'
+      const requested = Array.isArray(body.items) ? body.items : []
+      if (!requested.length || requested.length > 50)
+        fail(400, 'validation_failed', 'items는 1~50개여야 해요.')
+      const results = requested.map((raw) => {
+        const entry = raw as Record<string, unknown>
+        const candidateId = String(entry.candidate_id)
+        try {
+          const candidate = findCandidate(project.draft_jobs!, candidateId)
+          if (!adoptBatch) {
+            if (candidate.status === 'ADOPTED')
+              fail(
+                409,
+                'candidate_adopted',
+                '이미 채택한 후보는 폐기할 수 없어요.',
+              )
+            candidate.status = 'DISCARDED'
+            return { candidate_id: candidateId, result: 'DISCARDED' as const }
+          }
+          const adopted = adopt({ ...context, body: entry }, candidate)
+          return {
+            candidate_id: candidateId,
+            result: 'ADOPTED' as const,
+            design_item_version_id: adopted.design_item_version_id,
+          }
+        } catch (cause) {
+          if (!(cause instanceof MockApiError)) throw cause
+          return {
+            candidate_id: candidateId,
+            result: 'FAILED' as const,
+            error_code: cause.code,
+            message: cause.message,
+          }
+        }
+      })
+      const succeeded = results.filter(
+        (result) => result.result !== 'FAILED',
+      ).length
+      return {
+        data: { results, succeeded, failed: results.length - succeeded },
+      }
+    }
     case 'PLN-A05-DISCARD': {
       const candidate = findCandidate(project.draft_jobs!, params.candidate_id)
       if (candidate.status === 'ADOPTED')
