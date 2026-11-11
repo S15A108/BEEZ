@@ -35,5 +35,31 @@ public final class DocumentReviewFixtures {
                 "latency_ms", 1, "failed", false, "tokens_known", false)));
     }
 
+    /**
+     * 검토를 접수하고 워커를 돌려 끝까지 처리한 뒤 결과를 돌려준다(S15P31A108-391). 워커가 실패로 끝내면 남긴 오류 코드로 던져,
+     * 동기 호출이던 때 시험이 보던 오류 코드를 그대로 확인할 수 있게 한다.
+     */
+    public static com.beez.backend.document.dto.DocumentBeeReviewResponse reviewNow(
+            com.beez.backend.document.service.DocumentReviewService reviews, org.springframework.jdbc.core.JdbcTemplate jdbc,
+            com.beez.backend.common.auth.CallerContext caller, long project, long document, long revision, String key) {
+        var accepted = reviews.review(caller, project, document, revision, key);
+        if (accepted.review() != null) return accepted.review();
+        while (reviews.runNextReview()) { /* 접수된 작업을 모두 처리한다 */ }
+        var rows = jdbc.queryForList("SELECT status,error_code FROM document_bee_review_request WHERE document_id=? AND account_id=? AND request_key=?",
+                document, caller.accountId(), key);
+        if (!rows.isEmpty() && "FAILED".equals(rows.getFirst().get("status"))) {
+            String code = rows.getFirst().get("error_code").toString();
+            var status = switch (code) {
+                case "review_timeout" -> org.springframework.http.HttpStatus.GATEWAY_TIMEOUT;
+                case "review_unavailable", "invalid_ai_output" -> org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+                default -> org.springframework.http.HttpStatus.CONFLICT;
+            };
+            throw new com.beez.backend.common.api.ApiException(status, code, "워커가 검토를 실패로 끝냈습니다.");
+        }
+        var done = reviews.review(caller, project, document, revision, key);
+        if (done.review() == null) throw new IllegalStateException("워커를 돌렸는데도 검토가 끝나지 않았습니다: " + done.request());
+        return done.review();
+    }
+
     private DocumentReviewFixtures() { }
 }

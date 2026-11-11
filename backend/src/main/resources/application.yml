@@ -58,7 +58,8 @@ spring:
   task:
     scheduling:
       pool:
-        size: ${SCHEDULING_POOL_SIZE:8}
+        # @Scheduled 메서드 11개(문서 비비 검토 워커 추가, S15P31A108-391) 중 AI 응답을 오래 기다리는 것이 5개라 짧은 정리 작업이 밀리지 않게 10
+        size: ${SCHEDULING_POOL_SIZE:10}
 
   # 종료 단계마다 기다리는 상한. 웹 graceful shutdown 의 진행 중 요청 대기도 이 값이다(기본 30초).
   # 20초로 묶어, 그 뒤 보내던 메일 대기(beez.mail.shutdown-wait, 종료 시작부터 25초)가 최소 5초 남고
@@ -172,13 +173,26 @@ beez:
   # 문서 비비 검토(AI-A10) 전용 읽기 제한 (S15P31A108-382). 사슬: AI 모델 호출 50초 < 이 값 55초 < nginx /api/ 60초(S15P31A108-383).
   # AI 보다 짧으면 AI 는 계속 돌고 BE 만 끊어 비용만 나간다. 공통 ai.read-timeout 보다 짧게 설정해도 공통값이 적용된다
   document-review:
+    # 위 사슬은 이제 제안 대화·직접 요청(DISCUSS·REQUEST)에만 걸린다. 첫 검토·재검토는 워커가 HTTP 요청 밖에서 한다(S15P31A108-391)
     read-timeout: ${DOCUMENT_REVIEW_READ_TIMEOUT:55s}
+    # 검토 워커의 AI 읽기 제한. AI 검토 모델 제한(DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS 110초, 상한 120초)보다 길게 둔다.
+    # 워커 lease 는 이 값 + 1분이라, 정상 처리 중에는 다른 워커가 이어받지 않는다(S15P31A108-391)
+    worker-read-timeout: ${DOCUMENT_REVIEW_WORKER_READ_TIMEOUT:120s}
+    # 검토를 동시에 처리하는 워커 스레드 수. 필수 문서 4종을 연달아 올려도 줄 서지 않게 4(S15P31A108-391)
+    worker-concurrency: ${DOCUMENT_REVIEW_WORKER_CONCURRENCY:4}
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
     # 초대 메일 발송 한도 (Q05 결정 2026-11-09, S15P31A108-334). 초대한 계정마다 MEM-A01 새 초대 + MEM-A11 다시 보내기를 합쳐 센다.
     # 메모리 카운터(재시작하면 초기화). 넘으면 요청 전체 429 rate_limited
     send-limit: ${INVITE_SEND_LIMIT:30}
     send-limit-window: 1h
+  # 팀원 접속 상태·위치 (MON-A06·A07, S15P31A108-386). 프로세스 메모리에 둔다(재시작하면 초기화, 서버 1대 기준).
+  # FE 는 15초마다 보고하고, ttl 은 그 3배다. 보고 한도는 (계정, 프로젝트)마다 센다
+  presence:
+    ttl: ${PRESENCE_TTL:45s}
+    rate-limit: ${PRESENCE_RATE_LIMIT:10}
+    rate-limit-window: 30s
+    retention: ${PRESENCE_RETENTION:24h}              # 마지막 보고 뒤 이 기간이 지나면 마지막 위치도 잊는다
   mail:
     mode: ${MAIL_MODE:log}                         # smtp 면 실제로 보낸다. 로컬·테스트는 log (보내지 않음)
     from: ${MAIL_FROM:BEEZ <no-reply@beez.ai.kr>}

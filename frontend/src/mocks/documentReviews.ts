@@ -15,7 +15,12 @@ import {
 import type { MockContext, MockReply } from './helpers'
 import { analyzeDocument, textOf } from './documents'
 import { copy, nextId, now } from './state'
-import type { MockProject, StoredSubmission, StoredWorkingCopy } from './state'
+import type {
+  MockBeeReviewJob,
+  MockProject,
+  StoredSubmission,
+  StoredWorkingCopy,
+} from './state'
 
 // 문서별 검토·승인(DOC-A13~A21) 브라우저 예시. 비비 검토는 실제 AI를 부르지 않고 규칙으로 보완 제안을 만든다.
 
@@ -117,9 +122,9 @@ function guardAi() {
 }
 
 // 비비 검토 시작(DOC-A16)의 실패 장면 스위치(목 전용). localStorage 'beez.mock.reviewRun' = timeout(504) | unavailable(503).
-// 대화·직접 요청의 스위치(beez.mock.review)와 따로 둔다. 실패한 요청도 작업본에 남겨(서버 bee_review_request 대역)
-// 새로고침·다른 팀원 화면에서 보이게 한다.
-function guardReview(target: StoredWorkingCopy) {
+// 대화·직접 요청의 스위치(beez.mock.review)와 따로 둔다. 서버 워커처럼 접수(202)는 하고, 작업본을 읽을 때 실패로 끝나
+// bee_review_request에 남는다(새로고침·다른 팀원 화면에서도 보인다). 같은 키로 다시 부르면 이 오류를 준다(S15P31A108-391).
+function reviewFailure() {
   let scenario: string | null
   try {
     scenario = localStorage.getItem('beez.mock.reviewRun')
@@ -140,13 +145,48 @@ function guardReview(target: StoredWorkingCopy) {
             message: '비비를 부를 수 없어요.',
           }
         : undefined
-  if (!failure) return
-  target.bee_review_request = {
-    status: 'FAILED',
-    error_code: failure.code,
-    updated_at: now(),
+  return failure
+}
+
+const jobOf = (project: MockProject, documentId: string) =>
+  project.bee_review_jobs?.find((item) => item.document_id === documentId)
+
+// 접수한 검토를 끝낸다(서버 워커 대역). 그 사이 본문을 고쳤으면(리비전이 바뀜) 결과를 버린다(S15P31A108-391).
+function settleReview(project: MockProject, target: StoredWorkingCopy) {
+  const job = jobOf(project, target.document_id)
+  if (!job || job.done) return
+  job.done = true
+  project.running_bee_reviews = (project.running_bee_reviews ?? []).filter(
+    (item) => item.document_id !== target.document_id,
+  )
+  if (job.revision !== target.revision) return
+  if (job.failure) {
+    target.bee_review_request = {
+      status: 'FAILED',
+      error_code: job.failure.code,
+      updated_at: now(),
+    }
+    return
   }
-  fail(failure.status, failure.code, failure.message)
+  target.latest_review = job.review
+  target.bee_review_request = { status: 'COMPLETED', updated_at: now() }
+}
+
+// 같은 키로 다시 부르면 그 작업이 도는 중이면 202, 끝났으면 검토(201)나 그때의 오류를 준다(S15P31A108-391).
+function replayReview(job: MockBeeReviewJob, target: StoredWorkingCopy) {
+  if (!job.done)
+    return {
+      status: 202,
+      data: target.bee_review_request ?? {
+        status: 'RUNNING',
+        updated_at: now(),
+      },
+    }
+  if (job.failure)
+    fail(job.failure.status, job.failure.code, job.failure.message)
+  if (!job.review)
+    fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
+  return { status: 201, data: job.review }
 }
 
 // 대화·직접 요청은 지금 작성 내용의 최신 검토에서만 쓴다(DOC-A22·A23).
@@ -217,8 +257,10 @@ async function editWith(
   target.revision += 1
   target.status = 'EDITING'
   // 직접 고치면 이전 비비 검토는 무효가 되고 새 검토 요청이 생길 때까지 요청 상태도 비어 보인다.
+  // 돌던 검토도 결과를 버린다(서버는 리비전이 바뀌면 결과를 붙이지 않는다, S15P31A108-391).
   delete target.latest_review
   delete target.bee_review_request
+  settleReview(project, target)
   return { data: view(project, target) }
 }
 
@@ -229,8 +271,12 @@ export async function reviewRoutes(
   const project = requireProject(context)
   const { body, params, query, database } = context
   switch (id) {
-    case 'DOC-A13':
-      return { data: view(project, workingCopy(project, params.document_id)) }
+    case 'DOC-A13': {
+      // 접수한 비비 검토는 작업본을 다음에 읽을 때 끝난다(서버 워커 대역, S15P31A108-391).
+      const target = workingCopy(project, params.document_id)
+      settleReview(project, target)
+      return { data: view(project, target) }
+    }
     case 'DOC-A14': {
       const target = workingCopy(project, params.document_id)
       guardOwner(context, project, target, body.expected_revision)
@@ -263,8 +309,22 @@ export async function reviewRoutes(
     }
     case 'DOC-A16': {
       const target = workingCopy(project, params.document_id)
+      const prior = jobOf(project, target.document_id)
+      if (
+        prior &&
+        context.idempotencyKey &&
+        prior.key === context.idempotencyKey
+      )
+        return replayReview(prior, target)
       guardOwner(context, project, target, body.expected_revision)
-      guardReview(target)
+      // 이 리비전의 검토가 이미 돌고 있으면 새로 돌리지 않고 그 상태를 준다.
+      if (
+        target.bee_review_request?.status === 'RUNNING' &&
+        prior &&
+        !prior.done
+      )
+        return { status: 202, data: target.bee_review_request }
+      const failure = reviewFailure()
       const document = findById(project.documents, target.document_id)
       const others = project.documents.filter((item) => item.id !== document.id)
       const approvedFirst = others.find((item) => item.approved_version)
@@ -361,9 +421,28 @@ export async function reviewRoutes(
           ? { rejection_submission_id: rejected.id }
           : {}),
       }
-      target.latest_review = review
-      target.bee_review_request = { status: 'COMPLETED', updated_at: now() }
-      return { status: 201, data: review }
+      // 접수만 하고(202) 결과는 작업본을 다음에 읽을 때 붙인다(S15P31A108-391).
+      const startedAt = now()
+      project.bee_review_jobs = [
+        ...(project.bee_review_jobs ?? []).filter(
+          (item) => item.document_id !== target.document_id,
+        ),
+        {
+          document_id: target.document_id,
+          revision: target.revision,
+          key: context.idempotencyKey,
+          done: false,
+          ...(failure ? { failure } : { review }),
+        },
+      ]
+      project.running_bee_reviews = [
+        ...(project.running_bee_reviews ?? []).filter(
+          (item) => item.document_id !== target.document_id,
+        ),
+        { document_id: target.document_id, started_at: startedAt },
+      ]
+      target.bee_review_request = { status: 'RUNNING', updated_at: startedAt }
+      return { status: 202, data: target.bee_review_request }
     }
     case 'DOC-A17': {
       const target = workingCopy(project, params.document_id)

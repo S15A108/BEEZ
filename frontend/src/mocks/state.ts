@@ -108,9 +108,22 @@ export interface MockProject {
   left_account_ids?: string[]
   /**
    * 실행 중인 비비 문서 검토(서버 document_bee_review_request RUNNING). BEE-A04가 읽는다.
-   * 예시 DOC-A16은 한 요청 안에서 바로 끝나서 평소에는 비어 있다. 검토 중 표시를 보려면 여기에 넣는다.
+   * 예시 DOC-A16은 접수만 하고, 그 문서의 작업본을 다음에 읽을 때 끝난다(S15P31A108-391).
    */
   running_bee_reviews?: { document_id: string; started_at: string }[]
+  /** 접수한 비비 검토(서버 워커 대역, S15P31A108-391). 문서마다 마지막 하나만 둔다. */
+  bee_review_jobs?: MockBeeReviewJob[]
+}
+
+/** 예시 비비 검토 작업. 결과는 접수 때 만들어 두고 작업본을 읽을 때 반영한다. */
+export interface MockBeeReviewJob {
+  document_id: string
+  revision: number
+  /** 접수한 요청의 Idempotency-Key. 같은 키로 다시 부르면 이 작업의 상태·결과를 돌려준다. */
+  key?: string
+  done: boolean
+  review?: DocumentBeeReview
+  failure?: { status: number; code: string; message: string }
 }
 
 export interface MockDatabase {
