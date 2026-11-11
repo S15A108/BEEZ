@@ -283,13 +283,17 @@ class DraftProposer(Protocol):
     ) -> DraftProposal: ...
 
 
-def scope_block_ids(document: SourceDocument, request: DesignDraftRequest) -> frozenset[str] | None:
+def scope_block_ids(
+    document: SourceDocument, request: DesignDraftRequest
+) -> frozenset[str] | None:
     if request.scope is None:
         return None
     return frozenset(
         block.block_id
         for block in document.blocks
-        if request.scope.start_line <= block.locator.start_line <= request.scope.end_line
+        if request.scope.start_line
+        <= block.locator.start_line
+        <= request.scope.end_line
     )
 
 
@@ -395,7 +399,12 @@ class LLMDraftProposer:
             LLMRequest(
                 model=self._model,
                 messages=(
-                    LLMMessage(role="system", content=_SYSTEM_DOCUMENT_ONLY if request.mode == "DOCUMENT_ONLY" else _SYSTEM),
+                    LLMMessage(
+                        role="system",
+                        content=_SYSTEM_DOCUMENT_ONLY
+                        if request.mode == "DOCUMENT_ONLY"
+                        else _SYSTEM,
+                    ),
                     LLMMessage(role="user", content=payload),
                 ),
                 context=self._context,

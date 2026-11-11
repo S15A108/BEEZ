@@ -280,7 +280,10 @@ class DesignDraftRequest(_Strict):
     def consistent(self) -> Self:
         if self.mode == "DOCUMENT_ONLY" and (self.existing_items or self.questions):
             raise ValueError("DOCUMENT_ONLY takes no existing items or questions")
-        if self.scope is not None and self.scope.end_line > self.content.count(chr(10)) + 1:
+        if (
+            self.scope is not None
+            and self.scope.end_line > self.content.count(chr(10)) + 1
+        ):
             raise ValueError("scope outside the document")
         # One version per design item: the BE sends the current DRAFT, or the
         # APPROVED one, never both, so every base item is unambiguous.

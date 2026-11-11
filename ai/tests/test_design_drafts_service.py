@@ -4,7 +4,6 @@ import json
 from hashlib import sha256
 
 import pytest
-
 from pydantic import ValidationError
 
 from app.schemas.design_drafts import MAX_ITEMS, DesignDraftRequest
