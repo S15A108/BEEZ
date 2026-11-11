@@ -951,3 +951,37 @@ describe('에이전트 현황', () => {
     expect(screen.queryByText('나눈 기록 없음')).not.toBeInTheDocument()
   })
 })
+
+// S15P31A108-395: 이름을 못 찾으면 DB 번호(#N) 대신 중립적인 이름을 보인다.
+describe('이름이 없을 때', () => {
+  it('팀원 목록에 없고 이름도 없는 사람 행위자는 알 수 없는 팀원으로 보인다', async () => {
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [activity('1', { actor_account_id: '99' })],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    expect(await screen.findByText('알 수 없는 팀원')).toBeInTheDocument()
+    expect(screen.queryByText(/#99/)).not.toBeInTheDocument()
+  })
+
+  it('사용량의 모르는 에이전트 줄과 검증별 줄에 번호를 붙이지 않는다', async () => {
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 2,
+        currency: 'USD',
+        estimated_cost_amount: '1',
+        by_agent: [bucket('77', 1)],
+        by_validation: [bucket('601', 1)],
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    expect(await screen.findByText('알 수 없는 에이전트')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '검증별' }))
+    expect(await screen.findByText('계획 검증')).toBeInTheDocument()
+    expect(screen.queryByText(/#77|#601/)).not.toBeInTheDocument()
+  })
+})

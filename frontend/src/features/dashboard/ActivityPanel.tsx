@@ -124,7 +124,7 @@ export function ActivityPanel({
     )?.name
     if (item.actor_type === 'AGENT')
       return owner ? `${owner}의 에이전트` : (item.actor_name ?? '에이전트')
-    return owner ?? item.actor_name ?? `회원 #${item.actor_account_id}`
+    return owner ?? item.actor_name ?? '알 수 없는 팀원'
   }
   // 호출이 있는데 에이전트별 줄이 하나도 없으면 서버가 호출자별로 나누지 않은 것이라 0회로 단정하지 않는다.
   const usageUnsplit =
@@ -173,14 +173,15 @@ export function ActivityPanel({
               ? '웹에서 직접'
               : agent
                 ? agentLabel(agent, firstWork.data?.items ?? [], memberName)
-                : (row.label ?? `에이전트 #${row.key}`)}
+                : (row.label ?? '알 수 없는 에이전트')}
           </span>
         </span>
       )
     },
     by_feature: (row) => FEATURE_LABELS[row.key] ?? row.key,
     by_task: (row) => row.label ?? `작업 #${row.key}`,
-    by_validation: (row) => `검증 #${row.key}`,
+    // 서버가 검증별 줄에 이름(label)을 주지 않는다. 번호 대신 무슨 호출인지만 보인다.
+    by_validation: () => '계획 검증',
   }
   if (view === 'relations')
     return <RelationsView projectId={projectId} hasBaseline={hasBaseline} />

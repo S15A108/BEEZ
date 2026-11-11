@@ -2,6 +2,7 @@ import type { Source } from '@/api/contracts/common'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { Button } from '@/components/ui/button'
 import { citationFocus, type CitationTarget } from '@/lib/citationTarget'
+import { lineRangeText } from '@/lib/display'
 
 export function SourceLinks({
   sources,
@@ -35,7 +36,8 @@ export function SourceLinks({
             )
           }
         >
-          문서 {source.document_id} v{source.version_no} · {source.location}
+          문서 {source.document_id} v{source.version_no} ·{' '}
+          {lineRangeText(source.location)}
         </Button>
       ))}
     </div>

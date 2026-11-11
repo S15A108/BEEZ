@@ -546,7 +546,7 @@ export function DashboardOverview({
                       <span className="flex justify-between gap-2 pl-8.5 text-xs text-muted-foreground">
                         <span className="min-w-0 truncate">
                           {agent.current_task_id ? (
-                            `${agent.task_title ?? `작업 #${agent.current_task_id}`} ${statusLabel(agent.task_status)}${
+                            `${agent.task_title ?? '이름 없는 작업'} ${statusLabel(agent.task_status)}${
                               agent.reported_at
                                 ? ` · ${formatShort(agent.reported_at)} 보고`
                                 : ''

@@ -193,4 +193,18 @@ describe('비비 답변 근거', () => {
     ).not.toBeInTheDocument()
     expect(screen.queryByText('모델 생성')).not.toBeInTheDocument()
   })
+
+  // S15P31A108-395: 참고 문서의 위치는 서버의 L4-L6 표기 대신 인용과 같은 4~6행 표기로 보인다.
+  it('참고 문서의 줄 범위를 행 표기로 보인다', async () => {
+    ask.mockResolvedValue({ ...cited, citations: [], grounded: false })
+    renderPanel()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('설계 질문'), '질문')
+    await user.click(screen.getByRole('button', { name: '보내기' }))
+    const panel = await screen.findByRole('complementary')
+    expect(
+      await within(panel).findByRole('button', { name: /접근 정책 . 4~6행/ }),
+    ).toBeInTheDocument()
+    expect(within(panel).queryByText(/L4-L6/)).not.toBeInTheDocument()
+  })
 })

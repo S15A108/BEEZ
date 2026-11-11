@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityText } from './display'
+import { activityText, lineRangeText } from './display'
 
 // 공통 계약 6.2 활동 유형 전부(docs/design/10-notification-activity-contract.md)
 const CONTRACT_TYPES = [
@@ -76,4 +76,12 @@ describe('activityText', () => {
       ]),
     ).toBe('팀원을 제외했어요')
   })
+})
+
+// S15P31A108-395: 서버 출처 위치의 L4-L6 표기를 화면의 4~6행 표기로 바꾼다.
+it('출처 위치의 줄 범위를 행 표기로 바꾸고 다른 위치는 그대로 둔다', () => {
+  expect(lineRangeText('접근 정책 / L4-L6')).toBe('접근 정책 / 4~6행')
+  expect(lineRangeText('L13-L16')).toBe('13~16행')
+  expect(lineRangeText('승인 설계 / API-01')).toBe('승인 설계 / API-01')
+  expect(lineRangeText('4~5행')).toBe('4~5행')
 })

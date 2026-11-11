@@ -115,6 +115,10 @@ export function activityText(
   return activityLabels[item.type] ?? '활동을 기록했어요'
 }
 
+// 출처 위치(sources.location)의 'L4-L6'을 화면 표기 '4~6행'으로. 비비·변경 제안 초안·회의 요약·설계 초안은 서버가 L 표기로 준다.
+export const lineRangeText = (location: string) =>
+  location.replace(/\bL(\d+)-L(\d+)\b/g, '$1~$2행')
+
 // 활동 행위자 이름 뒤 조사. 비비·시스템·에이전트도 사람처럼 '님이'다(사용자 결정 11-09): '비비님이', '시스템님이'.
 export const ACTOR_PARTICLE = '님이'
 

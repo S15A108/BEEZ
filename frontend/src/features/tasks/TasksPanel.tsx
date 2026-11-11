@@ -22,7 +22,12 @@ import {
   X,
 } from 'lucide-react'
 import { readAllPages } from '@/api/readAllPages'
-import { contextsApi, planningApi, tasksApi } from '@/api/services'
+import {
+  contextsApi,
+  documentsApi,
+  planningApi,
+  tasksApi,
+} from '@/api/services'
 import {
   idSchema,
   taskPlanInputSchema,
@@ -361,6 +366,15 @@ export function TasksPanel({ projectId, isLeader }: Props) {
         ? task.validation
         : undefined
   const view = result ? toValidationView(result) : undefined
+  // 검증 근거 위치는 문서 번호 대신 제목으로 보인다. 공용 문서함·기획 분석과 같은 목록을 쓴다.
+  const documents = useQuery({
+    queryKey: ['projects', projectId, 'planning-documents'],
+    queryFn: () => documentsApi.list(projectId, { limit: 100 }),
+    enabled: !!view?.findings.some((finding) => finding.sources.length),
+  })
+  const documentTitle = (id: string) =>
+    documents.data?.items.find((document) => document.id === id)?.title ??
+    '문서'
   const policyAnalysis = view?.policyAnalysis
   const needsHumanReview = view?.needsHumanReview
   const delta =
@@ -1354,8 +1368,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                               key={index}
                               className="mt-2 text-xs text-muted-foreground"
                             >
-                              문서 {source.document_id} v{source.version_no} ·{' '}
-                              {source.location}
+                              {documentTitle(source.document_id)} v
+                              {source.version_no} · {source.location}
                             </p>
                           ))}
                           {finding.conflicting_design_refs?.map((ref) => (
