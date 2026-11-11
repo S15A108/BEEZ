@@ -119,7 +119,7 @@ class OpenAICompatibleProvider:
         await self.aclose()
 
     async def complete(
-        self, request: LLMRequest, *, timeout_seconds: float | None
+        self, request: LLMRequest, *, timeout_seconds: float
     ) -> ProviderResponse:
         # The HTTP client is already closed, so no request can have started.
         # An error during post() must not use this preflight classification:

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.support.IntegrationTestSupport;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +17,10 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.client.HttpServerErrorException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -129,6 +133,42 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
         assertThat(response.body()).contains("ai_invalid_output");
         assertThat(count("task")).isZero();
         assertThat(count("task_breakdown_batch")).isZero();
+    }
+
+    @Test
+    void mapsAnUnusableAiBatchToTheInvalidOutputError() {
+        byte[] error = """
+                {"error":{"code":"invalid_output","message":"The LLM request could not be completed."}}
+                """.getBytes(StandardCharsets.UTF_8);
+        when(ai.taskBreakdown(anyMap())).thenThrow(HttpServerErrorException.create(
+                HttpStatus.BAD_GATEWAY, "Bad Gateway", HttpHeaders.EMPTY, error, StandardCharsets.UTF_8));
+
+        var response = body(generate(leader), 502);
+
+        assertThat(response.path("error").path("code").asString()).isEqualTo("ai_invalid_output");
+        assertThat(count("task_breakdown_batch")).isZero();
+    }
+
+    @Test
+    void persistsTheValidDependencyChainWithoutInvalidTasksOrTheirDependents() {
+        var invalid = draft("invalid", "API-01", "backend", List.of());
+        invalid.put("design_refs", List.of(Map.of("design_item_id", api.designItemId("API-01").toString(),
+                "design_item_version_id", "999999", "relation", "IMPLEMENTS")));
+        var blocked = draft("blocked", "API-01", "Frontend", List.of("invalid"));
+        var indirectlyBlocked = draft("indirectly-blocked", "API-01", null, List.of("blocked"));
+        var backend = draft("api", "API-02", "backend", List.of());
+        var frontend = draft("ui", "API-02", "Frontend", List.of("api"));
+        when(ai.taskBreakdown(anyMap())).thenReturn(reply(indirectlyBlocked, frontend, invalid, blocked, backend));
+
+        var tasks = body(generate(leader), 200).path("tasks");
+
+        assertThat(tasks.size()).isEqualTo(2);
+        assertThat(tasks.get(0).path("title").asString()).isEqualTo("api");
+        assertThat(tasks.get(1).path("title").asString()).isEqualTo("ui");
+        assertThat(api.jdbc.sql("select depends_on_task_id from task_dependency where task_id = :id")
+                .param("id", tasks.get(1).path("id").asLong()).query(Long.class).single())
+                .isEqualTo(tasks.get(0).path("id").asLong());
+        assertThat(count("task")).isEqualTo(2);
     }
 
     @Test

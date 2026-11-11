@@ -51,7 +51,7 @@ class LLMRequest:
     messages: tuple[LLMMessage, ...] = field(repr=False)
     context: LLMContext
     call_keys: tuple[str, ...]
-    timeout_seconds: float | None
+    timeout_seconds: float
     response_format: dict[str, Any] | None = field(default=None, repr=False)
     sources: tuple[Source, ...] = field(default=(), repr=False)
     max_attempts: int = 1

@@ -22,7 +22,12 @@ title은 200자 이내, key는 48자 이내 영문/숫자/밑줄/하이픈으로
 
 
 async def generate_task_breakdown(
-    snapshot: TaskBreakdownRequest, client: LLMClient, model: str
+    snapshot: TaskBreakdownRequest,
+    client: LLMClient,
+    model: str,
+    *,
+    timeout_seconds: float,
+    output_token_limit: int,
 ) -> dict:
     data = snapshot.model_dump(exclude={"project_id", "request_key"})
     response = await client.generate(
@@ -38,13 +43,13 @@ async def generate_task_breakdown(
                 request_key=snapshot.request_key,
             ),
             call_keys=(f"task-breakdown-{uuid4().hex}",),
-            timeout_seconds=None,
+            timeout_seconds=timeout_seconds,
             response_format={"type": "json_object"},
+            model_options={"max_completion_tokens": output_token_limit},
         )
     )
     try:
-        tasks = TaskBreakdownResult.model_validate(response.result)
-        tasks.validate_against(snapshot)
+        tasks = TaskBreakdownResult.from_generated(response.result, snapshot)
     except ValueError:
         raise response.invalid_output_error() from None
     return replace(response, result=tasks.model_dump()).to_api_dict()

@@ -45,6 +45,22 @@ class TaskBreakdownDraftTest {
         }
     }
 
+    @Test
+    void discardsAmbiguousOrCyclicKeysAndTheirDependents() {
+        List<TaskBreakdownDraft> drafts = TaskBreakdownDraft.readInDependencyOrder(reply(
+                draft("ambiguous", List.of(), null, "20"),
+                Map.of("key", "ambiguous"),
+                draft("ambiguous-dependent", List.of("ambiguous"), null, "20"),
+                draft("a", List.of("b"), null, "20"),
+                draft("b", List.of("a"), null, "20"),
+                draft("cycle-dependent", List.of("b"), null, "20"),
+                draft("missing-dependent", List.of("missing"), null, "20"),
+                draft("ui", List.of("api"), null, "20"),
+                draft("api", List.of(), null, "20")), VERSIONS, Set.of());
+
+        assertThat(drafts).extracting(TaskBreakdownDraft::key).containsExactly("api", "ui");
+    }
+
     private static Map<String, Object> reply(Object... drafts) {
         return Map.of("result", Map.of("tasks", List.of(drafts)));
     }

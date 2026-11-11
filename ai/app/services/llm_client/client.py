@@ -46,7 +46,7 @@ _COST_QUANTUM = Decimal("0.000001")
 
 class LLMProvider(Protocol):
     async def complete(
-        self, request: LLMRequest, *, timeout_seconds: float | None
+        self, request: LLMRequest, *, timeout_seconds: float
     ) -> ProviderResponse:
         """Make exactly one provider attempt; do not perform hidden retries."""
         ...
@@ -143,13 +143,12 @@ def _validate(request: LLMRequest) -> None:
         or len(set(request.call_keys)) != len(request.call_keys)
     ):
         raise LLMError("invalid_input")
-    timeout = request.timeout_seconds
-    if timeout is not None and (
-        not isinstance(timeout, (int, float))
-        or isinstance(timeout, bool)
-        or not math.isfinite(timeout)
-        or timeout <= 0
-        or timeout > _MAX_DB_INT / 1000
+    if (
+        not isinstance(request.timeout_seconds, (int, float))
+        or isinstance(request.timeout_seconds, bool)
+        or not math.isfinite(request.timeout_seconds)
+        or request.timeout_seconds <= 0
+        or request.timeout_seconds > _MAX_DB_INT / 1000
     ):
         raise LLMError("invalid_input")
     if ctx.feature == "TASK_VALIDATION":
@@ -311,12 +310,11 @@ class LLMClient:
             raise
         except (AttributeError, TypeError, ValueError, OverflowError):
             raise LLMError("invalid_input") from None
-        timeout = snapshot.timeout_seconds
-        deadline = None if timeout is None else time.monotonic() + timeout
+        deadline = time.monotonic() + snapshot.timeout_seconds
         usages: list[LLMUsage] = []
         for index, call_key in enumerate(snapshot.call_keys):
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
+            remaining = min(snapshot.timeout_seconds, deadline - time.monotonic())
+            if remaining <= 0:
                 raise LLMError("model_timeout", tuple(usages)) from None
             started = time.monotonic()
             response: ProviderResponse | None = None
@@ -326,7 +324,7 @@ class LLMClient:
                         snapshot, timeout_seconds=remaining
                     )
                     result = _result(snapshot, response)
-                    if deadline is not None and time.monotonic() >= deadline:
+                    if time.monotonic() >= deadline:
                         raise TimeoutError()
             except asyncio.CancelledError as exc:
                 usages.append(
@@ -380,8 +378,8 @@ class LLMClient:
             )
             if not can_retry:
                 raise LLMError(code, tuple(usages)) from None
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
+            remaining = min(snapshot.timeout_seconds, deadline - time.monotonic())
+            if remaining <= 0:
                 raise LLMError("model_timeout", tuple(usages)) from None
             delay = 0.1 * (2**index)
             retry_after = getattr(failure, "retry_after_seconds", None)
@@ -399,7 +397,7 @@ class LLMClient:
                 ):
                     delay = max(delay, retry_after)
             # Never start another attempt if its wait alone consumes the budget.
-            if remaining is not None and delay >= remaining:
+            if delay >= remaining:
                 raise LLMError("model_timeout", tuple(usages)) from None
             try:
                 await asyncio.sleep(delay)

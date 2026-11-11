@@ -1,5 +1,6 @@
 """Internal task decomposition for a captured approved project baseline."""
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,6 +17,8 @@ from app.services.llm_client import LLMClient, LLMError
 from app.services.task_breakdown import generate_task_breakdown
 
 _MAX_BODY_BYTES = 512 * 1024
+_MAX_TIMEOUT_SECONDS = 240
+_MAX_OUTPUT_TOKEN_LIMIT = 32_768
 
 
 class TaskBreakdownRoute(APIRoute):
@@ -50,12 +53,37 @@ class TaskBreakdownRoute(APIRoute):
                 )
             except LLMError as exc:
                 status = {"model_timeout": 504, "invalid_input": 422}.get(exc.code, 502)
-                return JSONResponse(exc.to_api_dict(), status_code=status)
+                body = exc.to_api_dict()
+                if exc.code == "invalid_output":
+                    body["error"]["code"] = "invalid_output"
+                return JSONResponse(body, status_code=status)
 
         return wrapped
 
 
 router = APIRouter(route_class=TaskBreakdownRoute)
+
+
+@dataclass(frozen=True)
+class TaskBreakdownConfig:
+    timeout_seconds: float
+    output_token_limit: int
+
+
+def require_task_breakdown_config(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TaskBreakdownConfig:
+    try:
+        timeout_seconds = float(settings.task_breakdown_llm_timeout_seconds)
+        output_token_limit = int(settings.task_breakdown_llm_output_token_limit)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(503, detail="task_breakdown_not_configured") from None
+    if not (
+        0 < timeout_seconds <= _MAX_TIMEOUT_SECONDS
+        and 1 <= output_token_limit <= _MAX_OUTPUT_TOKEN_LIMIT
+    ):
+        raise HTTPException(503, detail="task_breakdown_not_configured")
+    return TaskBreakdownConfig(timeout_seconds, output_token_limit)
 
 
 async def _read_snapshot(request: Request) -> TaskBreakdownRequest:
@@ -89,6 +117,13 @@ async def _read_snapshot(request: Request) -> TaskBreakdownRequest:
 async def task_breakdown(
     snapshot: Annotated[TaskBreakdownRequest, Depends(_read_snapshot)],
     settings: Annotated[Settings, Depends(get_settings)],
+    config: Annotated[TaskBreakdownConfig, Depends(require_task_breakdown_config)],
     client: Annotated[LLMClient, Depends(get_review_client)],
 ):
-    return await generate_task_breakdown(snapshot, client, settings.bee_default_model)
+    return await generate_task_breakdown(
+        snapshot,
+        client,
+        settings.bee_default_model,
+        timeout_seconds=config.timeout_seconds,
+        output_token_limit=config.output_token_limit,
+    )

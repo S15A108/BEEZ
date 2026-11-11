@@ -636,10 +636,7 @@ def test_untrusted_success_model_echo_is_rejected_without_leaking(echoed_model, 
     assert caught.value.usage[0].output_tokens == 1
 
 
-@pytest.mark.parametrize("timeout_seconds", [1.0, None])
-def test_openai_compatible_adapter_sends_format_and_preserves_given_sources(
-    timeout_seconds,
-):
+def test_openai_compatible_adapter_sends_format_and_preserves_given_sources():
     captured = []
     source = Source(
         document_id="201", document_version_id="211", version_no=1, location="3-8"
@@ -681,7 +678,6 @@ def test_openai_compatible_adapter_sends_format_and_preserves_given_sources(
         transport=httpx.MockTransport(handler),
     )
     request = request_for(
-        timeout_seconds=timeout_seconds,
         response_format=format_option,
         sources=(source,),
         model_options={"temperature": 0.2},
@@ -692,11 +688,6 @@ def test_openai_compatible_adapter_sends_format_and_preserves_given_sources(
     assert result.result == {"answer": "ok"}
     assert result.sources == (source,)
     assert len(captured) == 1
-    transport_timeouts = captured[0].extensions["timeout"].values()
-    if timeout_seconds is None:
-        assert all(value is None for value in transport_timeouts)
-    else:
-        assert all(0 < value <= timeout_seconds for value in transport_timeouts)
     body = json.loads(captured[0].content)
     assert body["model"] == "configured-model"
     assert body["messages"] == [

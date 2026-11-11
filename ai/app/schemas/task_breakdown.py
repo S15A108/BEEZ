@@ -1,6 +1,6 @@
 """Inputs and ticket candidates for the approved design task breakdown."""
 
-from graphlib import CycleError, TopologicalSorter
+from collections import Counter
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    ValidationError,
     model_validator,
 )
 
@@ -115,41 +116,60 @@ class TaskCandidate(ContractModel):
     dependency_keys: list[TaskKey] = Field(max_length=MAX_TASKS - 1)
     assignment_area: Area | None
 
+    def matches_snapshot(self, versions: dict[str, str], areas: set[str]) -> bool:
+        references = {
+            ref.design_item_id: ref.design_item_version_id for ref in self.design_refs
+        }
+        return (
+            (self.assignment_area is None or self.assignment_area in areas)
+            and len(references) == len(self.design_refs)
+            and all(
+                versions.get(item) == version for item, version in references.items()
+            )
+            and len(set(self.dependency_keys)) == len(self.dependency_keys)
+        )
+
+
+class _GeneratedTaskBreakdown(ContractModel):
+    tasks: list[object] = Field(min_length=1, max_length=MAX_TASKS)
+
 
 class TaskBreakdownResult(ContractModel):
     tasks: list[TaskCandidate] = Field(min_length=1, max_length=MAX_TASKS)
 
-    def validate_against(self, snapshot: TaskBreakdownRequest) -> None:
+    @classmethod
+    def from_generated(cls, payload: object, snapshot: TaskBreakdownRequest) -> Self:
+        generated = _GeneratedTaskBreakdown.model_validate(payload)
         versions = {
             item.design_item_id: item.design_item_version_id
             for item in snapshot.design_items
         }
         areas = set(snapshot.assignment_areas)
-        keys = {task.key for task in self.tasks}
-        if len(keys) != len(self.tasks):
-            raise ValueError("duplicate ticket key")
+        # Count raw keys so even a malformed duplicate makes its key ambiguous.
+        key_counts = Counter(
+            item["key"]
+            for item in generated.tasks
+            if isinstance(item, dict) and isinstance(item.get("key"), str)
+        )
+        candidates = {}
+        for item in generated.tasks:
+            try:
+                task = TaskCandidate.model_validate(item)
+            except ValidationError:
+                continue
+            if key_counts[task.key] == 1 and task.matches_snapshot(versions, areas):
+                candidates[task.key] = task
 
-        for task in self.tasks:
-            if task.assignment_area is not None and task.assignment_area not in areas:
-                raise ValueError("unknown assignment area")
-            if any(
-                versions.get(ref.design_item_id) != ref.design_item_version_id
-                for ref in task.design_refs
-            ):
-                raise ValueError("reference outside the approved snapshot")
-            if len({ref.design_item_id for ref in task.design_refs}) != len(
-                task.design_refs
-            ):
-                raise ValueError("duplicate design reference")
-            dependencies = set(task.dependency_keys)
-            if not dependencies <= keys or len(dependencies) != len(
-                task.dependency_keys
-            ):
-                raise ValueError("unknown or duplicate predecessor")
-
-        try:
-            TopologicalSorter(
-                {task.key: task.dependency_keys for task in self.tasks}
-            ).prepare()
-        except CycleError:
-            raise ValueError("cyclic ticket dependencies") from None
+        # Missing predecessors and cycles never become ready. Their dependents
+        # stay out of the result while independent work can still be saved.
+        accepted: set[str] = set()
+        pending = candidates.copy()
+        while ready := [
+            key
+            for key, task in pending.items()
+            if accepted.issuperset(task.dependency_keys)
+        ]:
+            accepted.update(ready)
+            for key in ready:
+                del pending[key]
+        return cls(tasks=[task for key, task in candidates.items() if key in accepted])

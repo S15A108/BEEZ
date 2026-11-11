@@ -98,9 +98,9 @@ def test_route_generates_ticket_and_dependency_contract(transport):
     assert payload["usage"][0]["feature"] == "BEE_DRAFT"
     assert len(provider.calls) == 1
     request, provider_timeout = provider.calls[0]
-    assert request.timeout_seconds is None
-    assert provider_timeout is None
-    assert request.model_options is None
+    assert request.timeout_seconds > 0
+    assert 0 < provider_timeout <= request.timeout_seconds
+    assert request.model_options["max_completion_tokens"] > 0
     assert request.context.project_id == "3"
     assert [message.role for message in request.messages] == ["system", "user"]
     assert (
@@ -118,19 +118,51 @@ def test_route_rejects_unusable_model_output(transport, invalid):
     if invalid == "foreign-ref":
         first["design_refs"][0]["design_item_version_id"] = "99"
     elif invalid == "foreign-area":
-        second["assignment_area"] = "unknown-secret-area"
+        first["assignment_area"] = "unknown-secret-area"
     elif invalid == "cycle":
         first["dependency_keys"] = ["signup-form"]
     elif invalid == "duplicate-key":
         second["key"] = first["key"]
     else:
-        second["included_scope"] = ["invalid\0text"]
+        first["included_scope"] = ["invalid\0text"]
 
     response = api.post(PATH, headers=HEADERS, json=snapshot())
     assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_output"
     assert response.json()["usage"][0]["failed"] is True
     assert "unknown-secret-area" not in response.text
     assert "result" not in response.json()
+
+
+def test_route_keeps_valid_tickets_when_other_dependency_chains_are_unusable(transport):
+    api, provider = transport
+    bad_reference = ticket("bad-reference", "Backend", [])
+    bad_reference["design_refs"][0]["design_item_version_id"] = "99"
+    duplicate = ticket("ambiguous", "Backend", [])
+    duplicate_with_invalid_shape = {"key": "ambiguous", "title": None}
+    api_ticket = ticket("signup-api", "Backend", [])
+    form_ticket = ticket("signup-form", "Frontend", ["signup-api"])
+    provider.output["tasks"] = [
+        ticket("indirect-dependent", "Frontend", ["direct-dependent"]),
+        ticket("direct-dependent", "Frontend", ["bad-reference"]),
+        bad_reference,
+        ticket("cycle-a", "Backend", ["cycle-b"]),
+        ticket("cycle-b", "Backend", ["cycle-a"]),
+        ticket("cycle-dependent", "Frontend", ["cycle-a"]),
+        duplicate,
+        duplicate_with_invalid_shape,
+        ticket("ambiguous-dependent", "Frontend", ["ambiguous"]),
+        ticket("unknown-dependent", "Frontend", ["missing"]),
+        form_ticket,
+        api_ticket,
+    ]
+
+    response = api.post(PATH, headers=HEADERS, json=snapshot())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["result"]["tasks"] == [form_ticket, api_ticket]
+    assert payload["usage"][0]["failed"] is False
 
 
 def test_route_rejects_bad_snapshot_and_preserves_timeout(transport):

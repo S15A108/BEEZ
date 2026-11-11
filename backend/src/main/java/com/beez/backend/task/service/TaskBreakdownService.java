@@ -99,9 +99,11 @@ public class TaskBreakdownService {
         } catch (RestClientException e) {
             long duration = elapsed(started);
             boolean timeout = e.getCause() instanceof HttpTimeoutException || e.getCause() instanceof SocketTimeoutException;
+            String aiErrorCode = null;
             List<Map<String, Object>> entries = null;
             if (e instanceof RestClientResponseException httpError) {
                 timeout = httpError.getStatusCode().value() == 504;
+                aiErrorCode = AiErrorBodies.codeIn(httpError);
                 entries = AiErrorBodies.usageIn(httpError);
             }
             if (entries == null || usage.recordLines(USAGE_FEATURE, projectId, null, requestKey, entries, false, null, duration) == 0) {
@@ -109,6 +111,12 @@ public class TaskBreakdownService {
             }
             if (timeout) {
                 throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", "작업 생성이 지연되고 있어요. 다시 시도해 주세요.");
+            }
+            if ("model_output_truncated".equals(aiErrorCode)) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "ai_output_too_long", "작업 목록이 길어 생성 도중 끊겼어요.");
+            }
+            if ("invalid_output".equals(aiErrorCode)) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "ai_invalid_output", "생성된 작업을 확인하지 못했어요.");
             }
             throw new ApiException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "작업을 생성하지 못했어요. 다시 시도해 주세요.");
         }
