@@ -38,9 +38,8 @@ async def generate_task_breakdown(
                 request_key=snapshot.request_key,
             ),
             call_keys=(f"task-breakdown-{uuid4().hex}",),
-            timeout_seconds=45,
+            timeout_seconds=None,
             response_format={"type": "json_object"},
-            model_options={"max_completion_tokens": 8192},
         )
     )
     try:

@@ -65,7 +65,7 @@ class Provider:
         }
 
     async def complete(self, request, *, timeout_seconds):
-        self.calls.append(request)
+        self.calls.append((request, timeout_seconds))
         if self.error:
             raise ProviderError(self.error)
         return ProviderResponse(json.dumps(self.output), request.model, 11, 17)
@@ -97,7 +97,10 @@ def test_route_generates_ticket_and_dependency_contract(transport):
     assert payload["origin"] == "MODEL"
     assert payload["usage"][0]["feature"] == "BEE_DRAFT"
     assert len(provider.calls) == 1
-    request = provider.calls[0]
+    request, provider_timeout = provider.calls[0]
+    assert request.timeout_seconds is None
+    assert provider_timeout is None
+    assert request.model_options is None
     assert request.context.project_id == "3"
     assert [message.role for message in request.messages] == ["system", "user"]
     assert (
