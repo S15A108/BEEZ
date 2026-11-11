@@ -35,7 +35,7 @@ public class DocumentReviewRepository {
     /** 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청. 고친 뒤(작업본 갱신 이후)에 시작한 요청만 본다. */
     public Optional<Map<String, Object>> latestReviewRequest(long document) {
         return rows("""
-                SELECT r.status,r.error_code,r.created_at FROM document_bee_review_request r
+                SELECT r.status,r.error_code,r.created_at,r.updated_at FROM document_bee_review_request r
                 JOIN document_working_copy w ON w.document_id=r.document_id
                 WHERE r.document_id=:document AND r.created_at>=w.updated_at
                 ORDER BY r.created_at DESC LIMIT 1
@@ -56,7 +56,7 @@ public class DocumentReviewRepository {
                 .param("document", document).update();
         jdbc.sql("UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1 WHERE document_id=:document AND status='DRAFT'")
                 .param("document", document).update();
-        jdbc.sql("UPDATE document_bee_review_request SET status='FAILED',error_code='document_discarded' WHERE document_id=:document AND status='RUNNING'")
+        jdbc.sql("UPDATE document_bee_review_request SET status='FAILED',error_code='document_discarded',input=NULL,lease_token=NULL,lease_until=NULL,updated_at=now() WHERE document_id=:document AND status='RUNNING'")
                 .param("document", document).update();
     }
 
@@ -280,24 +280,72 @@ public class DocumentReviewRepository {
     }
 
     public Optional<Map<String, Object>> reviewRequest(long document, long account, String key) {
-        // Expired in-flight work is failed, never silently reissued to a paid provider.
-        jdbc.sql("UPDATE document_bee_review_request SET status='FAILED',error_code='review_timeout' WHERE document_id=:document AND account_id=:account AND request_key=:key AND status='RUNNING' AND created_at<now()-interval '10 minutes'")
+        // Expired in-flight work is failed, never silently reissued to a paid provider. 워커의 재시도(2회 × lease)는 이 10분 안에 끝난다.
+        jdbc.sql("UPDATE document_bee_review_request SET status='FAILED',error_code='review_timeout',input=NULL,lease_token=NULL,lease_until=NULL,updated_at=now() WHERE document_id=:document AND account_id=:account AND request_key=:key AND status='RUNNING' AND created_at<now()-interval '10 minutes'")
                 .params(Map.of("document", document, "account", account, "key", key)).update();
         return rows("SELECT * FROM document_bee_review_request WHERE document_id=:document AND account_id=:account AND request_key=:key",
                 Map.of("document", document, "account", account, "key", key)).stream().findFirst();
     }
 
-    public void startReview(long document, long account, String key, String fingerprint) {
-        jdbc.sql("INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status) VALUES(:document,:account,:key,:fingerprint,'RUNNING')")
-                .params(Map.of("document", document, "account", account, "key", key, "fingerprint", fingerprint)).update();
+    /** 같은 본문·참고 자료(fingerprint)로 아직 도는 검토. 있으면 새 키로 다시 요청해도 AI 를 한 번 더 부르지 않고 이 요청을 기다린다. */
+    public Optional<Map<String, Object>> runningReview(long document, long account, String fingerprint) {
+        return rows("""
+                SELECT * FROM document_bee_review_request WHERE document_id=:document AND account_id=:account AND fingerprint=:fingerprint
+                  AND status='RUNNING' AND input IS NOT NULL AND created_at>=now()-interval '10 minutes'
+                ORDER BY created_at DESC LIMIT 1
+                """, Map.of("document", document, "account", account, "fingerprint", fingerprint)).stream().findFirst();
     }
 
-    public boolean finishReview(long document, long account, String key, Long review, String error, Object usage) {
+    /** 검토 작업 접수. 워커가 그대로 AI 에 보낼 입력 스냅샷을 함께 남긴다(S15P31A108-391). */
+    public void startReview(long project, long document, long account, String key, String fingerprint, long expected, Object input) {
+        jdbc.sql("""
+                INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status,project_id,expected_revision,input)
+                VALUES(:document,:account,:key,:fingerprint,'RUNNING',:project,:expected,cast(:input AS jsonb))
+                """).params(Map.of("document", document, "account", account, "key", key, "fingerprint", fingerprint,
+                        "project", project, "expected", expected, "input", canonical(input))).update();
+    }
+
+    /**
+     * 처리할 검토 하나를 잡는다. 아직 아무도 잡지 않았거나 lease 가 지난(워커가 죽은, 예: 배포 재시작) 작업을 고르고, 새 울타리 토큰을
+     * 걸어 늦게 돌아온 이전 워커가 끝내지 못하게 한다. 재시도 한도를 다 쓴 작업과, 화면에 이미 실패로 보이는 10분 지난 작업
+     * (워커가 꺼져 있던 동안 쌓인 것 등)은 AI 를 부르지 않고 먼저 시간 초과로 닫는다.
+     */
+    public Optional<Map<String, Object>> claimReview(int leaseSeconds, int maxAttempts) {
+        jdbc.sql("""
+                UPDATE document_bee_review_request SET status='FAILED',error_code='review_timeout',input=NULL,lease_token=NULL,lease_until=NULL,updated_at=now()
+                 WHERE status='RUNNING' AND input IS NOT NULL
+                   AND ((lease_until<now() AND attempts>=:max) OR created_at<now()-interval '10 minutes')
+                """).param("max", maxAttempts).update();
+        return jdbc.sql("""
+                UPDATE document_bee_review_request r SET lease_token=gen_random_uuid(),lease_until=now()+make_interval(secs=>:lease),
+                  attempts=r.attempts+1,updated_at=now()
+                  FROM (SELECT document_id,account_id,request_key FROM document_bee_review_request
+                         WHERE status='RUNNING' AND input IS NOT NULL AND attempts<:max AND (lease_until IS NULL OR lease_until<now())
+                           AND created_at>=now()-interval '10 minutes'
+                         ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) c
+                 WHERE r.document_id=c.document_id AND r.account_id=c.account_id AND r.request_key=c.request_key
+                RETURNING r.*
+                """).param("lease", leaseSeconds).param("max", maxAttempts).query().listOfRows().stream().findFirst();
+    }
+
+    /** 잡은 울타리 토큰이 그대로인지(다른 워커가 이어받지 않았는지). 저장 트랜잭션 안에서 행을 잠그고 확인한다. */
+    public boolean reviewLeaseHeld(long document, long account, String key, Object token) {
+        return !rows("""
+                SELECT 1 FROM document_bee_review_request WHERE document_id=:document AND account_id=:account AND request_key=:key
+                  AND status='RUNNING' AND lease_token=:token FOR UPDATE
+                """, Map.of("document", document, "account", account, "key", key, "token", token)).isEmpty();
+    }
+
+    /** 울타리 토큰이 그대로인 작업만 끝낸다. 입력 스냅샷은 비운다(완료 입력은 document_bee_review.input 에 남는다). */
+    public boolean finishReview(long document, long account, String key, Object token, Long review, String error, Object usage) {
         var p = new java.util.HashMap<String, Object>();
-        p.put("document", document); p.put("account", account); p.put("key", key); p.put("review", review);
+        p.put("document", document); p.put("account", account); p.put("key", key); p.put("review", review); p.put("token", token);
         p.put("error", error); p.put("usage", canonical(usage)); p.put("status", error == null ? "COMPLETED" : "FAILED");
-        return jdbc.sql("UPDATE document_bee_review_request SET status=:status,review_id=:review,error_code=:error,usage=cast(:usage AS jsonb) WHERE document_id=:document AND account_id=:account AND request_key=:key AND status='RUNNING'")
-                .params(p).update() == 1;
+        return jdbc.sql("""
+                UPDATE document_bee_review_request SET status=:status,review_id=:review,error_code=:error,usage=cast(:usage AS jsonb),
+                  input=NULL,lease_token=NULL,lease_until=NULL,updated_at=now()
+                 WHERE document_id=:document AND account_id=:account AND request_key=:key AND status='RUNNING' AND lease_token=:token
+                """).params(p).update() == 1;
     }
 
     public List<String> cleanupKeys() {

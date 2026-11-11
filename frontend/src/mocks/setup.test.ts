@@ -26,6 +26,7 @@ import {
   setupMockApi,
 } from './setup'
 import { loadMockDatabase } from './state'
+import { reviewDocument } from '@/test/beeReview'
 
 let restoreAdapter: () => void
 
@@ -356,9 +357,7 @@ describe('documented REST mock adapter', () => {
     })
     for (const document of documents.items) {
       const copy = await documentsApi.workingCopy('102', document.id)
-      const review = await documentsApi.requestBeeReview('102', document.id, {
-        expected_revision: copy.revision,
-      })
+      const review = await reviewDocument('102', document.id, copy.revision)
       let current = copy
       for (const suggestion of review.suggestions)
         current = await documentsApi.decideSuggestion(

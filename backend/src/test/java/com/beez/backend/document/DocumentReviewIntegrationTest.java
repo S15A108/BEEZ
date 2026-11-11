@@ -75,7 +75,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
 
     DocumentWorkingCopyResponse copy() { return reviews.get(author, project.projectId(), document); }
     DocumentBeeReviewResponse review() {
-        return reviews.review(author, project.projectId(), document, copy().revision(), UUID.randomUUID().toString());
+        return reviewNow(author, project.projectId(), document, copy().revision(), UUID.randomUUID().toString());
     }
     DocumentSubmissionResponse submit(DocumentBeeReviewResponse review) {
         return reviews.submit(author, project.projectId(), document,
@@ -99,7 +99,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()),
                 new DocumentDecisionRequest("REJECT", "누락 항목을 추가해 주세요."));
         long revision = copy().revision();
-        var rerun = reviews.review(author, project.projectId(), document, revision, "rerun-once");
+        var rerun = reviewNow(author, project.projectId(), document, revision, "rerun-once");
         assertThat(calls).hasSize(2);
         assertThat(calls.getLast()).containsEntry("mode", "RERUN")
                 .containsEntry("rejection_submission_id", submission.id())
@@ -110,7 +110,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         });
         assertThat(jdbc.queryForMap("SELECT category,severity FROM document_bee_suggestion WHERE review_id=?", Long.parseLong(rerun.id())))
                 .containsEntry("category", "REJECTION_FIX").containsEntry("severity", "MAJOR");
-        assertThat(reviews.review(author, project.projectId(), document, revision, "rerun-once")).isEqualTo(rerun);
+        assertThat(reviewNow(author, project.projectId(), document, revision, "rerun-once")).isEqualTo(rerun);
         assertThat(calls).hasSize(2);
     }
 
@@ -249,14 +249,14 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test void directEditInvalidatesReviewAndSameKeyReplaysWithoutCallingAiAgain() {
-        var first = reviews.review(author, project.projectId(), document, 1, "same");
-        assertThat(reviews.review(author, project.projectId(), document, 1, "same")).isEqualTo(first);
+        var first = reviewNow(author, project.projectId(), document, 1, "same");
+        assertThat(reviewNow(author, project.projectId(), document, 1, "same")).isEqualTo(first);
         verify(gateway, times(1)).review(anyMap());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isEqualTo(1);
         reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "수정된 내용", "plan.md"));
-        assertThat(reviews.review(author, project.projectId(), document, 1, "same")).isEqualTo(first);
+        assertThat(reviewNow(author, project.projectId(), document, 1, "same")).isEqualTo(first);
         code(() -> submit(first), "review_stale");
-        code(() -> reviews.review(author, project.projectId(), document, 2, "same"), "idempotency_conflict");
+        code(() -> reviewNow(author, project.projectId(), document, 2, "same"), "idempotency_conflict");
     }
 
     @Test void suggestionConstraintsPreserveLegacyPatchAndRejectSelectableComments() {
@@ -310,8 +310,8 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
 
     @Test void invalidAiResultIsNotCompletedAndFailureIsNotAutomaticallyReissued() {
         doReturn(Map.of("origin", "TEMPLATE", "result", Map.of(), "usage", List.of())).when(gateway).review(anyMap());
-        code(() -> reviews.review(author, project.projectId(), document, 1, "invalid"), "invalid_ai_output");
-        code(() -> reviews.review(author, project.projectId(), document, 1, "invalid"), "review_unavailable");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "invalid"), "invalid_ai_output");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "invalid"), "review_unavailable");
         verify(gateway, times(1)).review(anyMap());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isZero();
@@ -350,6 +350,12 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
                 .when(gateway).review(anyMap());
         var http = client().login(fixtures().emailOf(author.accountId()), AccessFixtures.PASSWORD);
         String path = "/api/projects/" + project.projectId() + "/documents/" + document;
+        // 접수는 202 + 요청 상태, 워커가 끝낸 뒤 같은 키로 다시 부르면 201 + 검토 결과다(S15P31A108-391).
+        var accepted = http.post(path + "/bee-reviews", "{\"expected_revision\":1}",
+                "Origin", "https://app.beez.test", "Idempotency-Key", "http-review");
+        assertThat(accepted.statusCode()).withFailMessage(accepted.body()).isEqualTo(202);
+        assertThat(DesignJson.JSON.readTree(accepted.body()).path("status").asText()).isEqualTo("RUNNING");
+        while (reviews.runNextReview()) { /* 워커 대신 처리 */ }
         var reviewed = http.post(path + "/bee-reviews", "{\"expected_revision\":1}",
                 "Origin", "https://app.beez.test", "Idempotency-Key", "http-review");
         assertThat(reviewed.statusCode()).withFailMessage(reviewed.body()).isEqualTo(201);
@@ -387,7 +393,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         var old = copy().latestReview();
         assertThat(old.contractVersion()).isNull();
         assertThat(old.steps()).isEmpty();
-        assertThat(reviews.review(author, project.projectId(), document, 1, "legacy")).isEqualTo(old);
+        assertThat(reviewNow(author, project.projectId(), document, 1, "legacy")).isEqualTo(old);
         code(() -> submit(old), "review_stale");
         verify(gateway, never()).review(anyMap());
     }
@@ -411,7 +417,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         for (long id : List.of(api, req)) jdbc.update(
                 "UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), id);
         long erd = upload("ERD");
-        var result = reviews.review(author, project.projectId(), erd, 1, "same-kind");
+        var result = reviewNow(author, project.projectId(), erd, 1, "same-kind");
         assertThat(result.reviewStatus()).isEqualTo("COMPLETE");
         assertThat(result.steps()).anySatisfy(step -> {
             assertThat(step.step()).isEqualTo("ERD"); assertThat(step.reason()).isEqualTo("SAME_KIND");
@@ -430,13 +436,13 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         doThrow(new org.springframework.web.client.RestClientResponseException(
                 "AI unavailable", status, "Unavailable", org.springframework.http.HttpHeaders.EMPTY,
                 new byte[0], StandardCharsets.UTF_8)).when(gateway).review(anyMap());
-        code(() -> reviews.review(author, project.projectId(), document, 1, "unavailable"), "review_unavailable");
-        code(() -> reviews.review(author, project.projectId(), document, 1, "unavailable"), "review_unavailable");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "unavailable"), "review_unavailable");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "unavailable"), "review_unavailable");
         verify(gateway, times(1)).review(anyMap());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isZero();
         doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
-        assertThat(reviews.review(author, project.projectId(), document, 1, "retry-new-key").id()).isNotBlank();
+        assertThat(reviewNow(author, project.projectId(), document, 1, "retry-new-key").id()).isNotBlank();
         verify(gateway, times(2)).review(anyMap());
     }
 
@@ -455,7 +461,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
             reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "새 내용", "plan.md"));
             return result(input, List.of());
         }).when(gateway).review(anyMap());
-        code(() -> reviews.review(author, project.projectId(), document, 1, "late"), "version_conflict");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "late"), "version_conflict");
         assertThat(copy().latestReview()).isNull();
     }
 
@@ -503,7 +509,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(none.toString()).doesNotContain(":null");
 
         failWith(new org.springframework.web.client.ResourceAccessException("read", new java.net.http.HttpTimeoutException("slow")));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "http-failed"), "review_timeout");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "http-failed"), "review_timeout");
         var failed = DesignJson.JSON.readTree(authorClient.get(path).body()).path("bee_review_request");
         assertThat(failed.path("status").asText()).isEqualTo("FAILED");
         assertThat(failed.path("error_code").asText()).isEqualTo("review_timeout");
@@ -511,7 +517,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
 
         reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "# 줄인 계획\n로그인한다.", "plan.md"));
         doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
-        reviews.review(author, project.projectId(), document, 2, "http-ok");
+        reviewNow(author, project.projectId(), document, 2, "http-ok");
         var completed = DesignJson.JSON.readTree(authorClient.get(path).body()).path("bee_review_request");
         assertThat(completed.path("status").asText()).isEqualTo("COMPLETED");
         assertThat(completed.has("error_code")).as("실패가 아니면 error_code 키가 없다").isFalse();
@@ -548,7 +554,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         var documentIds = List.of(document, upload("REQUIREMENTS"), upload("ERD"), upload("API_SPEC"));
         var submissions = new ArrayList<DocumentSubmissionResponse>();
         for (long id : documentIds) {
-            var review = reviews.review(author, project.projectId(), id, 1, "review-" + id);
+            var review = reviewNow(author, project.projectId(), id, 1, "review-" + id);
             submissions.add(reviews.submit(author, project.projectId(), id, new DocumentSubmissionRequest(1, review.id()), "submit-" + id));
         }
         for (var submission : submissions.subList(0, 3)) reviews.decide(leader, project.projectId(), Long.parseLong(submission.documentId()),
@@ -602,7 +608,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
 
     void timeoutOf(org.springframework.web.client.RestClientResponseException failure, String key) {
         failWith(failure);
-        assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, key))
+        assertThatThrownBy(() -> reviewNow(author, project.projectId(), document, 1, key))
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getCode()).isEqualTo("review_timeout");
                     assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.GATEWAY_TIMEOUT);
@@ -615,7 +621,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT error_code FROM document_bee_review_request WHERE document_id=? AND request_key='t-504'",
                 String.class, document)).isEqualTo("review_timeout");
         // 같은 키로 다시 부르면 AI 를 부르지 않고 같은 시간 초과 코드로 답한다.
-        assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, "t-504"))
+        assertThatThrownBy(() -> reviewNow(author, project.projectId(), document, 1, "t-504"))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("review_timeout"));
         verify(gateway, times(1)).review(anyMap());
         // model_timeout 코드는 상태가 504 가 아니어도 시간 초과다. 502 model_unavailable 은 장애다.
@@ -625,25 +631,25 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         failWith(new org.springframework.web.client.RestClientResponseException("down", 502, "Bad Gateway",
                 org.springframework.http.HttpHeaders.EMPTY, "{\"error\":{\"code\":\"model_unavailable\"}}".getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "t-502"), "review_unavailable");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "t-502"), "review_unavailable");
     }
 
     @Test void readTimeoutIsReviewTimeoutButConnectTimeoutIsUnavailable() {
         failWith(new org.springframework.web.client.ResourceAccessException("read",
                 new java.net.http.HttpTimeoutException("request timed out")));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "read"), "review_timeout");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "read"), "review_timeout");
         failWith(new org.springframework.web.client.ResourceAccessException("connect",
                 new java.net.http.HttpConnectTimeoutException("connect timed out")));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "connect"), "review_unavailable");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "connect"), "review_unavailable");
         failWith(new org.springframework.web.client.ResourceAccessException("refused", new java.net.ConnectException("refused")));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "refused"), "review_unavailable");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "refused"), "review_unavailable");
     }
 
     @Test void failedReviewRequestIsVisibleToEveryoneUntilTheDocumentChanges() {
         assertThat(copy().beeReviewRequest()).isNull();
         failWith(new org.springframework.web.client.ResourceAccessException("read",
                 new java.net.SocketTimeoutException("Read timed out")));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "visible"), "review_timeout");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "visible"), "review_timeout");
         // 올린 사람이 아닌 팀원(팀장)도 같은 상태를 읽는다
         var seen = reviews.get(leader, project.projectId(), document).beeReviewRequest();
         assertThat(seen.status()).isEqualTo("FAILED");
@@ -652,7 +658,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "# 줄인 계획\n로그인한다.", "plan.md"));
         assertThat(copy().beeReviewRequest()).isNull();
         doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
-        reviews.review(author, project.projectId(), document, 2, "after-edit");
+        reviewNow(author, project.projectId(), document, 2, "after-edit");
         assertThat(copy().beeReviewRequest().status()).isEqualTo("COMPLETED");
         // 10분 넘게 도는 요청은 끝없이 기다리지 않게 실패로 보인다
         jdbc.update("UPDATE document_bee_review_request SET status='RUNNING',error_code=NULL,created_at=now()+interval '1 second' WHERE document_id=?", document);
@@ -664,6 +670,91 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(stuck.errorCode()).isEqualTo("review_timeout");
     }
 
+    // ---- 접수 → 워커 (S15P31A108-391) ----
+
+    @Test void acceptanceReturnsRunningWithoutCallingAiAndSameContentIsNotQueuedTwice() {
+        var first = reviews.review(author, project.projectId(), document, 1, "async-1");
+        assertThat(first.review()).isNull();
+        assertThat(first.request().status()).isEqualTo("RUNNING");
+        verify(gateway, never()).review(anyMap());
+        // 같은 키는 같은 요청 상태로 재생하고(이전 409 review_in_progress), 같은 본문의 새 키도 새 작업을 만들지 않는다.
+        assertThat(reviews.review(author, project.projectId(), document, 1, "async-1").request().status()).isEqualTo("RUNNING");
+        assertThat(reviews.review(author, project.projectId(), document, 1, "async-2").request().status()).isEqualTo("RUNNING");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review_request WHERE document_id=?", Integer.class, document)).isEqualTo(1);
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("RUNNING");
+        assertThat(reviews.runNextReview()).isTrue();
+        assertThat(reviews.runNextReview()).isFalse();
+        verify(gateway, times(1)).review(anyMap());
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("COMPLETED");
+        assertThat(reviews.review(author, project.projectId(), document, 1, "async-1").review()).isEqualTo(copy().latestReview());
+        // 끝난 입력 스냅샷은 비운다(완료 입력은 document_bee_review.input 에 남는다).
+        assertThat(jdbc.queryForObject("SELECT input IS NULL FROM document_bee_review_request WHERE document_id=?", Boolean.class, document)).isTrue();
+    }
+
+    @Test void lateWorkerAfterLeaseHandoverCannotSaveButItsCallIsStillCounted() {
+        var keys = new ArrayList<String>();
+        doAnswer(call -> {
+            Map<String, Object> input = call.getArgument(0);
+            keys.add(input.get("request_key").toString());
+            if (keys.size() == 1) {
+                // 첫 워커가 모델을 기다리는 사이 lease 가 지나(배포 재시작 등) 다른 워커가 이어받아 끝낸다.
+                jdbc.update("UPDATE document_bee_review_request SET lease_until=now()-interval '1 second' WHERE document_id=?", document);
+                assertThat(reviews.runNextReview()).isTrue();
+            }
+            return result(input, List.of());
+        }).when(gateway).review(anyMap());
+        reviews.review(author, project.projectId(), document, 1, "handover");
+        assertThat(reviews.runNextReview()).isTrue();
+        // 늦게 돌아온 첫 워커는 울타리 토큰이 바뀌어 저장하지 못한다. 검토는 하나뿐이다.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isEqualTo(1);
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("COMPLETED");
+        // 호출마다 다른 사용량 키라 두 호출이 모두 남는다(같은 키면 ON CONFLICT 로 하나가 사라진다).
+        assertThat(keys).hasSize(2).doesNotHaveDuplicates();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isEqualTo(2);
+    }
+
+    @Test void requestWhoseWorkersDiedTwiceIsClosedAsTimeoutWithoutAThirdPaidCall() {
+        reviews.review(author, project.projectId(), document, 1, "died");
+        jdbc.update("""
+                UPDATE document_bee_review_request SET attempts=2,lease_token=gen_random_uuid(),lease_until=now()-interval '1 second'
+                WHERE document_id=?
+                """, document);
+        assertThat(reviews.runNextReview()).isFalse();
+        verify(gateway, never()).review(anyMap());
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("FAILED");
+        assertThat(copy().beeReviewRequest().errorCode()).isEqualTo("review_timeout");
+    }
+
+    @Test void requestAlreadyShownAsFailedAfterTenMinutesIsNotSentToAi() {
+        reviews.review(author, project.projectId(), document, 1, "stale-queue");
+        jdbc.update("UPDATE document_bee_review_request SET created_at=now()-interval '11 minutes' WHERE document_id=?", document);
+        jdbc.update("UPDATE document_working_copy SET updated_at=now()-interval '1 hour' WHERE document_id=?", document);
+        assertThat(reviews.runNextReview()).isFalse();
+        verify(gateway, never()).review(anyMap());
+        assertThat(jdbc.queryForObject("SELECT status FROM document_bee_review_request WHERE document_id=?", String.class, document)).isEqualTo("FAILED");
+    }
+
+    @Test void legacyRunningRequestWithoutInputIsNeverSentToAi() {
+        jdbc.update("""
+                INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status)
+                VALUES(?,?,'sync-era','old','RUNNING')
+                """, document, author.accountId());
+        assertThat(reviews.runNextReview()).isFalse();
+        verify(gateway, never()).review(anyMap());
+    }
+
+    @Test void removedRequesterIsNotReviewedAfterTheModelReturns() {
+        doAnswer(call -> {
+            jdbc.update("UPDATE project_member SET active=false WHERE project_id=? AND account_id=?", project.projectId(), author.accountId());
+            return result(call.getArgument(0), List.of());
+        }).when(gateway).review(anyMap());
+        reviews.review(author, project.projectId(), document, 1, "removed");
+        assertThat(reviews.runNextReview()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
+        assertThat(jdbc.queryForObject("SELECT error_code FROM document_bee_review_request WHERE document_id=?", String.class, document))
+                .isEqualTo("not_found");
+    }
+
     long member() {
         long account = fixtures().account();
         fixtures().member(project.projectId(), account, ProjectRole.MEMBER);
@@ -673,7 +764,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
     @Test void authorDiscardsFailedDocumentAndTheSameKindCanBeRegisteredAgain() {
         var other = CallerContext.human(member());
         failWith(new org.springframework.web.client.ResourceAccessException("read", new java.net.http.HttpTimeoutException("slow")));
-        code(() -> reviews.review(author, project.projectId(), document, 1, "slow"), "review_timeout");
+        code(() -> reviewNow(author, project.projectId(), document, 1, "slow"), "review_timeout");
         // 올린 사람도 팀장도 아닌 팀원은 취소할 수 없다
         code(() -> reviews.discard(other, project.projectId(), document, "other"), "forbidden");
         var discarded = reviews.discard(author, project.projectId(), document, "discard-1");
@@ -741,7 +832,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
             reviews.discard(author, project.projectId(), document, "mid-review");
             return result(call.<Map<String, Object>>getArgument(0), List.of());
         }).when(gateway).review(anyMap());
-        assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, "late-result")).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> reviewNow(author, project.projectId(), document, 1, "late-result")).isInstanceOf(ApiException.class);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
     }
 
@@ -756,7 +847,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         try {
             long start = System.nanoTime();
             var futures = ids.stream().map(id -> pool.submit(() ->
-                    reviews.review(author, project.projectId(), id, 1, "parallel-" + id).id())).toList();
+                    reviewNow(author, project.projectId(), id, 1, "parallel-" + id).id())).toList();
             for (var future : futures) assertThat(future.get(10, TimeUnit.SECONDS)).isNotBlank();
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
             // 직렬이면 모델 대역만으로 3.2초 이상이다. 느린 CI 에서도 병렬이면 넘지 않도록 직렬 하한보다 조금 아래로 잡는다.
@@ -764,5 +855,11 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    /** 접수 + 워커 처리(S15P31A108-391). 동기 호출이던 때와 같은 결과·오류 코드를 돌려준다. */
+    com.beez.backend.document.dto.DocumentBeeReviewResponse reviewNow(com.beez.backend.common.auth.CallerContext caller,
+            long projectId, long documentId, long revision, String key) {
+        return com.beez.backend.document.support.DocumentReviewFixtures.reviewNow(reviews, jdbc, caller, projectId, documentId, revision, key);
     }
 }

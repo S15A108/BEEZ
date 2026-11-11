@@ -30,11 +30,17 @@ public class AiClient {
      * 31~38초 걸려 처음 값(모델 30초·읽기 40초)으로는 실패했다(S15P31A108-383).
      */
     static final Duration DEFAULT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(55);
+    /**
+     * 문서 검토 워커 전용(S15P31A108-391). 워커는 HTTP 요청 밖에서 돌아 nginx 60초에 묶이지 않는다. AI 문서 검토 모델 제한
+     * (110초, 설정 상한 120초)보다 길어야 정상 검토를 먼저 끊지 않는다. 대화(DISCUSS·REQUEST)는 동기라 위 55초를 그대로 쓴다.
+     */
+    static final Duration DEFAULT_REVIEW_WORKER_READ_TIMEOUT = Duration.ofSeconds(120);
 
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
     private final RestClient reviewRest;
+    private final RestClient reviewWorkerRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
 
@@ -42,17 +48,23 @@ public class AiClient {
         this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_REVIEW_READ_TIMEOUT);
     }
 
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, DEFAULT_REVIEW_WORKER_READ_TIMEOUT);
+    }
+
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
                     @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
-                    @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout) {
+                    @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout,
+                    @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
         this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
+        this.reviewWorkerRest = client(ai, max(ai.readTimeout(), reviewWorkerReadTimeout));
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
         this.chatHttp = http(ai);
@@ -124,9 +136,17 @@ public class AiClient {
         return rest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
     }
 
-    /** BE adapter contract; AI feature implementation belongs to the AI owner. */
+    /**
+     * AI-A10 문서 검토(첫 검토·반려 뒤 재검토). 문서 검토 워커만 부르며 HTTP 요청 밖이라 긴 읽기 제한을 쓴다(S15P31A108-391).
+     */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {
+        return reviewWorkerRest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /** AI-A10 제안 대화·직접 요청(mode=DISCUSS·REQUEST). 사용자 요청 안에서 기다리므로 nginx 60초보다 짧은 제한을 쓴다. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> documentReviewChat(java.util.Map<String, Object> input) {
         return reviewRest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
     }
 

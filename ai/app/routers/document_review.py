@@ -72,10 +72,20 @@ class DocumentReviewRoute(APIRoute):
 router = APIRouter(route_class=DocumentReviewRoute)
 
 
-def _model_timeout_seconds(settings: Settings) -> float:
-    """Model-call limit from settings; a bad value is a configuration error, not a model failure."""
+def _model_timeout_seconds(settings: Settings, *, chat: bool = False) -> float:
+    """Model-call limit from settings; a bad value is a configuration error, not a model failure.
+
+    Review/RERUN runs in the BE worker outside any HTTP request, so it gets the long
+    limit. DISCUSS/REQUEST is still answered inside the user's request and must stay
+    below the BE chat read timeout (55 s) and nginx /api/ (60 s) (S15P31A108-391).
+    """
+    raw = (
+        settings.document_review_chat_llm_timeout_seconds
+        if chat
+        else settings.document_review_llm_timeout_seconds
+    )
     try:
-        value = float(settings.document_review_llm_timeout_seconds)
+        value = float(raw)
     except (TypeError, ValueError, OverflowError):
         raise HTTPException(503, detail="document_review_not_configured") from None
     if not math.isfinite(value) or not 0 < value <= 120:
@@ -167,8 +177,9 @@ async def document_review(
             raise HTTPException(413, detail="file_too_large")
         raw.extend(chunk)
     body = DocumentReviewRequest.model_validate_json(bytes(raw))
-    timeout_seconds = _model_timeout_seconds(settings)
-    if body.mode in ("DISCUSS", "REQUEST"):
+    chat = body.mode in ("DISCUSS", "REQUEST")
+    timeout_seconds = _model_timeout_seconds(settings, chat=chat)
+    if chat:
         return await analyze_mode(
             body, client, settings.bee_default_model, timeout_seconds
         )

@@ -43,10 +43,17 @@ public class DocumentReviewService {
     private final DocumentStorage storage;
     private final NotificationRequester notifier;
     private final ActivityRecorder activities;
+    /** 워커 한 번의 lease. AI 읽기 제한보다 1분 길어 정상 처리 중에는 다른 워커가 이어받지 않는다. */
+    private final int leaseSeconds;
+    /** lease 가 지난 작업(배포 재시작 등)을 다시 잡는 것까지 합친 최대 시도 횟수. 두 번째도 못 끝내면 시간 초과로 닫는다. */
+    static final int MAX_ATTEMPTS = 2;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DocumentReviewService.class);
 
     public DocumentReviewService(DocumentReviewRepository repository, ProjectAccessChecker access,
             DocumentInputValidator validator, DocumentReviewGateway ai, DocumentStorage storage,
-            PlatformTransactionManager manager, NotificationRequester notifier, ActivityRecorder activities) {
+            PlatformTransactionManager manager, NotificationRequester notifier, ActivityRecorder activities,
+            @org.springframework.beans.factory.annotation.Value("${beez.document-review.worker-read-timeout:120s}") java.time.Duration workerReadTimeout) {
+        this.leaseSeconds = (int) workerReadTimeout.plusMinutes(1).toSeconds();
         this.notifier = notifier;
         this.activities = activities;
         this.repository = repository; this.access = access; this.validator = validator; this.ai = ai;
@@ -84,9 +91,12 @@ public class DocumentReviewService {
         return repository.workingCopy(project, document).orElseThrow(() -> AccessErrors.notFound("document_working_copy_missing"));
     }
 
-    Map<String, Object> owned(CallerContext caller, long project, long document) {
+    Map<String, Object> owned(CallerContext caller, long project, long document) { return owned(caller.accountId(), project, document); }
+
+    /** 워커처럼 호출자 문맥이 없을 때도 같은 규칙으로 등록자를 확인한다. */
+    Map<String, Object> owned(long account, long project, long document) {
         var copy = copy(project, document);
-        if (id(copy, "owner_account_id") != caller.accountId()) {
+        if (id(copy, "owner_account_id") != account) {
             throw AccessErrors.forbidden("document_author_required", "등록한 담당자만 작성 내용을 변경할 수 있습니다.");
         }
         return copy;
@@ -167,10 +177,16 @@ public class DocumentReviewService {
         }
     }
 
+    /**
+     * DOC-A16 비비 검토 접수(S15P31A108-391). 권한·리비전·멱등을 확인하고 AI 에 보낼 입력을 저장한 뒤 바로 돌아온다.
+     * 검토는 {@link #runNextReview()} 를 부르는 워커가 HTTP 요청 밖에서 한다(nginx 60초에 묶이지 않는다).
+     * 같은 키로 이미 끝난 검토는 결과를, 아직 도는 검토는 요청 상태를 돌려준다. 같은 본문·참고 자료로 도는 검토가 있으면
+     * 새 키여도 새로 만들지 않고 그 요청을 기다리게 한다(AI 를 두 번 부르지 않는다).
+     */
     @Transactional(propagation = Propagation.NEVER)
-    public DocumentBeeReviewResponse review(CallerContext caller, long project, long document, long expected, String key) {
+    public DocumentReviewAcceptance review(CallerContext caller, long project, long document, long expected, String key) {
         key(key);
-        var prepared = tx.execute(status -> {
+        return tx.execute(status -> {
             lock(caller, project, false);
             var copy = owned(caller, project, document);
             var refs = references(project, document);
@@ -193,22 +209,48 @@ public class DocumentReviewService {
                                     .equals(old.get("fingerprint"));
                 }
                 if (!fingerprint.equals(old.get("fingerprint")) && !completedReplay) throw conflict("idempotency_conflict");
-                if ("COMPLETED".equals(old.get("status"))) return Map.<String, Object>of("replay", old.get("review_id"));
-                if ("RUNNING".equals(old.get("status"))) throw conflict("review_in_progress");
+                if ("COMPLETED".equals(old.get("status"))) {
+                    return DocumentReviewAcceptance.completed(reviewView(repository.review(document, id(old, "review_id")).orElseThrow()));
+                }
+                if ("RUNNING".equals(old.get("status"))) return DocumentReviewAcceptance.running(requestView(old));
                 if ("review_timeout".equals(old.get("error_code"))) throw timeout();
                 throw unavailable("이 검토 요청은 실패했습니다. 새 요청 키로 다시 검토해 주세요.");
             }
             editable(copy, expected);
             initialWorkflow(project);
-            repository.startReview(document, caller.accountId(), key, fingerprint);
-            var input = reviewInput(copy, refs, "document-review-" + document + "-" + UUID.randomUUID());
+            var running = repository.runningReview(document, caller.accountId(), fingerprint);
+            if (running.isPresent()) return DocumentReviewAcceptance.running(requestView(running.get()));
+            // request_key 는 워커가 AI 를 부를 때마다 새로 붙인다(재시도한 호출도 사용량에 따로 센다).
+            var input = reviewInput(copy, refs, null);
+            input.remove("request_key");
             input.putAll(reviewContext);
-            return input;
+            repository.startReview(project, document, caller.accountId(), key, fingerprint, expected, input);
+            return DocumentReviewAcceptance.running(requestView(repository.reviewRequest(document, caller.accountId(), key).orElseThrow()));
         });
-        if (prepared.containsKey("replay")) return tx.execute(status -> {
-            member(caller, project);
-            return reviewView(repository.review(document, id(prepared, "replay")).orElseThrow());
-        });
+    }
+
+    /** 워커가 잡은 작업이 다른 워커에게 넘어갔을 때(lease 만료 뒤 이어받음). 저장하지 않고 조용히 손을 뗀다. */
+    private static final class LeaseLost extends RuntimeException {
+        LeaseLost() { super(null, null, false, false); }
+    }
+
+    /**
+     * 접수된 검토 하나를 끝까지 처리한다(S15P31A108-391). 처리할 작업이 없으면 false.
+     *
+     * <p>AI 호출 동안 트랜잭션·프로젝트 잠금을 잡지 않는다. 저장할 때 프로젝트 잠금을 잡고 요청자가 아직 멤버·등록자인지, 본문 리비전·참고
+     * 승인본·반려 문맥이 접수 때와 같은지, 작업이 아직 내 것인지(울타리 토큰) 다시 확인한다. 실패는 작업만 FAILED 로 남긴다(동기 호출 때와 같은
+     * 오류 코드). lease 가 지나면(배포 재시작 등) 다른 워커가 한 번 더 시도하고, 두 번째도 끝내지 못하면 시간 초과로 닫는다.
+     */
+    @Transactional(propagation = Propagation.NEVER)
+    public boolean runNextReview() {
+        var job = tx.execute(status -> repository.claimReview(leaseSeconds, MAX_ATTEMPTS).orElse(null));
+        if (job == null) return false;
+        long project = id(job, "project_id"), document = id(job, "document_id"), account = id(job, "account_id");
+        long expected = id(job, "expected_revision");
+        String key = job.get("request_key").toString();
+        Object token = job.get("lease_token");
+        var prepared = new HashMap<String, Object>(object(job.get("input")));
+        prepared.put("request_key", "document-review-" + document + "-" + UUID.randomUUID());
         List<Map<String, Object>> usage = List.of();
         try {
             // Network and model work never hold a project lock or DB transaction.
@@ -218,9 +260,10 @@ public class DocumentReviewService {
             if (envelope != null) { envelope = new HashMap<>(envelope); envelope.put("usage", usage); }
             var result = validateResult(envelope, prepared);
             var actualUsage = usage;
-            return tx.execute(status -> {
-                lock(caller, project, false);
-                var copy = owned(caller, project, document);
+            tx.executeWithoutResult(status -> {
+                if (!repository.lockMember(project, account, false)) throw AccessErrors.notFound("document_review_membership_changed");
+                if (!repository.reviewLeaseHeld(document, account, key, token)) throw new LeaseLost();
+                var copy = owned(account, project, document);
                 editable(copy, expected);
                 initialWorkflow(project);
                 if (!prepared.get("reference_hash").equals(referenceHash(references(project, document)))) throw conflict("review_stale");
@@ -232,15 +275,18 @@ public class DocumentReviewService {
                     var suggestion = (Map<?, ?>) entry;
                     repository.saveSuggestion(review, suggestion);
                 }
-                if (!repository.finishReview(document, caller.accountId(), key, review, null, actualUsage)) throw conflict("review_stale");
+                if (!repository.finishReview(document, account, key, token, review, null, actualUsage)) throw new LeaseLost();
                 repository.recordUsage(project, actualUsage);
-                // 새 검토를 저장한 이 트랜잭션에서만 알린다. 완료된 요청의 재생은 위에서 반환해 여기까지 오지 않는다.
-                // 행위자가 비비라서 요청한 등록자 본인도 받는다(계약 6.1).
+                // 새 검토를 저장한 이 트랜잭션에서만 알린다. 행위자가 비비라서 요청한 등록자 본인도 받는다(계약 6.1).
+                // 비동기라 요청자가 화면을 떠났어도 이 알림으로 끝난 것을 안다.
                 var done = NotificationMessages.documentBeeReviewDone(copy.get("title").toString());
-                notifyDocument(project, document, latestVersion(copy), caller.accountId(),
+                notifyDocument(project, document, latestVersion(copy), account,
                         "document-review:" + review + ":bee-review-done", "DOCUMENT_BEE_REVIEW_DONE", done);
-                return reviewView(repository.review(document, review).orElseThrow());
             });
+        } catch (LeaseLost lost) {
+            // 이어받은 워커가 끝낸다. 이 호출의 사용량만 남긴다(실제로 일어난 호출이다).
+            var actualUsage = usage;
+            tx.executeWithoutResult(status -> repository.recordUsage(project, actualUsage));
         } catch (RuntimeException failure) {
             if (failure instanceof org.springframework.web.client.RestClientResponseException responseError) {
                 try {
@@ -254,17 +300,15 @@ public class DocumentReviewService {
                 var last = new HashMap<>(usage.getLast()); last.put("failed", true); usage.set(usage.size() - 1, last);
             }
             var actualUsage = usage;
-            // 시간 초과는 장애(503)와 구분해 504 review_timeout 으로 알린다. 사용량 기록은 둘 다 같다(모델이 돌았을 수 있다).
-            boolean timedOut = !(failure instanceof ApiException) && isTimeout(failure);
-            String errorCode = failure instanceof ApiException e ? e.getCode() : timedOut ? "review_timeout" : "review_unavailable";
+            // 시간 초과는 장애(review_unavailable)와 구분해 review_timeout 으로 남긴다. 사용량 기록은 둘 다 같다(모델이 돌았을 수 있다).
+            String errorCode = failure instanceof ApiException e ? e.getCode() : isTimeout(failure) ? "review_timeout" : "review_unavailable";
+            if (!(failure instanceof ApiException)) log.warn("문서 검토 AI 호출 실패 document={} 예외 종류={}", document, failure.getClass().getSimpleName());
             tx.executeWithoutResult(status -> {
-                repository.finishReview(document, caller.accountId(), key, null, errorCode, actualUsage);
+                repository.finishReview(document, account, key, token, null, errorCode, actualUsage);
                 repository.recordUsage(project, actualUsage);
             });
-            if (failure instanceof ApiException) throw failure;
-            if (timedOut) throw timeout();
-            throw unavailable("비비 검토를 완료하지 못했습니다. 잠시 후 다시 요청해 주세요.");
         }
+        return true;
     }
 
     private Map<String, Object> validateResult(Map<String, Object> envelope, Map<String, Object> input) {
@@ -505,11 +549,15 @@ public class DocumentReviewService {
                 repository.latestReviewRequest(document).map(this::requestView).orElse(null));
     }
 
-    /** 도는 중으로 10분이 넘은 요청은 서버가 같은 키 요청 때 실패 처리하는 것과 같게 실패로 보여, 팀원 화면이 끝없이 기다리지 않게 한다. */
-    private BeeReviewRequestResponse requestView(Map<String, Object> row) {
+    /**
+     * 도는 중으로 10분이 넘은 요청은 서버가 같은 키 요청 때 실패 처리하는 것과 같게 실패로 보여, 팀원 화면이 끝없이 기다리지 않게 한다.
+     * 워커 재시도(최대 {@value #MAX_ATTEMPTS}회 × lease)는 이 10분 안에 끝난다.
+     */
+    BeeReviewRequestResponse requestView(Map<String, Object> row) {
         String status = row.get("status").toString(), error = (String) row.get("error_code");
-        String at = DocumentValues.time(row.get("created_at"));
-        if ("RUNNING".equals(status) && java.time.Instant.parse(at).isBefore(java.time.Instant.now().minus(java.time.Duration.ofMinutes(10)))) {
+        String created = DocumentValues.time(row.get("created_at"));
+        String at = row.get("updated_at") == null ? created : DocumentValues.time(row.get("updated_at"));
+        if ("RUNNING".equals(status) && java.time.Instant.parse(created).isBefore(java.time.Instant.now().minus(java.time.Duration.ofMinutes(10)))) {
             status = "FAILED"; error = "review_timeout";
         }
         return new BeeReviewRequestResponse(status, error, at);

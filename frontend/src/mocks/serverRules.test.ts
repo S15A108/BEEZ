@@ -11,6 +11,7 @@ import {
   validationsApi,
 } from '../api/services'
 import { DEMO_EMAIL, DEMO_PASSWORD, resetMockApi, setupMockApi } from './setup'
+import { reviewDocument } from '@/test/beeReview'
 
 // PR #72 mock/live 전수 대조 LA-TC-02~09: mock 작업·문서 집계가 서버(TaskPlanService·TaskStateService·
 // TaskTransitionPolicy·TaskAssigneeService·TaskQueryService·StatusRepository)와 같은 결과를 낸다.
@@ -258,9 +259,7 @@ it('기준 전에 승인한 문서를 다시 고치기 시작하면 문서 집�
     )?.draft_count
   }
   const copy = await documentsApi.workingCopy('102', documentId)
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   let current = copy
   for (const suggestion of review.suggestions)
     current = await documentsApi.decideSuggestion(

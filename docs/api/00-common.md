@@ -702,7 +702,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `file_name` | `string` | Y | 작성 파일명 |
 | `latest_review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | N | 마지막 비비 검토 결과 |
 | `submissions` | [DocumentReviewSubmission[]](00-common.md#schema-documentreviewsubmission) | Y | 제출 이력, 최신 ID 순 |
-| `bee_review_request` | `object` | N | 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청 `{status: RUNNING\|FAILED\|COMPLETED, error_code?, updated_at}`. 고치면 새 요청이 생길 때까지 없다. 10분 넘게 RUNNING이면 `FAILED`·`review_timeout`으로 보인다. 올린 사람이 아닌 팀원도 실패를 알고 새로고침 뒤에도 유지된다 (S15P31A108-382) |
+| `bee_review_request` | `object` | N | 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청 `{status: RUNNING\|FAILED\|COMPLETED, error_code?, updated_at}`. 고치면 새 요청이 생길 때까지 없다. 10분 넘게 RUNNING이면 `FAILED`·`review_timeout`으로 보인다. 올린 사람이 아닌 팀원도 실패를 알고 새로고침 뒤에도 유지된다 (S15P31A108-382). 검토는 서버 워커가 하므로 화면은 RUNNING 동안 이 값을 다시 읽어 끝을 기다린다. DOC-A16 202 응답도 같은 모양이다 (S15P31A108-391) |
 | `review_stale` | `boolean` | Y | `latest_review`를 지금 쓸 수 없으면 true. 검토 뒤 다른 문서가 승인돼 참고 승인본이 바뀌었거나, 본문 리비전이 달라졌거나, 216 이전 검토일 때다. 쓰기 API가 `review_stale`(409)로 막는 조건과 같다. `latest_review`가 없거나 `status`가 SUBMITTED·APPROVED면 false (S15P31A108-362) |
 
 <a id="schema-documentreviewreference"></a>

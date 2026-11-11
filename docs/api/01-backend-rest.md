@@ -6355,7 +6355,18 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 #### Response
 
-HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
+(S15P31A108-391) 검토는 접수 뒤 서버 워커가 HTTP 요청 밖에서 한다. 응답은 둘 중 하나다.
+
+- HTTP `202`: 새로 접수했거나 같은 요청 키(또는 같은 본문·참고 자료)의 검토가 아직 도는 중. 본문은 작업본 조회(DOC-A15)의 `bee_review_request`와 같은 모양이다. 화면은 작업본을 다시 읽어 `bee_review_request.status`가 RUNNING이 아닐 때까지 기다리고, 끝나면 `latest_review`로 결과를 받는다. 끝나면 등록자에게 `DOCUMENT_BEE_REVIEW_DONE` 알림이 간다.
+
+```json
+{
+  "status": "RUNNING",
+  "updated_at": "2026-11-11T03:44:11.591Z"
+}
+```
+
+- HTTP `201`: 같은 요청 키로 이미 끝난 검토. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 
 ```json
 {
@@ -6394,12 +6405,12 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 | 409 | `version_conflict` | 작성 revision이 오래되었거나 수정 없이 중복 제출함 |
 | 409 | `submission_locked` | 팀장 검토 요청 후 내용이 잠긴 상태 |
 | 409 | `change_proposal_required` | baseline 이후 변경 제안 경로가 필요함 |
-| 409 | `review_in_progress` | 같은 요청 키의 비비 검토가 실행 중 |
 | 409 | `idempotency_conflict` | 같은 요청 키로 다른 입력을 보냄 |
 | 409 | `review_stale` | 본문 또는 참고 승인본 변경, 제안 원문 불일치 |
-| 502 | `invalid_ai_output` | 비비 결과·식별값·실제 호출 사용량 검증 실패 |
-| 504 | `review_timeout` | 비비 검토가 시간 안에 끝나지 않음(AI 모델 시간 초과 또는 BE 읽기 시간 초과). 같은 문서가 길수록 잘 생긴다 |
-| 503 | `review_unavailable` | 비비 호출 장애(AI 502·연결 실패) 또는 시간 초과가 아닌 사유로 실패한 요청 키 |
+| 504 | `review_timeout` | 같은 요청 키의 검토가 시간 초과로 끝났음 |
+| 503 | `review_unavailable` | 같은 요청 키의 검토가 시간 초과가 아닌 사유로 실패했음. 새 키로 다시 요청한다 |
+
+(S15P31A108-391) 접수 뒤 워커에서 생긴 실패는 이 응답이 아니라 작업본의 `bee_review_request`(`status=FAILED`, `error_code`)로 알린다. 코드는 동기 호출 때와 같다 — `review_timeout`(AI 모델·워커 읽기 시간 초과, 워커가 두 번 다 끝내지 못함), `review_unavailable`(AI 502·연결 실패), `invalid_ai_output`(결과·식별값·사용량 검증 실패), `review_stale`·`version_conflict`·`submission_locked`·`change_proposal_required`(검토 중 본문·참고 승인본·반려 맥락·흐름이 바뀜), `not_found`(요청자가 멤버에서 빠짐), `document_discarded`(등록 취소).
 
 ```json
 {
@@ -6414,13 +6425,13 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 
 - 등록자가 작성 내용에 대한 검토를 요청한다. 원문 읽기와 승인 API 명세서·ERD·요구사항의 비교·보완 제안 생성은 AI 담당 영역이다.
 - BE는 대상 본문/revision과 같은 프로젝트의 현재 문서별 승인 버전을 전달한다. 기존 자기 문서의 승인본도 참고할 수 있다. 자료가 없으면 unavailable_references에 표시한다.
-- 모델 호출 중 DB 잠금을 유지하지 않는다. 반환 후 현재 권한·작성 revision·참고 승인본을 다시 확인하고 늦은 결과를 채택하지 않는다.
-- (S15P31A108-382) 시간 제한은 AI 모델 호출 50초(설정값) < BE 읽기 55초 < nginx `/api/` 60초 순서로 안쪽이 짧다(처음 30초·40초에서 6,800자 API 명세서가 31~38초 걸려 올렸다, S15P31A108-383). AI 504(`model_timeout`)·BE 읽기 시간 초과는 504 `review_timeout`, 연결 시간 초과·AI 502·그 밖은 503 `review_unavailable`이다. 분류한 코드를 실행 기록 `error_code`에도 남기며 같은 키로 다시 부르면 같은 코드로 답한다. 사용량은 시간 초과도 실패 호출로 기록한다.
-- 문서/account/요청 키의 실행 기록을 저장한다. 같은 입력·완료 키는 결과를 재사용하고 실행 중이면 review_in_progress다. 실패한 키는 자동 재호출하지 않고 새 키로 재시도한다. 10분 지난 실행은 다음 같은 키 요청에서 실패 처리한다.
+- (S15P31A108-391) 접수 → 워커. 접수는 권한·작성 revision·멱등을 확인하고 AI 입력 스냅샷을 실행 기록(`document_bee_review_request`)에 저장한 뒤 바로 202로 돌아온다. 워커가 AI를 부르고(트랜잭션·잠금 없이), 저장 직전에 프로젝트 잠금을 잡고 요청자 멤버십·등록자·작성 revision·참고 승인본·반려 맥락을 다시 확인해 늦은 결과를 채택하지 않는다. nginx `/api/` 60초에 묶이지 않는다.
+- 시간 제한: AI 모델 호출 110초(설정값, 상한 120초) < 워커 읽기 120초. 워커 lease는 읽기 + 1분이다. lease가 지나면(배포 재시작 등) 다른 워커가 한 번 더 시도하고(유료 호출 최대 2회), 두 번째도 끝내지 못하면 `review_timeout`으로 닫는다. 늦게 돌아온 워커는 울타리 토큰이 바뀌어 저장하지 못하지만 그 호출의 사용량은 기록한다. AI 504(`model_timeout`)·읽기 시간 초과는 `review_timeout`, 연결 시간 초과·AI 502·그 밖은 `review_unavailable`이다(S15P31A108-382·-383). 사용량은 시간 초과도 실패 호출로 기록하며, 호출마다 새 사용량 키를 쓴다.
+- 문서/account/요청 키의 실행 기록을 저장한다. 같은 입력·완료 키는 결과를 재사용하고(201), 실행 중이면 같은 요청 상태(202)다. 같은 본문·참고 자료의 검토가 이미 돌고 있으면 새 키여도 새로 만들지 않는다. 실패한 키는 자동 재호출하지 않고 새 키로 재시도한다. 10분 지난 실행은 실패로 보인다.
 - 실제 MODEL 결과·usage·대상 식별값을 검증한다. 색인 완료나 템플릿 결과를 검토 완료로 대신하지 않는다.
 - AI 내부 경로·입출력은 담당자 합의 대기다. 이 절은 FE→BE의 현재 구현 계약이며 실제 AI 연결 완료를 뜻하지 않는다.
 - (수정안 요청) 기준 v1 전에는 화면이 DOC-A01·A12로 등록한 직후 이 API를 불러 검토를 시작한다. 검토 없이 DOC-A18로 제출할 수 없으므로 검토를 건너뛰는 경로는 없다. 기준 v1 뒤에는 이 API가 409 change_proposal_required이므로, DOC-A12로 올린 DRAFT는 등록 직후 검토하지 않고 변경 제안(CHG-A01 documents[].proposed_document_version_id)에 연결한다.
-- (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다. 지금처럼 동기 호출이면 화면은 진행률 없이 기다림만 보인다(Q19).
+- (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다(S15P31A108-391부터 실제로 서버 워커가 이어 간다). 화면은 진행률 없이 경과 시간과 기다림만 보인다(Q19).
 - 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 그 ID와 rejection_reason을 AI-A10에 mode=RERUN으로 넣고, 아니면 기존 REVIEW 요청을 보낸다. 화면은 제출을 고르지 않는다. 검토 중 최신 반려 맥락이 바뀌면 결과 저장을 거부한다. 제안의 category와 severity는 함께 검증·저장하며, 이전 모델의 두 필드가 모두 없는 결과도 기존 호환을 위해 허용한다. 실제 모델 연동과 FE 표시는 별도 확인이 필요하다.
 
 #### 216 검토 계약 v2 — BE 구현, 실제 AI 222 연결은 TODO
