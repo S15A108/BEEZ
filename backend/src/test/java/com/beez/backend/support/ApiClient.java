@@ -49,6 +49,12 @@ public final class ApiClient {
                 .POST(json == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(json)));
     }
 
+    public HttpResponse<String> put(String path, String json, String... headers) {
+        return send(request(path, headers)
+                .header("Content-Type", "application/json")
+                .PUT(json == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(json)));
+    }
+
     public HttpResponse<String> patch(String path, String json, String... headers) {
         return send(request(path, headers)
                 .header("Content-Type", "application/json")
