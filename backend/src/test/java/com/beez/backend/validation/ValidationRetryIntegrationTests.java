@@ -613,6 +613,24 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void legacyCollectionFailurePreviouslyMarkedHumanReviewCanBeRetried() throws Exception {
+        long[] t = passableTask("A");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        searchFails();
+        assertThat(worker.runOnce()).isTrue();
+        api.jdbc.sql("update validation set summary=(summary-'execution_failure') || '{\"error_code\":\"ai_evidence_insufficient\"}'::jsonb where id=:v")
+                .param("v", id).update();
+        api.jdbc.sql("update validation_finding set resolution='HUMAN_REVIEW',message='검색 또는 원문 근거 범위가 불완전합니다' where validation_id=:v and kind='ERROR'")
+                .param("v", id).update();
+        assertThat(validation(id).at("/execution_failure/type").asText()).isEqualTo("EVIDENCE_COLLECTION_FAILED");
+        searchWorks();
+        var retried = body(retry(id, 1, member), 202);
+        assertThat(retried.has("execution_failure")).isFalse();
+        assertThat(retried.get("current_attempt").asInt()).isEqualTo(2);
+        assertThat(api.jdbc.sql("select current_plan_revision_id from task where id=:t").param("t", t[0]).query(Long.class).single()).isEqualTo(t[1]);
+    }
+
+    @Test
     void readTimeoutWithoutUsageStillCounts_becauseTheRequestReachedTheAi() throws Exception {
         long[] t = passableTask("A");
         long id = body(accept(t, member), 202).get("id").asLong();
