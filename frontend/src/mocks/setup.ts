@@ -20,6 +20,7 @@ import {
   resetMockDatabase,
   saveMockDatabase,
 } from './state'
+import { presenceRoutes, resetMockPresence } from './presence'
 import { taskRoutes } from './tasks'
 
 export {
@@ -173,6 +174,7 @@ async function dispatch(
       (await documentRoutes(route.endpoint.id, context)) ??
       changeRoutes(route.endpoint.id, context) ??
       taskRoutes(route.endpoint.id, context) ??
+      presenceRoutes(route.endpoint.id, context) ??
       collaborationRoutes(route.endpoint.id, context)
     if (!reply)
       fail(
@@ -253,5 +255,6 @@ export function setupMockApi(): () => void {
 export function resetMockApi(): void {
   idempotency.clear()
   resetEmailVerifications()
+  resetMockPresence()
   resetMockDatabase()
 }
