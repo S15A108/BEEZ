@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { useState } from 'react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
+import { PaneSheet, PaneSheetHost } from '@/components/PaneSheet'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { Hotbar } from './Hotbar'
 
@@ -53,13 +55,54 @@ it('배지가 0이면 숫자를 붙이지 않는다', () => {
   expect(screen.queryByLabelText(/새 항목/)).not.toBeInTheDocument()
 })
 
-it('업무 창이 열려 있으면 그 창의 번호 키로 닫고, 다른 번호로는 열지 않는다', async () => {
+// S15P31A108-371 4번(사용자 결정 11-10): 화면 안내가 '숫자 키로 메뉴 열기'인데 창이 열려 있으면 다른 번호가 먹지 않았다.
+it('업무 창이 열려 있으면 다른 번호 키로 그 창으로 바꾸고, 열린 창의 번호 키로 닫는다', async () => {
   useWorkspaceStore.setState({ pane: 'tasks' })
   render(<Hotbar locked={[]} badges={{}} />)
   await userEvent.keyboard('2')
-  expect(useWorkspaceStore.getState().pane).toBe('tasks')
-  await userEvent.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await userEvent.keyboard('2')
   expect(useWorkspaceStore.getState().pane).toBeNull()
+})
+
+it('업무 창 안의 버튼에 포커스가 있어도 숫자 키로 다른 창으로 바꾸고, 잠긴 칸으로는 바꾸지 않는다', async () => {
+  useWorkspaceStore.setState({ pane: 'tasks' })
+  render(
+    <>
+      <Hotbar locked={['meetings']} badges={{}} />
+      <button type="button">창 안 버튼</button>
+    </>,
+  )
+  screen.getByRole('button', { name: '창 안 버튼' }).focus()
+  await userEvent.keyboard('3')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  await userEvent.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+})
+
+it('업무 창의 입력칸에 치는 숫자는 글자로 들어가고 창을 바꾸지 않는다', async () => {
+  useWorkspaceStore.setState({ pane: 'tasks' })
+  render(
+    <>
+      <Hotbar locked={[]} badges={{}} />
+      <input aria-label="작업 이름" />
+      <div aria-label="메모" contentEditable="plaintext-only" />
+    </>,
+  )
+  await userEvent.click(screen.getByLabelText('작업 이름'))
+  await userEvent.keyboard('2')
+  expect(screen.getByLabelText('작업 이름')).toHaveValue('2')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  fireEvent.keyDown(screen.getByLabelText('메모'), { key: '2' })
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+})
+
+// 설정 창은 단축 바를 덮는다(단축 바가 위로 올라오지 않는다). 눌러서 못 옮기는 만큼 숫자 키로도 옮기지 않는다.
+it('설정 창이 열려 있으면 숫자 키로 바꾸지 않는다', async () => {
+  useWorkspaceStore.setState({ pane: 'settings' })
+  render(<Hotbar locked={[]} badges={{}} />)
+  await userEvent.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('settings')
 })
 
 // D안(캔버스 v437~438): 칸을 하나씩 떼어 두고 비비를 가운데(3번과 4번 사이)에 둔다.
@@ -116,4 +159,39 @@ it('강조한 칸이 열려 있어도 글자와 번호를 검정으로 보인다
   expect(button).not.toHaveClass('text-white')
   expect(screen.getByText('1')).not.toHaveClass('text-white/85')
   expect(screen.getByText('여기부터 시작')).toBeInTheDocument()
+})
+
+// S15P31A108-371(사용자 결정 11-10, PR #264 리뷰): 하위 화면에 쓰던 내용을 숫자 키 한 번에 잃지 않게 한다.
+it('업무 창의 하위 화면이 열려 있으면 숫자 키로 창을 바꾸거나 닫지 않고, 하위 화면을 닫으면 다시 바꾼다', async () => {
+  function Pane() {
+    const [open, setOpen] = useState(false)
+    return (
+      <PaneSheetHost>
+        <button type="button" onClick={() => setOpen(true)}>
+          대기 보고
+        </button>
+        {open && (
+          <PaneSheet title="대기로 보고" onClose={() => setOpen(false)}>
+            <p>지금 상황</p>
+          </PaneSheet>
+        )}
+      </PaneSheetHost>
+    )
+  }
+  useWorkspaceStore.setState({ pane: 'tasks' })
+  const user = userEvent.setup()
+  render(
+    <>
+      <Hotbar locked={[]} badges={{}} />
+      <Pane />
+    </>,
+  )
+  await user.click(screen.getByRole('button', { name: '대기 보고' }))
+  await user.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  await user.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  await user.click(screen.getByRole('button', { name: '뒤로' }))
+  await user.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
 })

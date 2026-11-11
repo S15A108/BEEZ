@@ -63,30 +63,3 @@ it('본문 리비전이 달라진 검토는 stale이 아니라 검토 중으로 
     stale: false,
   })
 })
-
-// S15P31A108-383: 서버가 지금 본문의 마지막 검토가 실패했다고 알리면 '검토 중'이 아니라 실패로 본다.
-const failure = {
-  error_code: 'review_unavailable',
-  failed_at: '2026-11-10T08:16:05Z',
-}
-
-it('검토 결과 없이 실패가 오면 검토 실패 단계로 본다', () => {
-  expect(
-    reviewStage(copy({ latest_review: undefined, review_failure: failure })),
-  ).toMatchObject({ step: 1, label: '검토 실패', failed: true, stale: false })
-})
-
-it('무효가 된 검토나 팀장 검토 중인 건은 실패보다 그 상태를 먼저 본다', () => {
-  expect(
-    reviewStage(copy({ review_stale: true, review_failure: failure })),
-  ).toMatchObject({ label: '다시 검토 필요', stale: true, failed: false })
-  expect(
-    reviewStage(
-      copy({
-        status: 'SUBMITTED',
-        latest_review: undefined,
-        review_failure: failure,
-      }),
-    ),
-  ).toMatchObject({ label: '팀장 승인 대기', failed: false })
-})

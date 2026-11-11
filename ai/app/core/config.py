@@ -24,11 +24,6 @@ class Settings(BaseSettings):
     # Generation is implemented separately; no automatic fallback call in #129.
     bee_default_model: Literal["gpt-6-luna"] = "gpt-6-luna"
     bee_complex_model: Literal["gpt-6.1-sol"] = "gpt-6.1-sol"
-    # Document review and its discussion modes. A 6,800-character API spec with
-    # two approved references measured 20-38s on the default model, so the old
-    # fixed 15s failed every time (S15P31A108-383). Keep below the BE
-    # document review read timeout (default 75s).
-    document_review_llm_timeout_seconds: str = "60"
     # Disabled until the BE usage feature/DB contract for #185 is deployed.
     design_recommendation_enabled: bool = False
     # Provisional #131 transport is disabled until explicitly configured.
@@ -72,6 +67,10 @@ class Settings(BaseSettings):
 
     # Provisional #135 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133 and #134.
+    # Document review (AI-A10) model-call limit. BE's read limit (40s) and nginx (60s)
+    # must stay longer than this value (S15P31A108-382). Parsed per request.
+    document_review_llm_timeout_seconds: str = "30"
+
     bee_chat_enabled: bool = False
     bee_chat_max_body_bytes: str = "2097152"
     bee_chat_llm_timeout_seconds: str = "30"

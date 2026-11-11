@@ -82,7 +82,7 @@ public class DocumentApplicationService {
     private String dbKind(DocumentKind kind) { return new DocumentKindMapper().convertToDatabaseColumn(kind); }
     private Map<String, Object> document(long project, long id) {
         // 없는 문서와 다른 프로젝트 문서는 같은 404 (05 참고 2 — 3단계)
-        return one("SELECT * FROM document WHERE id=:id AND project_id=:project", Map.of("id", id, "project", project), "document_not_in_project");
+        return one("SELECT * FROM document WHERE id=:id AND project_id=:project AND discarded_at IS NULL", Map.of("id", id, "project", project), "document_not_in_project");
     }
     private Map<String, Object> version(long document, long id) {
         // 버전 ID 는 다른 문서·프로젝트의 ID 가 들어올 수 있어 접근 거부로 숨긴다
@@ -212,7 +212,7 @@ public class DocumentApplicationService {
 
     public Map<String, Object> list(CallerContext caller, long project, DocumentKind kind, String domain, DocumentStage stage, String cursor, int limit) {
         access.requireMember(caller, project); size(limit);
-        String sql = "SELECT * FROM document WHERE project_id=:project";
+        String sql = "SELECT * FROM document WHERE project_id=:project AND discarded_at IS NULL";
         var params = new HashMap<String, Object>(Map.of("project", project, "limit", limit + 1));
         if (kind != null) { sql += " AND type=:kind"; params.put("kind", dbKind(kind)); }
         if (domain != null) { sql += " AND domain=:domain"; params.put("domain", domain); }

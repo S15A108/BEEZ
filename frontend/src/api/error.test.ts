@@ -157,3 +157,9 @@ it('서버 문구가 없거나 다른 오류면 공통 문구를 보인다', () 
     '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
   )
 })
+
+it('AI 출력 상한에 걸려 끊긴 실패는 일반 장애가 아니라 상한 때문임을 알려 준다', () => {
+  const message = getApiErrorMessage(failure('ai_output_too_long'))
+  expect(message).toContain('출력 길이 상한')
+  expect(message).not.toBe(getApiErrorMessage(failure('ai_unavailable')))
+})

@@ -190,11 +190,14 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       ? `${statusLabel(document.kind)} v${version.version_no}`
       : '문서'
   }
-  const generate = () =>
+  // versionIds 가 없으면 모든 문서, 있으면 그 문서만 만든다. 문서마다 AI 를 한 번씩 부르므로(PLN-A05 작업이 문서마다 하나),
+  // 실패한 문서 하나를 다시 만들 때 나머지까지 보내면 이미 잘 끝난 문서의 후보까지 다시 만들고 비용이 든다(S15P31A108-382).
+  const generate = (versionIds?: string[]) =>
     perform(
       () =>
         planningApi.generateDrafts(projectId, {
-          document_version_ids: versions.map((version) => version.id),
+          document_version_ids:
+            versionIds ?? versions.map((version) => version.id),
         }),
       DRAFT_ACCEPTED,
     )

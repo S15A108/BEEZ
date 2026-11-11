@@ -132,6 +132,18 @@ def test_model_failures_keep_usage(api):
     assert response.json()["error"]["code"] == "model_timeout"
 
 
+def test_output_cap_truncation_is_reported_as_its_own_code_with_usage(api):
+    # 출력 상한에 닿아 답이 끊기면 형식 오류가 아니라 상한 문제로 알린다 (S15P31A108-382).
+    api.provider.failure = ProviderError(
+        "output_truncated", model="gpt-6-luna", input_tokens=9, output_tokens=2048
+    )
+    response = api.post(request_body("plan.md"))
+    assert response.status_code == 502
+    body = response.json()
+    assert body["error"]["code"] == "model_output_truncated"
+    assert body["usage"][0]["failed"] and body["usage"][0]["output_tokens"] == 2048
+
+
 def test_invalid_model_output_is_a_model_failure_with_failed_usage(api):
     api.provider.output = {"candidates": [{"kind": "DEFECT"}]}
     response = api.post(request_body("plan.md"))

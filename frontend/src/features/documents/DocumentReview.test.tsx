@@ -284,56 +284,6 @@ it('올린 사람이 아니어도 비비 검토가 끝나면 창을 다시 열�
   }
 })
 
-// S15P31A108-383: 서버가 실패를 알려 주지 않아 팀원 화면은 끝나지 않을 검토를 계속 다시 읽었고,
-// 올린 사람 화면은 창을 열 때마다 같은 검토를 다시 불러 같은 시간 초과를 되풀이했다.
-const failedCopy = async () => {
-  const copy = await documentsApi.workingCopy('102', '221')
-  return {
-    ...copy,
-    latest_review: undefined,
-    review_failure: {
-      error_code: 'review_unavailable',
-      failed_at: '2026-11-10T08:16:05Z',
-    },
-  }
-}
-
-it('지난 검토가 실패했으면 올린 사람 화면은 자동으로 다시 부르지 않고 다시 검토하기를 보인다', async () => {
-  const copy = await failedCopy()
-  const read = vi.spyOn(documentsApi, 'workingCopy').mockResolvedValue(copy)
-  const request = vi.spyOn(documentsApi, 'requestBeeReview')
-  try {
-    mount(true)
-    expect(
-      await screen.findByRole('button', { name: '다시 검토하기' }),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/지난 검토가 끝나지 못했어요/)).toBeInTheDocument()
-    expect(request).not.toHaveBeenCalled()
-  } finally {
-    read.mockRestore()
-    request.mockRestore()
-  }
-})
-
-it('지난 검토가 실패했으면 팀원 화면은 실패를 알리고 작업본을 다시 읽지 않는다', async () => {
-  const copy = await failedCopy()
-  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-  const read = vi.spyOn(documentsApi, 'workingCopy').mockResolvedValue(copy)
-  vi.useFakeTimers({ shouldAdvanceTime: true })
-  try {
-    mount(false)
-    expect(
-      await screen.findByText(/비비 검토를 마치지 못했어요. 올린 사람이/),
-    ).toBeInTheDocument()
-    const reads = read.mock.calls.length
-    await vi.advanceTimersByTimeAsync(REVIEW_POLL_MS * 3)
-    expect(read).toHaveBeenCalledTimes(reads)
-  } finally {
-    vi.useRealTimers()
-    read.mockRestore()
-  }
-})
-
 // review_stale 테스트가 모듈의 무효 검토 목록에 같은 검토 id를 남기므로 그보다 앞에 둔다.
 // 사용자 요청(11-02): 팀장이 승인하면 부르는 쪽(공용 문서함)이 목록으로 돌아가 같은 알림을 띄운다. 승인이 실패하면 검토 화면에 남는다.
 it('승인에 성공했을 때만 승인 알림 문구로 목록에 돌아가라고 알린다', async () => {

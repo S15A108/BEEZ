@@ -195,6 +195,7 @@ public class DocumentReviewService {
                 if (!fingerprint.equals(old.get("fingerprint")) && !completedReplay) throw conflict("idempotency_conflict");
                 if ("COMPLETED".equals(old.get("status"))) return Map.<String, Object>of("replay", old.get("review_id"));
                 if ("RUNNING".equals(old.get("status"))) throw conflict("review_in_progress");
+                if ("review_timeout".equals(old.get("error_code"))) throw timeout();
                 throw unavailable("이 검토 요청은 실패했습니다. 새 요청 키로 다시 검토해 주세요.");
             }
             editable(copy, expected);
@@ -253,12 +254,15 @@ public class DocumentReviewService {
                 var last = new HashMap<>(usage.getLast()); last.put("failed", true); usage.set(usage.size() - 1, last);
             }
             var actualUsage = usage;
+            // 시간 초과는 장애(503)와 구분해 504 review_timeout 으로 알린다. 사용량 기록은 둘 다 같다(모델이 돌았을 수 있다).
+            boolean timedOut = !(failure instanceof ApiException) && isTimeout(failure);
+            String errorCode = failure instanceof ApiException e ? e.getCode() : timedOut ? "review_timeout" : "review_unavailable";
             tx.executeWithoutResult(status -> {
-                repository.finishReview(document, caller.accountId(), key, null,
-                        failure instanceof ApiException e ? e.getCode() : "review_unavailable", actualUsage);
+                repository.finishReview(document, caller.accountId(), key, null, errorCode, actualUsage);
                 repository.recordUsage(project, actualUsage);
             });
             if (failure instanceof ApiException) throw failure;
+            if (timedOut) throw timeout();
             throw unavailable("비비 검토를 완료하지 못했습니다. 잠시 후 다시 요청해 주세요.");
         }
     }
@@ -266,6 +270,32 @@ public class DocumentReviewService {
     private Map<String, Object> validateResult(Map<String, Object> envelope, Map<String, Object> input) {
         return DocumentReviewResultValidator.validate(envelope, input);
     }
+    ApiException timeout() {
+        return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "review_timeout",
+                "비비가 문서를 검토하는 데 시간이 너무 오래 걸렸어요. 문서가 길 때 생길 수 있어요.");
+    }
+
+    /**
+     * 모델 시간 초과(AI 504·model_timeout)와 BE 읽기 시간 초과만 true. 연결 시간 초과는 AI 에 닿지 못한 장애라 false.
+     * AssignmentSuggestionService 와 같은 구분이다.
+     */
+    static boolean isTimeout(Throwable failure) {
+        if (failure instanceof org.springframework.web.client.RestClientResponseException response) {
+            if (response.getStatusCode().value() == 504) return true;
+            try {
+                var body = JSON.readValue(response.getResponseBodyAsString(), Map.class);
+                return body.get("error") instanceof Map<?, ?> error && "model_timeout".equals(error.get("code"));
+            } catch (RuntimeException ignored) { return false; }
+        }
+        if (failure instanceof org.springframework.web.client.ResourceAccessException) {
+            for (Throwable cause = failure.getCause(); cause != null; cause = cause.getCause()) {
+                if (cause instanceof java.net.http.HttpConnectTimeoutException) return false;
+                if (cause instanceof java.net.http.HttpTimeoutException || cause instanceof java.net.SocketTimeoutException) return true;
+            }
+        }
+        return false;
+    }
+
     ApiException unavailable(String message) { return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "review_unavailable", message); }
 
     Map<String, Object> currentReview(long project, long document, long review, long revision) {
@@ -468,13 +498,51 @@ public class DocumentReviewService {
         // 팀장 결정을 기다리거나 끝난 작성 건은 제출 때 이미 통과한 검토라 무효로 표시하지 않는다.
         boolean open = !Set.of("SUBMITTED", "APPROVED").contains(row.get("status").toString());
         boolean stale = open && latest.isPresent() && !usable(latest.get(), project, document, id(row, "revision"));
-        // 팀장 검토 중·승인된 작성 건에는 새 검토를 부르지 않으므로 실패도 알리지 않는다.
-        var failure = open ? repository.latestReviewFailure(document)
-                .map(f -> new DocumentReviewFailureResponse((String) f.get("error_code"), time(f.get("created_at")))).orElse(null) : null;
         return new DocumentWorkingCopyResponse(Long.toString(document), row.get("owner_account_id").toString(), id(row, "revision"),
                 row.get("status").toString(), row.get("content_text").toString(), row.get("file_name").toString(),
                 latest.map(this::reviewView).orElse(null),
-                repository.submissions(project, document, null).stream().map(this::submissionView).toList(), stale, failure);
+                repository.submissions(project, document, null).stream().map(this::submissionView).toList(), stale,
+                repository.latestReviewRequest(document).map(this::requestView).orElse(null));
+    }
+
+    /** 도는 중으로 10분이 넘은 요청은 서버가 같은 키 요청 때 실패 처리하는 것과 같게 실패로 보여, 팀원 화면이 끝없이 기다리지 않게 한다. */
+    private BeeReviewRequestResponse requestView(Map<String, Object> row) {
+        String status = row.get("status").toString(), error = (String) row.get("error_code");
+        String at = DocumentValues.time(row.get("created_at"));
+        if ("RUNNING".equals(status) && java.time.Instant.parse(at).isBefore(java.time.Instant.now().minus(java.time.Duration.ofMinutes(10)))) {
+            status = "FAILED"; error = "review_timeout";
+        }
+        return new BeeReviewRequestResponse(status, error, at);
+    }
+
+    /**
+     * DOC-A25 문서 등록 취소. 등록자나 팀장이, 승인된 적 없는 문서를 기준 설계 v1 전에 취소한다.
+     * 삭제하지 않고 폐기 시각을 남기며(버전은 미채택) 같은 종류의 문서를 다시 올릴 수 있다. 같은 문서를 다시 취소하면 같은 결과다.
+     */
+    @Transactional
+    public DocumentDiscardResponse discard(CallerContext caller, long project, long document, String key) {
+        key(key);
+        lock(caller, project, false);
+        var copy = repository.workingCopy(project, document, true)
+                .orElseThrow(() -> AccessErrors.notFound("document_working_copy_missing"));
+        boolean leader = "LEADER".equals(repository.currentRole(project, caller.accountId()).orElse(""));
+        if (id(copy, "owner_account_id") != caller.accountId() && !leader) {
+            throw AccessErrors.forbidden("document_author_required", "등록한 담당자나 팀장만 문서 등록을 취소할 수 있습니다.");
+        }
+        String operation = "discard-document:" + document, fingerprint = hash(Map.of("document", document));
+        var previous = repository.replay(project, caller.accountId(), operation, key, fingerprint);
+        if (previous.isPresent()) return JSON.readValue(previous.get(), DocumentDiscardResponse.class);
+        if (copy.get("discarded_at") == null) {
+            if ("SUBMITTED".equals(copy.get("status"))) throw conflict("submission_locked");
+            if ("APPROVED".equals(copy.get("status")) || repository.hasApprovedVersion(document)) throw conflict("document_approved");
+            initialWorkflow(project);
+            repository.discard(document);
+            activities.record(caller, ActivityEvent.of("doc-discard:" + document, project, "DOCUMENT_DISCARDED",
+                    ActivityTargetType.DOCUMENT_VERSION, latestVersion(copy)));
+        }
+        var response = new DocumentDiscardResponse(Long.toString(document), true);
+        repository.remember(project, caller.accountId(), operation, key, fingerprint, response);
+        return response;
     }
 
     @SuppressWarnings("unchecked")

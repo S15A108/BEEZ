@@ -72,6 +72,17 @@ class DocumentReviewRoute(APIRoute):
 router = APIRouter(route_class=DocumentReviewRoute)
 
 
+def _model_timeout_seconds(settings: Settings) -> float:
+    """Model-call limit from settings; a bad value is a configuration error, not a model failure."""
+    try:
+        value = float(settings.document_review_llm_timeout_seconds)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(503, detail="document_review_not_configured") from None
+    if not math.isfinite(value) or not 0 < value <= 120:
+        raise HTTPException(503, detail="document_review_not_configured")
+    return value
+
+
 def _valid_gms_endpoint(endpoint: str) -> bool:
     # The shared provider accepts arbitrary HTTPS endpoints. Document review
     # sends the GMS credential, so restrict its destination independently.
@@ -116,17 +127,6 @@ async def get_review_client(
         yield LLMClient(provider)
 
 
-def _review_timeout(settings: Settings) -> float:
-    """Model time per call; a bad value fails the route instead of the call."""
-    try:
-        timeout = float(settings.document_review_llm_timeout_seconds)
-    except (TypeError, ValueError, OverflowError):
-        raise HTTPException(503, detail="document_review_not_configured") from None
-    if not math.isfinite(timeout) or not 0 < timeout <= 120:
-        raise HTTPException(503, detail="document_review_not_configured")
-    return timeout
-
-
 def _request_openapi_schema():
     # The request is read as a stream to enforce the body limit.  Since FastAPI
     # does not register its model automatically, inline Pydantic's definitions:
@@ -161,17 +161,15 @@ async def document_review(
     settings: Annotated[Settings, Depends(get_settings)],
     client: Annotated[LLMClient, Depends(get_review_client)],
 ):
-    timeout = _review_timeout(settings)
     raw = bytearray()
     async for chunk in request.stream():
         if len(raw) + len(chunk) > _MAX_BODY_BYTES:
             raise HTTPException(413, detail="file_too_large")
         raw.extend(chunk)
     body = DocumentReviewRequest.model_validate_json(bytes(raw))
+    timeout_seconds = _model_timeout_seconds(settings)
     if body.mode in ("DISCUSS", "REQUEST"):
         return await analyze_mode(
-            body, client, settings.bee_default_model, timeout_seconds=timeout
+            body, client, settings.bee_default_model, timeout_seconds
         )
-    return await analyze(
-        body, client, settings.bee_default_model, timeout_seconds=timeout
-    )
+    return await analyze(body, client, settings.bee_default_model, timeout_seconds)

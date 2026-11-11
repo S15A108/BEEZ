@@ -156,6 +156,15 @@ export type UploadDraftResponse = z.infer<typeof uploadDraftResponseSchema>
 export const workingCopyResponseSchema = common.documentWorkingCopySchema
 export type WorkingCopyResponse = z.infer<typeof workingCopyResponseSchema>
 
+// DOC-A25 문서 등록 취소(S15P31A108-382)
+export const discardDocumentResponseSchema = z.object({
+  document_id: common.idSchema,
+  discarded: z.boolean(),
+})
+export type DiscardDocumentResponse = z.infer<
+  typeof discardDocumentResponseSchema
+>
+
 export const updateWorkingCopyInputSchema = z.object({
   expected_revision: z.number().int().positive(),
   content: z.string().min(1),

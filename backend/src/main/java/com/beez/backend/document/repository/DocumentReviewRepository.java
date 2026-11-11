@@ -19,11 +19,45 @@ public class DocumentReviewRepository {
         return jdbc.sql(sql).params(params).query().listOfRows();
     }
 
+    /** 등록 취소한 문서(S15P31A108-382)의 작업본은 없는 것으로 본다. 편집·검토·제출이 모두 404 가 된다. */
     public Optional<Map<String, Object>> workingCopy(long project, long document) {
+        return workingCopy(project, document, false);
+    }
+
+    public Optional<Map<String, Object>> workingCopy(long project, long document, boolean includeDiscarded) {
         return rows("""
-                SELECT w.*,d.project_id,d.type,d.title FROM document_working_copy w JOIN document d ON d.id=w.document_id
+                SELECT w.*,d.project_id,d.type,d.title,d.discarded_at FROM document_working_copy w JOIN document d ON d.id=w.document_id
                 WHERE d.project_id=:project AND d.id=:document
-                """, Map.of("project", project, "document", document)).stream().findFirst();
+                """ + (includeDiscarded ? "" : " AND d.discarded_at IS NULL"),
+                Map.of("project", project, "document", document)).stream().findFirst();
+    }
+
+    /** 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청. 고친 뒤(작업본 갱신 이후)에 시작한 요청만 본다. */
+    public Optional<Map<String, Object>> latestReviewRequest(long document) {
+        return rows("""
+                SELECT r.status,r.error_code,r.created_at FROM document_bee_review_request r
+                JOIN document_working_copy w ON w.document_id=r.document_id
+                WHERE r.document_id=:document AND r.created_at>=w.updated_at
+                ORDER BY r.created_at DESC LIMIT 1
+                """, Map.of("document", document)).stream().findFirst();
+    }
+
+    public boolean hasApprovedVersion(long document) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM document_version WHERE document_id=:document AND status IN ('APPROVED','SUPERSEDED'))")
+                .param("document", document).query(Boolean.class).single();
+    }
+
+    /**
+     * 등록 취소(DOC-A25): 문서에 폐기 시각을 남기고 아직 채택되지 않은 버전은 미채택(REJECTED)으로 닫으며,
+     * 도는 중인 비비 검토 요청은 실패로 닫아 늦게 도착한 AI 결과가 채택되지 않게 한다. 삭제는 하지 않는다.
+     */
+    public void discard(long document) {
+        jdbc.sql("UPDATE document SET discarded_at=now(),updated_at=now() WHERE id=:document AND discarded_at IS NULL")
+                .param("document", document).update();
+        jdbc.sql("UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1 WHERE document_id=:document AND status='DRAFT'")
+                .param("document", document).update();
+        jdbc.sql("UPDATE document_bee_review_request SET status='FAILED',error_code='document_discarded' WHERE document_id=:document AND status='RUNNING'")
+                .param("document", document).update();
     }
 
     public boolean lockMember(long project, long account, boolean leader) {
@@ -251,21 +285,6 @@ public class DocumentReviewRepository {
                 .params(Map.of("document", document, "account", account, "key", key)).update();
         return rows("SELECT * FROM document_bee_review_request WHERE document_id=:document AND account_id=:account AND request_key=:key",
                 Map.of("document", document, "account", account, "key", key)).stream().findFirst();
-    }
-
-    /**
-     * 지금 본문(마지막 수정 이후)에 대한 가장 최근 검토 요청이 실패했으면 그 요청. 그 뒤에 저장된 검토가 있거나 새 요청이 진행 중이면 없다.
-     * 10분 넘게 RUNNING 인 요청은 {@link #reviewRequest}가 같은 키로 다시 부를 때 FAILED 로 바꾸는 것과 같은 기준으로 실패로 본다.
-     */
-    public Optional<Map<String, Object>> latestReviewFailure(long document) {
-        return rows("""
-                SELECT CASE WHEN r.status='FAILED' THEN r.error_code ELSE 'review_timeout' END AS error_code,r.created_at
-                FROM document_bee_review_request r JOIN document_working_copy w ON w.document_id=r.document_id
-                WHERE r.document_id=:document AND r.created_at>=w.updated_at
-                  AND (r.status='FAILED' OR (r.status='RUNNING' AND r.created_at<now()-interval '10 minutes'))
-                  AND NOT EXISTS (SELECT 1 FROM document_bee_review_request n WHERE n.document_id=r.document_id AND n.created_at>r.created_at)
-                  AND NOT EXISTS (SELECT 1 FROM document_bee_review b WHERE b.document_id=r.document_id AND b.created_at>r.created_at)
-                """, Map.of("document", document)).stream().findFirst();
     }
 
     public void startReview(long document, long account, String key, String fingerprint) {

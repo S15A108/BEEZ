@@ -256,10 +256,9 @@ export default function CityScene(props: CitySceneProps) {
           alpha: false,
           powerPreference: 'high-performance',
         }}
+        // 대체 문구는 <canvas> 안에 늘 들어 있어 접근성 트리에 남는다. 알림(alert)이면 3D가 잘 떠도 오류로 읽힌다.
         fallback={
-          <p role="alert">
-            3D 지도를 표시하지 못했어요. 프로젝트 목록에서 선택해 주세요.
-          </p>
+          <p>3D 지도를 표시하지 못했어요. 프로젝트 목록에서 선택해 주세요.</p>
         }
       >
         <CityRuntime props={props} overlay={overlay} root={root} />

@@ -178,6 +178,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
       : { kind: 'detail' },
   )
+  // 제안 작성·승인·반려는 PaneSheet가 아니라 창 안 전체 화면이지만, 쓰던 내용이 mode와 함께 사라지므로 하위 화면처럼
+  // 세어 단축 바 숫자 키를 막는다(D46, PR #264 리뷰). 창째 닫혀도 정리 함수가 돌아 수가 남지 않는다.
+  const holdsInput =
+    mode.kind === 'form' || mode.kind === 'approve' || mode.kind === 'reject'
+  const trackSheet = useWorkspaceStore((state) => state.trackSheet)
+  useEffect(() => {
+    if (!holdsInput) return
+    trackSheet(true)
+    return () => trackSheet(false)
+  }, [holdsInput, trackSheet])
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
   const queryClient = useQueryClient()
@@ -1304,11 +1314,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                     <div role="tabpanel" className="min-h-40">
                       {tab === 'overview' && (
                         <div className="grid gap-3 text-sm">
-                          <p className="leading-[21px]">{current.reason}</p>
+                          <p className="leading-[21px] whitespace-pre-wrap">
+                            {current.reason}
+                          </p>
                           {/* 캔버스 PNL-04-v2 개요: 모서리 14px·안쪽 16/18px 카드, 15px·700 머리와 노란 글자 이동 버튼 */}
+                          {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
                           <section className={overviewCard}>
                             <h4 className={overviewHead}>
-                              바뀌는 내용 {current.items.length}
+                              바뀌는 내용{' '}
+                              {current.items.length + current.documents.length}
                               <span className="flex items-center gap-2 font-medium">
                                 <span className="text-xs text-muted-foreground">
                                   {(['UPDATE', 'CREATE', 'RETIRE'] as const)
@@ -1326,6 +1340,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                     .map(
                                       ([operation, count]) =>
                                         `${operationLabel[operation]} ${count}`,
+                                    )
+                                    .concat(
+                                      current.documents.length
+                                        ? [`문서 ${current.documents.length}`]
+                                        : [],
                                     )
                                     .join(' · ')}
                                 </span>
@@ -1361,12 +1380,33 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                   </span>
                                 </li>
                               ))}
-                              {current.documents.length > 0 && (
-                                <li className="py-[7px] text-[13px] text-muted-foreground">
-                                  문서 변경 {current.documents.length}건은 공용
-                                  문서함 승인 흐름에서 다뤄요.
-                                </li>
-                              )}
+                              {current.documents.map((change) => {
+                                const document = documentOptions.find(
+                                  (item) => item.id === change.document_id,
+                                )
+                                // 승인 확인창처럼 '문서 vN → 새 버전'. 제안의 기준이 지금 승인본과 다르면 번호를 짐작하지 않는다.
+                                const from =
+                                  document?.versionId ===
+                                  change.base_document_version_id
+                                    ? ` v${document.versionNo}`
+                                    : ''
+                                return (
+                                  <li
+                                    key={change.document_id}
+                                    className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
+                                  >
+                                    <Tag tone={operationTone.UPDATE}>
+                                      {operationLabel.UPDATE}
+                                    </Tag>
+                                    <strong className="truncate font-semibold">
+                                      문서
+                                    </strong>
+                                    <span className="truncate">
+                                      {`${document?.title ?? '문서'}${from} → 새 버전`}
+                                    </span>
+                                  </li>
+                                )
+                              })}
                             </ul>
                           </section>
                           <div className="grid gap-3 sm:grid-cols-2">

@@ -198,6 +198,9 @@ class OpenAICompatibleProvider:
             raise ProviderError("invalid_output", **kwargs)
         choice = choices[0]
         message = choice.get("message")
+        # 출력 상한(max_tokens)에 닿아 답이 중간에 끊겼다. 형식 오류가 아니라 상한 문제이므로 따로 알린다 (S15P31A108-382).
+        if choice.get("finish_reason") == "length":
+            raise ProviderError("output_truncated", **kwargs)
         if (
             not isinstance(message, dict)
             or message.get("refusal")

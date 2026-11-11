@@ -67,7 +67,8 @@ export function PlanningQuestions({
   published: boolean
   onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
 }) {
-  const [answering, setAnswering] = useState<PlanningQuestion | null>(null)
+  // 답하는 중인 질문의 id. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 id 만 바꿔 넘긴다.
+  const [answeringId, setAnsweringId] = useState<string | null>(null)
   const failed = generations.filter((item) => item.status === 'FAILED')
   const activeIds = generations
     .filter((item) => item.status !== 'FAILED')
@@ -107,6 +108,8 @@ export function PlanningQuestions({
     // 질문을 만드는 동안에는 끝날 때까지 목록을 다시 불러온다.
     refetchInterval: generating ? ACTIVE_POLL_MS : false,
   })
+  const allQuestions = questions.data?.pages.flatMap((page) => page.items) ?? []
+  const answering = allQuestions.find((item) => item.id === answeringId)
   return (
     <Card>
       <CardHeader>
@@ -197,7 +200,7 @@ export function PlanningQuestions({
                         busy={busy}
                         answerable={answerable}
                         published={published}
-                        onAnswer={() => setAnswering(question)}
+                        onAnswer={() => setAnsweringId(question.id)}
                       />
                     ))}
                   </>
@@ -221,7 +224,9 @@ export function PlanningQuestions({
       {answering && (
         <QuestionAnswerForm
           question={answering}
-          onClose={() => setAnswering(null)}
+          siblings={allQuestions}
+          onNavigate={setAnsweringId}
+          onClose={() => setAnsweringId(null)}
           onSubmit={(input) => onAnswer(answering.id, input)}
         />
       )}

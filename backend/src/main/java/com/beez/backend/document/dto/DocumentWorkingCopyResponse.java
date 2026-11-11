@@ -4,4 +4,4 @@ import java.util.List;
 
 public record DocumentWorkingCopyResponse(String documentId, String ownerAccountId, long revision,
         String status, String content, String fileName, DocumentBeeReviewResponse latestReview,
-        List<DocumentSubmissionResponse> submissions, boolean reviewStale, DocumentReviewFailureResponse reviewFailure) { }
+        List<DocumentSubmissionResponse> submissions, boolean reviewStale, BeeReviewRequestResponse beeReviewRequest) { }

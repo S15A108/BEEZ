@@ -81,6 +81,7 @@ const activityLabels: Record<string, string> = {
   DOCUMENT_REGISTERED: '문서를 올렸어요',
   DOCUMENT_APPROVED: '문서를 승인했어요',
   DOCUMENT_REJECTED: '문서를 반려했어요',
+  DOCUMENT_DISCARDED: '문서 등록을 취소했어요',
   BASELINE_CREATED: '기준 설계를 발행했어요',
   CHANGE_PROPOSAL_SUBMITTED: '변경 제안을 올렸어요',
   CHANGE_PROPOSAL_WITHDRAWN: '변경 제안을 거뒀어요',

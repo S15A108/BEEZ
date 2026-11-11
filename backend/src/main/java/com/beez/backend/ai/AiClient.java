@@ -25,8 +25,8 @@ public class AiClient {
     /** 질문 생성(30초)·초안 생성(45초) 모델 제한보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
     static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
-    /** 문서 검토·대화 모델 제한(AI 기본 60초)보다 길어야 한다. 긴 API 명세서는 20~38초 걸렸다(S15P31A108-383). */
-    static final Duration DEFAULT_DOCUMENT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(75);
+    /** 문서 검토 모델 제한(30초)보다 길고 nginx(60초)보다 짧아야 한다 (S15P31A108-382). */
+    static final Duration DEFAULT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(40);
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -36,14 +36,14 @@ public class AiClient {
     private final HttpClient chatHttp;
 
     public AiClient(BeezProperties props) {
-        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_DOCUMENT_REVIEW_READ_TIMEOUT);
+        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_REVIEW_READ_TIMEOUT);
     }
 
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
                     @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
-                    @Value("${beez.document.review-read-timeout:75s}") Duration reviewReadTimeout) {
+                    @Value("${beez.document-review.read-timeout:40s}") Duration reviewReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
@@ -121,7 +121,7 @@ public class AiClient {
         return rest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
     }
 
-    /** 문서 검토와 그 대화·요청 모드(AI 모델 제한 기본 60초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */
+    /** BE adapter contract; AI feature implementation belongs to the AI owner. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {
         return reviewRest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);

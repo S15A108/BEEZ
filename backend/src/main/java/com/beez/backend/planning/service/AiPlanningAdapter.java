@@ -3,6 +3,7 @@ package com.beez.backend.planning.service;
 import static com.beez.backend.ai.AiErrorBodies.usageIn;
 
 import com.beez.backend.ai.AiClient;
+import com.beez.backend.ai.AiErrorBodies;
 import com.beez.backend.planning.port.AiFailure;
 import com.beez.backend.planning.port.DesignDraftGateway;
 import com.beez.backend.planning.port.PlanningQuestionGateway;
@@ -27,6 +28,8 @@ import org.springframework.web.client.RestClientResponseException;
 public class AiPlanningAdapter implements PlanningQuestionGateway, DesignDraftGateway {
     private static final Logger log = LoggerFactory.getLogger(AiPlanningAdapter.class);
     static final String UNAVAILABLE = "AI 서버가 요청을 처리하지 못했어요. 잠시 뒤 다시 시도해 주세요.";
+    /** AI 가 출력 상한에 닿아 답이 끊겼다고 알린 경우(S15P31A108-382). */
+    static final String OUTPUT_TOO_LONG = "AI가 답을 쓰다가 출력 길이 상한에 걸려 끊겼어요. 문서가 길거나 질문이 많을 때 생겨요.";
     static final String TIMEOUT = "AI 응답이 시간 안에 오지 않았어요. 잠시 뒤 다시 시도해 주세요.";
 
     private final AiClient ai;
@@ -47,6 +50,11 @@ public class AiPlanningAdapter implements PlanningQuestionGateway, DesignDraftGa
             throw new AiFailure(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", TIMEOUT, usageIn(e), true);
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
+            // 출력 상한에 닿아 끊긴 답은 형식 오류와 달리 이유를 알린다. 상한을 올리면 성공할 수 있어 다시 시도할 수 있다.
+            if ("model_output_truncated".equals(AiErrorBodies.codeIn(e))) {
+                log.warn("AI {} output was cut off by the output token limit", label);
+                throw new AiFailure(HttpStatus.BAD_GATEWAY, "ai_output_too_long", OUTPUT_TOO_LONG, usageIn(e), true);
+            }
             // 404(라우트 없음)·503(기본 비활성)은 설정이 갖춰지면 성공하므로 재시도 가능, 나머지 4xx 는 요청 자체가 거부된 것이다.
             boolean retryable = e.getStatusCode().is5xxServerError() || status == 404 || status == 408 || status == 429;
             if (!retryable) log.error("AI {} rejected the request: status={} body={}", label, status, e.getResponseBodyAsString());
