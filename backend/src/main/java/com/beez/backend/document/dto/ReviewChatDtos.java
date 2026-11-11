@@ -17,5 +17,22 @@ public final class ReviewChatDtos {
             @NotBlank(message = "요청 내용을 입력해 주세요.")
             @Size(max = 5000, message = "요청 내용은 5,000자 이하입니다.") String text) { }
 
-    public record DirectResponse(DocumentSuggestionResponse suggestion) { }
+    /**
+     * outcome 은 CREATED(새 제안이 붙음) 또는 NO_CHANGE(비비가 고칠 곳이 없다고 답함, suggestion 은 null, reason 에 이유).
+     * outcome 이 없는 예전 저장 응답은 CREATED 로 본다.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    public record DirectResponse(String outcome, DocumentSuggestionResponse suggestion, String reason) {
+        public static DirectResponse created(DocumentSuggestionResponse suggestion) {
+            return new DirectResponse("CREATED", suggestion, null);
+        }
+
+        public static DirectResponse noChange(String reason) {
+            return new DirectResponse("NO_CHANGE", null, reason);
+        }
+
+        public boolean isNoChange() {
+            return "NO_CHANGE".equals(outcome);
+        }
+    }
 }

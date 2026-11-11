@@ -1,4 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
+import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
+import {
+  currentVersionJobs,
+  draftWork,
+  hasActiveJob,
+} from '@/features/planning/draftJobs'
 import { getApiErrorCode } from '@/api/error'
 import { documentsApi, planningApi } from '@/api/services'
 import type { DesignItemVersion } from '@/api/contracts/common'
@@ -55,6 +61,16 @@ export function useProjectStart(projectId: string, enabled = true) {
     queryFn: () => readAllDrafts(projectId),
     enabled,
   })
+  // 후보 작업(PLN-A05). 기획 분석 창과 같은 키라 한쪽에서 받은 것을 같이 쓴다.
+  const jobs = useQuery({
+    queryKey: ['projects', projectId, 'design-draft-jobs'],
+    queryFn: () => planningApi.drafts(projectId),
+    enabled,
+    refetchInterval: (query) =>
+      !query.state.error && hasActiveJob(query.state.data?.jobs ?? [])
+        ? ACTIVE_POLL_MS
+        : false,
+  })
   const approved =
     documents.data?.items.filter(
       (document) =>
@@ -71,6 +87,16 @@ export function useProjectStart(projectId: string, enabled = true) {
     // 서버는 문서 승인·색인 뒤에 설계 초안을 만들지 않는다. 초안이 0개면 기획 분석 창에서 만들어야 시작할 수 있다.
     needsDrafts: drafts.data?.items.length === 0,
     ready: approvedCount === 4 && indexed,
+    // 설계 초안이 있어도 후보가 남아 있으면 기획 분석 창으로 돌아가 이어서 하게 한다.
+    work: draftWork(
+      currentVersionJobs(
+        jobs.data?.jobs ?? [],
+        (documents.data?.items ?? []).flatMap((document) => {
+          const version = document.approved_version ?? document.latest_draft
+          return version ? [version.id] : []
+        }),
+      ),
+    ),
     busy: action.busy,
     error: action.error,
     start: () =>

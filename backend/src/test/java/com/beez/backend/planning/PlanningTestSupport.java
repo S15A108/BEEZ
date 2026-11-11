@@ -39,6 +39,7 @@ abstract class PlanningTestSupport extends IntegrationTestSupport {
     void planningSetup() {
         // DB 는 시험 클래스끼리 공유한다 — 다른 시험이 남긴 대기/완료 작업을 워커가 먼저 집지 않게 비운다.
         jdbc.update("DELETE FROM design_draft_candidate");
+        jdbc.update("DELETE FROM design_draft_job_part");
         jdbc.update("DELETE FROM design_draft_job");
         jdbc.update("DELETE FROM planning_question_run");
         jdbc.update("UPDATE document_processing SET status='FAILED',source_status='FAILED',index_status='FAILED',error_code='test_reset',lease_token=null,lease_until=null WHERE status IN ('PENDING','RUNNING','COMPLETED')");

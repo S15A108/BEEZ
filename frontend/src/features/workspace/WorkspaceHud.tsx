@@ -128,6 +128,8 @@ type Step = {
     run?: () => void
     disabled?: boolean
   }
+  /** 주 버튼 옆에 두는 보조 링크(창 열기) */
+  secondary?: { label: string; pane: WorkspacePane }
   note?: string
   children?: ReactNode
 }
@@ -389,11 +391,17 @@ export function WorkspaceHud({
                 disabled: !start.ready || start.busy,
               }
             : { label: '문서함 보기', pane: 'documents' },
+      secondary:
+        allApproved && !start.needsDrafts && start.work.open
+          ? { label: start.work.label, pane: 'planning' }
+          : undefined,
       note: start.error
         ? start.error
-        : allApproved
-          ? '시작하면 변경 제안과 작업 계획을 받을 수 있어요'
-          : undefined,
+        : allApproved && !start.needsDrafts && start.work.open
+          ? `${start.work.summary} · 시작하면 이 후보는 기준에 들어가지 않아요`
+          : allApproved
+            ? '시작하면 변경 제안과 작업 계획을 받을 수 있어요'
+            : undefined,
     },
   ]
   const memberSteps: Step[] = [
@@ -996,6 +1004,15 @@ export function WorkspaceHud({
                                 }
                               >
                                 {step.action.label}
+                              </Button>
+                            )}
+                            {step.secondary && (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={() => openPane(step.secondary!.pane)}
+                              >
+                                {step.secondary.label}
                               </Button>
                             )}
                             {!isLeader &&

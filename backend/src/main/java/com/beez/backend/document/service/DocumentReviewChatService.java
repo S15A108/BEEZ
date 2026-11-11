@@ -142,8 +142,12 @@ public class DocumentReviewChatService {
         });
         if (prepared.replay() != null) return JSON.readValue(prepared.replay(), DirectResponse.class);
 
-        return callAndSave(project, prepared, envelope -> DocumentReviewResultValidator.validateRequested(envelope, prepared.payload(),
-                prepared.reviewResult(), pendingRanges(review, prepared.payload().get("content").toString())), validated -> tx.execute(status -> {
+        return callAndSave(project, prepared, envelope -> {
+            // 비비가 고칠 곳이 없다고 답했으면(이유 포함) 제안 검증을 건너뛴다.
+            if (DocumentReviewResultValidator.requestedNoChangeReason(envelope, prepared.payload()) != null) return;
+            DocumentReviewResultValidator.validateRequested(envelope, prepared.payload(),
+                    prepared.reviewResult(), pendingRanges(review, prepared.payload().get("content").toString()));
+        }, validated -> tx.execute(status -> {
             reviews.lock(caller, project, false);
             var copy = reviews.owned(caller, project, document);
             var previous = repository.replay(project, caller.accountId(), operation, key, fingerprint);
@@ -151,12 +155,20 @@ public class DocumentReviewChatService {
             reviews.initialWorkflow(project);
             reviews.editable(copy, input.expectedRevision());
             requireUnchanged(project, document, review, copy, prepared);
+            String noChange = DocumentReviewResultValidator.requestedNoChangeReason(validated.envelope(), prepared.payload());
+            if (noChange != null) {
+                // 제안은 만들지 않고 사용량만 남긴다. 같은 키로 다시 부르면 같은 답을 돌려준다.
+                repository.recordUsage(project, validated.usage());
+                var answer = DirectResponse.noChange(noChange);
+                repository.remember(project, caller.accountId(), operation, key, fingerprint, answer);
+                return answer;
+            }
             // 다른 직접 요청이 그사이 들어와 같은 구간을 차지했을 수 있다 — 저장 직전에 겹침을 다시 센다.
             var suggestion = DocumentReviewResultValidator.validateRequested(validated.envelope(), prepared.payload(),
                     prepared.reviewResult(), pendingRanges(review, prepared.payload().get("content").toString()));
             var row = repository.insertRequestedSuggestion(review, suggestion);
             repository.recordUsage(project, validated.usage());
-            var response = new DirectResponse(reviews.suggestionView(row, List.of()));
+            var response = DirectResponse.created(reviews.suggestionView(row, List.of()));
             repository.remember(project, caller.accountId(), operation, key, fingerprint, response);
             return response;
         }));

@@ -49,10 +49,17 @@ public class DesignDraftService {
     private final DesignItemRepository items;
     private final DesignCommandService commands;
     private final DesignContentValidator content;
+    private final int partMaxChars;
+    private final int maxParts;
+    private final int maxAttempts;
 
     public DesignDraftService(ProjectAccessChecker access, LeaderGuard leader, DesignDraftRepository drafts, DesignItemRepository items,
-                              DesignCommandService commands, DesignContentValidator content) {
+                              DesignCommandService commands, DesignContentValidator content,
+                              @org.springframework.beans.factory.annotation.Value("${beez.planning.part-max-chars:6000}") int partMaxChars,
+                              @org.springframework.beans.factory.annotation.Value("${beez.planning.max-parts:12}") int maxParts,
+                              @org.springframework.beans.factory.annotation.Value("${beez.planning.max-draft-attempts:3}") int maxAttempts) {
         this.access = access; this.leader = leader; this.drafts = drafts; this.items = items; this.commands = commands; this.content = content;
+        this.partMaxChars = Math.max(500, partMaxChars); this.maxParts = Math.max(1, maxParts); this.maxAttempts = Math.max(1, maxAttempts);
     }
 
     // ---- PLN-A05 접수 ----
@@ -82,6 +89,14 @@ public class DesignDraftService {
                 throw conflict("analysis_not_completed", "문서 분석이 아직 끝나지 않았습니다. 분석 상태를 확인해 주세요.");
             }
             if (drafts.activeJobExists(version)) throw conflict("draft_in_progress", "이미 이 문서의 초안을 만들고 있습니다. 끝난 뒤 다시 요청해 주세요.");
+            if (input.documentOnly()) {
+                long job = requestDocumentOnly(project, doc, caller.accountId(), key);
+                var entry = new LinkedHashMap<String, Object>();
+                entry.put("id", Long.toString(job));
+                entry.put("document_version_id", Long.toString(version));
+                jobs.add(entry);
+                continue;
+            }
             var snapshot = snapshot(project, doc);
             long job = drafts.insertJob(project, version, caller.accountId(), key, snapshot, hash(snapshot));
             var entry = new LinkedHashMap<String, Object>();
@@ -97,8 +112,46 @@ public class DesignDraftService {
         return response;
     }
 
+    /**
+     * 팀장이 누른 "문서에서 다시 만들기"(S15P31A108-389). 같은 문서 버전에 문서 단독 작업이 없으면 새로 접수하고,
+     * 실패한 작업이 있으면 실패한 부분만 다시 돌리게 대기시킨다(시도 횟수 상한). 이미 끝난 작업이면 다시 만들지 않는다.
+     */
+    private long requestDocumentOnly(long project, Map<String, Object> doc, long account, String key) {
+        long version = ((Number) doc.get("document_version_id")).longValue();
+        var last = drafts.latestDocumentOnlyJob(version);
+        if (last.isEmpty()) return intakeDocumentOnly(project, doc, account, key, "MANUAL");
+        var job = last.get();
+        long id = ((Number) job.get("id")).longValue();
+        if ("COMPLETED".equals(job.get("status"))) {
+            throw conflict("draft_already_generated", "이 문서 버전은 이미 후보를 만들었습니다. 문서를 고쳐 새 버전을 승인하면 다시 만들 수 있습니다.");
+        }
+        if (((Number) job.get("attempt_no")).intValue() >= maxAttempts) {
+            throw conflict("draft_retry_limit_exceeded", "다시 시도할 수 있는 횟수(" + maxAttempts + "회)를 다 썼습니다. 설계 항목을 직접 추가하거나 문서를 고쳐 새 버전을 승인해 주세요.");
+        }
+        drafts.retryFailedJob(id);
+        return id;
+    }
+
+    /**
+     * 문서 단독 작업 접수(자동·수동 공통). 호출한 쪽이 프로젝트 잠금, 기준 설계 없음, 분석 완료를 확인했다.
+     * 입력 스냅샷에는 기존 항목·질문을 넣지 않고, 본문을 줄 범위 부분으로 나눠 부분 행을 만든다. AI 는 부르지 않는다.
+     */
+    long intakeDocumentOnly(long project, Map<String, Object> doc, long account, String key, String trigger) {
+        // 문서 단독 모드는 기존 항목·질문을 쓰지 않으므로 읽지도 않는다(기존 항목이 많아 draft_too_large 로 접수가 막히지 않게).
+        var snapshot = snapshot(project, doc, false);
+        long version = ((Number) doc.get("document_version_id")).longValue();
+        long job = drafts.insertDocumentOnlyJob(project, version, account, key, snapshot, hash(snapshot), trigger);
+        int no = 1;
+        for (var part : DraftPartPlanner.plan(doc.get("content_text").toString(), partMaxChars, maxParts)) drafts.insertPart(job, no++, part.start(), part.end());
+        return job;
+    }
+
     /** AI 에 보낼 입력(요청 키 제외)을 접수 시점의 값으로 고정한다. */
     private Map<String, Object> snapshot(long project, Map<String, Object> doc) {
+        return snapshot(project, doc, true);
+    }
+
+    private Map<String, Object> snapshot(long project, Map<String, Object> doc, boolean withContext) {
         long version = ((Number) doc.get("document_version_id")).longValue();
         boolean markdown = doc.get("storage_key").toString().endsWith(".md");
         var documentRef = new LinkedHashMap<String, Object>();
@@ -115,6 +168,11 @@ public class DesignDraftService {
         snapshot.put("text_hash", doc.get("text_hash"));
         snapshot.put("normalization_version", "utf8-lf-v1");
         snapshot.put("parser_profile", markdown ? "markdown-v1" : "plain-v1");
+        if (!withContext) {
+            snapshot.put("existing_items", List.of());
+            snapshot.put("questions", List.of());
+            return snapshot;
+        }
         var existing = new ArrayList<Map<String, Object>>();
         for (var row : drafts.existingItems(project, version)) existing.add(itemView(row));
         if (existing.size() > MAX_ITEMS) throw conflict("draft_too_large", "기존 설계 항목이 너무 많아 한 번에 처리할 수 없습니다.");
@@ -212,6 +270,20 @@ public class DesignDraftService {
         }
         view.put("created_at", time(job.get("created_at")));
         view.put("updated_at", time(job.get("updated_at")));
+        boolean documentOnly = "DOCUMENT_ONLY".equals(job.get("mode"));
+        view.put("mode", job.get("mode"));
+        view.put("trigger", job.get("trigger_kind"));
+        view.put("attempt_no", job.get("attempt_no"));
+        if (documentOnly) {
+            view.put("max_attempts", maxAttempts);
+            var parts = drafts.parts(id);
+            var summary = new LinkedHashMap<String, Object>();
+            summary.put("total", parts.size());
+            summary.put("completed", parts.stream().filter(p -> "COMPLETED".equals(p.get("status"))).count());
+            summary.put("failed", parts.stream().filter(p -> "FAILED".equals(p.get("status"))).count());
+            summary.put("failed_error_codes", parts.stream().filter(p -> "FAILED".equals(p.get("status"))).map(p -> p.get("error_code")).distinct().toList());
+            view.put("parts", summary);
+        }
         if (job.get("result_meta") != null) {
             Map<String, Object> meta = JSON.readValue(job.get("result_meta").toString(), Map.class);
             for (String field : List.of("unresolved", "unanswered_question_keys", "untouched_existing_ids", "omitted_items", "origin")) {
@@ -219,7 +291,8 @@ public class DesignDraftService {
             }
         }
         var candidates = new ArrayList<Map<String, Object>>();
-        if ("COMPLETED".equals(job.get("status"))) for (var c : drafts.candidates(id)) candidates.add(candidateView(c));
+        // 문서 단독 작업은 부분마다 후보를 저장하므로 일부 부분이 실패해도 만들어진 후보는 보여 준다.
+        if ("COMPLETED".equals(job.get("status")) || documentOnly) for (var c : drafts.candidates(id)) candidates.add(candidateView(c));
         view.put("candidates", candidates);
         return view;
     }
@@ -244,6 +317,9 @@ public class DesignDraftService {
         view.put("sources", JSON.readValue(c.get("sources").toString(), List.class));
         view.put("answer_refs", JSON.readValue(c.get("answer_refs").toString(), List.class));
         view.put("support", c.get("support"));
+        if (c.get("overlap_kind") != null) {
+            view.put("overlap", Map.of("kind", c.get("overlap_kind"), "ref_id", c.get("overlap_ref").toString()));
+        }
         if (c.get("rationale") != null) view.put("rationale", c.get("rationale"));
         if (c.get("adopted_item_version_id") != null) view.put("adopted_design_item_version_id", c.get("adopted_item_version_id").toString());
         return view;
@@ -281,6 +357,17 @@ public class DesignDraftService {
 
         String kind = c.get("kind").toString();
         Map<String, Object> after = json(c.get("proposed_after"));
+        // 문서에서 뽑은 후보는 그 문서에 더 새 버전이 승인되면 낡은 것이다 — 새 버전의 후보를 다시 만들게 한다.
+        if ("DOCUMENT_ONLY".equals(job.get("mode")) && drafts.isSupersededVersion(documentVersion)) {
+            throw stale();
+        }
+        // 문서끼리 같은 후보를 한꺼번에 채택해도 같은 설계 항목이 두 번 생기지 않게, 채택 직전에 지금 있는 항목과 지문을 다시 비교한다.
+        // 지문이 같아도 내용이 다를 수 있어(예: 데이터 계약은 엔티티 이름만 비교) confirm_duplicate=true 로 알고 채택할 수 있다.
+        if ("CREATE".equals(c.get("change_kind")) && c.get("fingerprint") != null
+                && !(input != null && Boolean.TRUE.equals(input.confirmDuplicate()))
+                && DraftOverlap.liveFingerprints(drafts, project).containsKey(c.get("fingerprint").toString())) {
+            throw conflict("candidate_duplicate", "이미 같은 설계 항목이 있어요. 내용이 다르면 확인하고 채택하거나, 아니면 이 후보를 폐기해 주세요.");
+        }
         String title = content.validate(kind, 1, after);
         String contentJson = canonical(after);
         long itemVersion;

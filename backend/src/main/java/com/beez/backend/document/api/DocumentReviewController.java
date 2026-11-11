@@ -87,12 +87,13 @@ public class DocumentReviewController {
 
     @PostMapping("/documents/{documentId}/bee-reviews/{reviewId}/requests")
     @Operation(summary = "DOC-A23 비비에게 직접 보완 요청 — 같은 검토에 새 PATCH 제안을 더한다")
-    @ResponseStatus(HttpStatus.CREATED)
-    public DirectResponse directRequest(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+    public org.springframework.http.ResponseEntity<DirectResponse> directRequest(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
             @PathVariable long documentId, @PathVariable long reviewId, @Valid @RequestBody DirectRequest input,
             @RequestHeader("Idempotency-Key") String key) {
         origins.requireTrustedOrigin(request);
-        return chat.request(caller, projectId, documentId, reviewId, input, key);
+        var answer = chat.request(caller, projectId, documentId, reviewId, input, key);
+        // 새 제안이 붙었으면 201, 비비가 고칠 곳이 없다고 답했으면 아무것도 만들지 않았으므로 200.
+        return org.springframework.http.ResponseEntity.status(answer.isNoChange() ? HttpStatus.OK : HttpStatus.CREATED).body(answer);
     }
 
     @PostMapping("/documents/{documentId}/review-submissions/{submissionId}/withdraw")

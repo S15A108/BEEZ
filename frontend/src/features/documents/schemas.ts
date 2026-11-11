@@ -218,12 +218,25 @@ export const requestBeeSuggestionInputSchema = z.object({
 export type RequestBeeSuggestionInput = z.infer<
   typeof requestBeeSuggestionInputSchema
 >
+// 새 제안이 붙었으면 CREATED(201), 비비가 고칠 곳이 없다고 답했으면 NO_CHANGE(200, suggestion 없음, reason 에 이유).
+// outcome 이 없는 예전 응답은 CREATED 로 읽는다.
 export const requestBeeSuggestionResponseSchema = z.object({
-  suggestion: common.documentReviewSuggestionSchema,
+  outcome: z.enum(['CREATED', 'NO_CHANGE']).optional(),
+  suggestion: common.documentReviewSuggestionSchema.nullish(),
+  reason: z.string().optional(),
 })
 export type RequestBeeSuggestionResponse = z.infer<
   typeof requestBeeSuggestionResponseSchema
 >
+
+// 비비가 고칠 곳이 없다고 답하면 제안 대신 이유를 보인다. 오류가 아니라 정상 답이라 다시 시도하라고 하지 않는다.
+export function noChangeReason(
+  result: { outcome?: string; reason?: string } | undefined,
+) {
+  return result?.outcome === 'NO_CHANGE'
+    ? (result.reason ?? '요청한 내용을 고칠 곳이 없어요.')
+    : undefined
+}
 
 export const submitReviewInputSchema = z.object({
   expected_revision: z.number().int().positive(),
