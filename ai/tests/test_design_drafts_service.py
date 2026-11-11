@@ -5,7 +5,7 @@ from hashlib import sha256
 
 import pytest
 
-from app.schemas.design_drafts import DesignDraftRequest
+from app.schemas.design_drafts import MAX_ITEMS, DesignDraftRequest
 from app.services.design_drafts import (
     DraftProposal,
     LLMDraftProposer,
@@ -285,14 +285,42 @@ async def test_unchanged_restatement_is_dropped_and_split_updates_are_merged():
     assert result.untouched_existing_ids == ("1102",)
 
 
+# S15P31A108-388: one draft that contradicts the inputs used to discard every
+# other draft of the answer; real documents lost their drafts 5 times in 8.
 @pytest.mark.asyncio
-async def test_split_proposals_with_different_kinds_are_invalid_output():
+async def test_split_proposal_of_another_kind_is_dropped_and_the_rest_merges():
     proposer = FakeProposer(
-        item("CONSTRAINT", "a", base="1101"), item("POLICY", "b", base="1101")
+        item("CONSTRAINT", "단일 파일 한도는 30 MiB이다.", base="1101"),
+        item("POLICY", "b", base="1101"),
     )
-    with pytest.raises(LLMError) as error:
-        await generate_design_drafts(request(), proposer)
-    assert error.value.code == "invalid_output"
+    outcome = await generate_design_drafts(request(), proposer)
+    [draft] = outcome.result.items
+    assert draft.kind == "CONSTRAINT"
+    assert draft.content.description == "단일 파일 한도는 30 MiB이다."
+    assert outcome.result.changes[0].conflicting_fields == ()
+
+
+@pytest.mark.asyncio
+async def test_a_contradicting_draft_is_dropped_without_losing_the_others():
+    proposer = FakeProposer(
+        item("CONSTRAINT", "x", base="9999"),
+        item("POLICY", "발행 전 검토를 거친다."),
+        {**item("API_CONTRACT", "x"), "content": {"description": "x", "method": "GET"}},
+    )
+    outcome = await generate_design_drafts(request(), proposer)
+    assert [d.content.description for d in outcome.result.items] == [
+        "발행 전 검토를 거친다."
+    ]
+    assert not outcome.usage[0].failed
+
+
+@pytest.mark.asyncio
+async def test_answer_references_to_no_answered_question_are_dropped():
+    proposer = FakeProposer(
+        item("CONSTRAINT", "한도 단위는 MiB다.", refs=["q-9", "q-2", "q-1"])
+    )
+    outcome = await generate_design_drafts(request(), proposer)
+    assert outcome.result.items[0].answer_refs == ("q-1",)
 
 
 @pytest.mark.parametrize(
@@ -300,8 +328,6 @@ async def test_split_proposals_with_different_kinds_are_invalid_output():
     [
         item("CONSTRAINT", "x", base="9999"),
         item("POLICY", "x", base="1101"),
-        item("CONSTRAINT", "x", refs=["q-9"]),
-        item("CONSTRAINT", "x", refs=["q-2"]),
         {**item("API_CONTRACT", "x"), "content": {"description": "x", "method": "GET"}},
         {**item("REQUIREMENT", "x"), "content": {"description": "   "}},
         # The BE DesignJson rejects a blank field name at any depth.
@@ -312,7 +338,7 @@ async def test_split_proposals_with_different_kinds_are_invalid_output():
     ],
 )
 @pytest.mark.asyncio
-async def test_contradicting_the_inputs_is_invalid_output_with_failed_usage(bad):
+async def test_no_usable_draft_is_invalid_output_with_failed_usage(bad):
     with pytest.raises(LLMError) as error:
         await generate_design_drafts(request(), FakeProposer(bad))
     assert error.value.code == "invalid_output"
@@ -411,7 +437,7 @@ async def test_llm_proposer_sends_blocks_items_and_answered_questions_only():
     assert payload["max_items"] == 50
     assert llm_request.context.feature == "BEE_DRAFT"
     assert llm_request.response_format == {"type": "json_object"}
-    assert llm_request.model_options == {"max_completion_tokens": 4096}
+    assert llm_request.model_options == {"max_completion_tokens": 16384}
 
 
 @pytest.mark.parametrize(
@@ -429,7 +455,8 @@ async def test_llm_proposer_sends_blocks_items_and_answered_questions_only():
             "unresolved": [],
         },
         {"items": [], "unresolved": [], "approved": True},
-        {"items": [], "unresolved": ["x" * 2001]},
+        {"items": "none", "unresolved": []},
+        ["not", "an", "object"],
     ],
 )
 @pytest.mark.asyncio
@@ -440,6 +467,140 @@ async def test_structurally_invalid_model_output_keeps_failed_usage(bad_output):
         await llm_proposer(provider).propose(body, parse_source(body.to_source_input()))
     assert error.value.code == "invalid_output"
     assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 12
+
+
+# S15P31A108-388: the shapes the real model returned on 3,000-7,000-character
+# documents. Each used to discard the whole answer.
+@pytest.mark.asyncio
+async def test_broken_items_are_dropped_and_usable_ones_are_kept(caplog):
+    good = item("POLICY", "발행 전 검토를 거친다.")
+    provider = FakeProvider(
+        {
+            "items": [
+                {**good, "sources": [{"block_id": "blk_x", "quote": ""}]},
+                {**item("REQUIREMENT", "우선순위가 붙은 항목"), "priority": "HIGH"},
+                {**item("REQUIREMENT", "근거 없는 항목"), "rationale": ""},
+                "문자열 항목",
+                {**item("CONSTRAINT", "참조가 빈 항목"), "answer_refs": ["", "q-1"]},
+            ],
+            "unresolved": ["x" * 2001, "  ", 3],
+        }
+    )
+    body = request()
+    proposal = await llm_proposer(provider).propose(
+        body, parse_source(body.to_source_input())
+    )
+    assert [entry.content["description"] for entry in proposal.items] == [
+        "발행 전 검토를 거친다.",
+        "우선순위가 붙은 항목",
+        "참조가 빈 항목",
+    ]
+    assert proposal.items[0].sources == []
+    assert proposal.items[2].answer_refs == ["q-1"]
+    assert proposal.dropped_items == 2
+    assert proposal.unresolved == ("x" * 2000,)
+    assert not proposal.usage[0].failed
+    # 지운 필드는 이름만 남겨, 모델이 계약에서 벗어나기 시작하면 로그로 보인다.
+    assert "'priority': 1" in caplog.text
+
+
+# S15P31A108-388: the real model wrote every ERD data contract with fields keyed
+# by name, and all of them were rejected for lacking the contract's array.
+@pytest.mark.asyncio
+async def test_data_contract_fields_keyed_by_name_become_the_array():
+    provider = FakeProvider(
+        {
+            "items": [
+                {
+                    **item("DATA_CONTRACT", "회원"),
+                    "content": {
+                        "description": "회원",
+                        "entity": "users",
+                        "fields": {
+                            "id": "BIGINT, 기본 키",
+                            "nickname": {"type": "VARCHAR(20)"},
+                            # PR #272 리뷰: 값의 name(표시 이름)이 키(필드 식별자)를 덮으면 안 된다.
+                            "user_id": {"name": "회원 ID", "type": "BIGINT"},
+                            "email": {"name": "email", "type": "VARCHAR(100)"},
+                        },
+                    },
+                }
+            ],
+            "unresolved": [],
+        }
+    )
+    body = request()
+    proposal = await llm_proposer(provider).propose(
+        body, parse_source(body.to_source_input())
+    )
+    assert proposal.items[0].content["fields"] == [
+        {"name": "id", "description": "BIGINT, 기본 키"},
+        {"name": "nickname", "type": "VARCHAR(20)"},
+        {"name": "user_id", "type": "BIGINT", "label": "회원 ID"},
+        {"name": "email", "type": "VARCHAR(100)"},
+    ]
+    outcome = await generate_design_drafts(
+        body,
+        FakeProposer(
+            {**item("DATA_CONTRACT", "회원"), **proposal.items[0].model_dump()}
+        ),
+    )
+    assert outcome.result.items[0].content.model_dump()["entity"] == "users"
+
+
+# S15P31A108-388 리뷰: 갱신 제안의 fields 패치는 배열을 통째로 바꾸므로, 바뀐 필드만 담은 객체를 배열로
+# 바꾸면 기준 항목의 나머지 필드가 조용히 사라진다. 갱신은 바꾸지 않고(그 초안만 거절) 새 항목만 바꾼다.
+@pytest.mark.asyncio
+async def test_fields_keyed_by_name_are_converted_only_for_a_new_data_contract():
+    patch = {
+        "description": "회원",
+        "entity": "users",
+        "fields": {"nickname": "VARCHAR(30)"},
+    }
+    provider = FakeProvider(
+        {
+            "items": [
+                {**item("DATA_CONTRACT", "회원"), "content": patch},
+                {
+                    **item("DATA_CONTRACT", "회원"),
+                    "content": patch,
+                    "base_design_item_version_id": "1103",
+                },
+            ],
+            "unresolved": [],
+        }
+    )
+    body = request()
+    proposal = await llm_proposer(provider).propose(
+        body, parse_source(body.to_source_input())
+    )
+    assert proposal.items[0].content["fields"] == [
+        {"name": "nickname", "description": "VARCHAR(30)"}
+    ]
+    assert proposal.items[1].content["fields"] == {"nickname": "VARCHAR(30)"}
+
+
+@pytest.mark.asyncio
+async def test_items_beyond_the_cap_are_cut_and_logged(caplog):
+    many = [item("POLICY", f"정책 {n}") for n in range(MAX_ITEMS + 3)]
+    body = request()
+    proposal = await llm_proposer(
+        FakeProvider({"items": many, "unresolved": []})
+    ).propose(body, parse_source(body.to_source_input()))
+    assert len(proposal.items) == MAX_ITEMS
+    assert (
+        f"had {MAX_ITEMS + 3} usable items; kept the first {MAX_ITEMS}" in caplog.text
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_answer_whose_items_are_all_broken_is_invalid_output():
+    provider = FakeProvider({"items": ["a", {"kind": "POLICY"}], "unresolved": []})
+    body = request()
+    with pytest.raises(LLMError) as error:
+        await llm_proposer(provider).propose(body, parse_source(body.to_source_input()))
+    assert error.value.code == "invalid_output"
+    assert error.value.usage[0].failed
 
 
 @pytest.mark.asyncio

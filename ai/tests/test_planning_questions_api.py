@@ -132,6 +132,18 @@ def test_model_failures_keep_usage(api):
     assert response.json()["error"]["code"] == "model_timeout"
 
 
+def test_output_cap_truncation_is_reported_as_its_own_code_with_usage(api):
+    # 출력 상한에 닿아 답이 끊기면 형식 오류가 아니라 상한 문제로 알린다 (S15P31A108-382).
+    api.provider.failure = ProviderError(
+        "output_truncated", model="gpt-6-luna", input_tokens=9, output_tokens=2048
+    )
+    response = api.post(request_body("plan.md"))
+    assert response.status_code == 502
+    body = response.json()
+    assert body["error"]["code"] == "model_output_truncated"
+    assert body["usage"][0]["failed"] and body["usage"][0]["output_tokens"] == 2048
+
+
 def test_invalid_model_output_is_a_model_failure_with_failed_usage(api):
     api.provider.output = {"candidates": [{"kind": "DEFECT"}]}
     response = api.post(request_body("plan.md"))
@@ -146,3 +158,16 @@ def test_published_examples_match_the_http_contract():
     for name, payload in build_examples().items():
         published = json.loads((EXAMPLES / name).read_text(encoding="utf-8"))
         assert published == payload, name
+
+
+# S15P31A108-388: the settings defaults (strings) and the proposer defaults are
+# written in two places; real documents needed up to 3,834 tokens and 39 s.
+def test_default_settings_match_the_measured_limits():
+    from app.routers.planning_questions import require_planning_question_config
+    from app.services import planning_questions
+
+    config = require_planning_question_config(
+        Settings(_env_file=None, planning_questions_enabled=True)
+    )
+    assert config.output_token_limit == planning_questions.DEFAULT_OUTPUT_TOKEN_LIMIT
+    assert config.timeout_seconds == planning_questions.DEFAULT_TIMEOUT_SECONDS

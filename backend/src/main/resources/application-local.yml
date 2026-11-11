@@ -3,6 +3,10 @@ beez:
   mail:
     log-body: true   # 로컬은 메일을 보내지 않으므로 가입 인증 코드를 로그로 받는다. 다른 프로필에서는 켜지 않는다
   document:
+    # 로컬 색인용. 비우면 기본값 unconfigured 로 색인이 embedding_profile_not_configured 로 멈춘다.
+    # ai 의 GMS_EMBEDDING_MODEL·GMS_EMBEDDING_DIMENSION(기본 1024)과 같아야 한다 (프로필 = gms-small-{차원}-v1)
+    embedding-profile: ${DOCUMENT_EMBEDDING_PROFILE:gms-small-1024-v1}
+    embedding-model: ${DOCUMENT_EMBEDDING_MODEL:text-embedding-3-small}
     object-storage:
       endpoint: ${DOCUMENT_S3_ENDPOINT:http://127.0.0.1:8333}
       bucket: ${DOCUMENT_S3_BUCKET:beez-documents}

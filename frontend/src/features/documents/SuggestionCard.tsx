@@ -4,6 +4,7 @@ import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { SuggestionChat } from './SuggestionChat'
+import { SuggestionRequest } from './SuggestionRequest'
 
 const CATEGORY = {
   OMISSION: '누락',
@@ -40,6 +41,7 @@ export function SuggestionCard({
   projectId,
   documentId,
   reviewId,
+  revision,
   suggestion,
   index,
   owner,
@@ -51,6 +53,8 @@ export function SuggestionCard({
   projectId: string
   documentId: string
   reviewId: string
+  /** 지금 작성 리비전. '비비에게 요청하기'가 이 리비전으로 요청한다 */
+  revision: number
   suggestion: DocumentReviewSuggestion
   index: number
   owner: boolean
@@ -153,6 +157,18 @@ export function SuggestionCard({
             </li>
           ))}
         </ul>
+      )}
+      {/* 이 의견으로 본문을 고친 새 제안을 바로 요청한다. 대화(비비와 이야기하기)와 달리 요청을 보낸다(DOC-A23). */}
+      {owner && !stale && (suggestion.type === 'COMMENT' || pending) && (
+        <SuggestionRequest
+          projectId={projectId}
+          documentId={documentId}
+          reviewId={reviewId}
+          revision={revision}
+          suggestion={suggestion}
+          disabled={busy}
+          onStale={onStale}
+        />
       )}
       {owner && pending && (
         <span className="flex justify-end gap-2">

@@ -79,7 +79,7 @@ public class DocumentIndexWorker {
                     SELECT r.*,v.content_text,v.content_hash,v.document_id,d.project_id,d.type,v.storage_key
                     FROM document_processing r JOIN document_version v ON v.id=r.document_version_id
                     JOIN document d ON d.id=v.document_id JOIN project p ON p.id=d.project_id
-                    WHERE r.status='PENDING' AND p.archived_at IS NULL ORDER BY r.updated_at,r.document_version_id
+                    WHERE r.status='PENDING' AND p.archived_at IS NULL AND d.discarded_at IS NULL ORDER BY r.updated_at,r.document_version_id
                     LIMIT 1 FOR UPDATE OF r SKIP LOCKED
                     """, Map.of());
             if (pending.isEmpty()) return null;

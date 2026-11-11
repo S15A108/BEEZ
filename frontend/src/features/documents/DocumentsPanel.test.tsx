@@ -62,13 +62,13 @@ beforeEach(() => {
   vi.mocked(documentsApi.workingCopy).mockRejectedValue(new Error('404'))
 })
 
-function mount() {
+function mount(isLeader = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={client}>
-      <DocumentsPanel projectId="10" isLeader />
+      <DocumentsPanel projectId="10" isLeader={isLeader} />
     </QueryClientProvider>,
   )
 }
@@ -150,6 +150,142 @@ it('승인본 근거는 지금처럼 그 승인본으로 연다', async () => {
   expect(await screen.findByText('선택한 문서의 본문')).toBeInTheDocument()
   expect(screen.getByText(/현재 기준 v1/)).toBeInTheDocument()
   expect(screen.queryByText(/를 보고 있어요/)).not.toBeInTheDocument()
+})
+
+it('인용을 누르면 지정 버전의 확인된 원문을 강조하고 그 위치로 이동한다', async () => {
+  const cited = {
+    ...version,
+    content: '첫 줄\n두 번째 줄\n정확한 인용 문장\n마지막 줄',
+  }
+  const approved = {
+    ...version,
+    id: '22',
+    version_no: 2,
+    status: 'APPROVED' as const,
+    content: '현재 승인본',
+  }
+  vi.mocked(documentsApi.get).mockImplementation(
+    async (_project, _document, options) => ({
+      document: { ...focusedDocument, approved_version: approved },
+      version: options?.version_no === 1 ? cited : approved,
+    }),
+  )
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [approved, cited],
+    has_more: false,
+  })
+  const original = HTMLElement.prototype.scrollIntoView
+  const scroll = vi.fn()
+  HTMLElement.prototype.scrollIntoView = scroll
+  try {
+    const links = render(
+      <SourceLinks
+        sources={[
+          {
+            document_id: '2',
+            document_version_id: '21',
+            version_no: 1,
+            location: '2~4행',
+          },
+        ]}
+        citation={{
+          document_id: '2',
+          document_version_id: '21',
+          start_line: 2,
+          end_line: 4,
+          quote: '정확한 인용 문장',
+        }}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+    links.unmount()
+    mount()
+    const excerpt = await screen.findByRole('region', {
+      name: '확인된 인용 원문',
+    })
+    expect(within(excerpt).getByText('정확한 인용 문장').tagName).toBe('MARK')
+    expect(excerpt).toHaveTextContent('3~3행')
+    expect(excerpt).toHaveTextContent('첫 줄')
+    expect(excerpt).toHaveTextContent('마지막 줄')
+    expect(scroll).toHaveBeenCalledWith({ block: 'center' })
+    await userEvent.click(
+      within(excerpt).getByRole('button', { name: '형식 적용 본문 보기' }),
+    )
+    expect(
+      within(excerpt).queryByText('정확한 인용 문장', { selector: 'mark' }),
+    ).not.toBeInTheDocument()
+    await userEvent.click(
+      within(excerpt).getByRole('button', { name: '원문과 인용 보기' }),
+    )
+    expect(within(excerpt).getByText('정확한 인용 문장').tagName).toBe('MARK')
+    expect(documentsApi.get).toHaveBeenCalledWith('10', '2', { version_no: 1 })
+    await userEvent.selectOptions(screen.getByLabelText('열람할 버전'), '2')
+    expect(await screen.findByText('현재 승인본')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('region', { name: '확인된 인용 원문' }),
+    ).not.toBeInTheDocument()
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original
+  }
+})
+
+it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 강조하지 않는다', async () => {
+  const ambiguous = { ...version, content: '첫 줄\n같은 문장\n같은 문장' }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: focusedDocument,
+    version: ambiguous,
+  })
+  const links = render(
+    <SourceLinks
+      sources={[
+        {
+          document_id: '2',
+          document_version_id: '21',
+          version_no: 1,
+          location: '2~3행',
+        },
+      ]}
+      citation={{
+        document_id: '2',
+        document_version_id: '21',
+        start_line: 2,
+        end_line: 3,
+        quote: '같은 문장',
+      }}
+    />,
+  )
+  await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+  links.unmount()
+  mount()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '하나로 확인할 수 없어요',
+  )
+  expect(
+    screen.queryByRole('region', { name: '확인된 인용 원문' }),
+  ).not.toBeInTheDocument()
+})
+
+it('인용과 다른 문서 버전으로 연결되는 버튼은 열 수 없다', () => {
+  render(
+    <SourceLinks
+      sources={[
+        {
+          document_id: '2',
+          document_version_id: '22',
+          version_no: 2,
+          location: '1행',
+        },
+      ]}
+      citation={{
+        document_id: '2',
+        document_version_id: '21',
+        start_line: 1,
+        end_line: 1,
+        quote: '원문',
+      }}
+    />,
+  )
+  expect(screen.getByRole('button', { name: /문서 2 v2/ })).toBeDisabled()
 })
 
 // PR #218 리뷰: 인용한 버전 번호를 찾기 전에는 문서를 부르지 않는다(승인본으로 넘어가지 않는다).
@@ -752,4 +888,73 @@ it('시작 준비 카드는 서버가 검토를 쓸 수 없다고 알린 문서�
     screen.getByText('참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'),
   ).toBeInTheDocument()
   expect(screen.queryByText('팀장 검토 요청 전')).not.toBeInTheDocument()
+})
+
+// S15P31A108-383: -382가 작업본에 검토 실패(bee_review_request)를 실었지만 시작 준비 카드는 그대로
+// '비비 검토 중 · 비비가 검토하고 있어요'를 보여, 팀원은 끝나지 않을 검토를 기다렸다.
+// 다시 검토는 올린 사람만, 등록 취소는 올린 사람과 팀장이 하므로 보는 사람마다 할 일을 다르게 알린다.
+const failedCopy = (status: 'EDITING' | 'REJECTED' = 'EDITING') => ({
+  document_id: '1',
+  owner_account_id: '11',
+  revision: 1,
+  status,
+  content: '',
+  file_name: 'requirements.md',
+  submissions: [],
+  bee_review_request: {
+    status: 'FAILED' as const,
+    error_code: 'review_timeout',
+    updated_at: '2026-11-10T08:16:05Z',
+  },
+})
+
+it.each([
+  [
+    '11',
+    false,
+    '검토 실패',
+    '비비 검토를 마치지 못했어요. 열어서 다시 검토해 주세요',
+  ],
+  [
+    '12',
+    false,
+    '검토 실패',
+    '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토해요',
+  ],
+  [
+    '12',
+    true,
+    '검토 실패',
+    '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토하거나, 열어서 등록을 취소할 수 있어요',
+  ],
+])(
+  '시작 준비 카드는 검토가 실패한 문서를 보는 사람(%s, 팀장 %s)에게 할 일을 알린다',
+  async (viewer, isLeader, label, hint) => {
+    const me = vi.spyOn(authApi, 'me').mockResolvedValue({
+      id: viewer,
+      email: 'viewer@beez.local',
+      name: '보는 사람',
+      created_at: '2026-10-23T00:00:00Z',
+    })
+    try {
+      vi.mocked(documentsApi.workingCopy).mockResolvedValue(failedCopy())
+      mount(isLeader)
+      expect(await screen.findByText(label)).toBeInTheDocument()
+      expect(screen.getByText(hint)).toBeInTheDocument()
+      expect(
+        screen.queryByText('비비가 검토하고 있어요'),
+      ).not.toBeInTheDocument()
+    } finally {
+      me.mockRestore()
+    }
+  },
+)
+
+it('반려 뒤 다시 받던 검토가 실패해도 시작 준비 카드는 반려됨을 지킨다', async () => {
+  vi.mocked(documentsApi.workingCopy).mockResolvedValue(failedCopy('REJECTED'))
+  mount(false)
+  expect(await screen.findByText('반려됨')).toBeInTheDocument()
+  expect(
+    screen.getByText(/^반려 뒤 비비 검토를 마치지 못했어요\./),
+  ).toBeInTheDocument()
 })

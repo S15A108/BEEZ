@@ -69,7 +69,11 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         verify(ai).planningQuestions(sent.capture());
         assertThat(sent.getValue()).containsEntry("project_id", "" + project).containsEntry("kind", "PLAN")
                 .containsEntry("media_type", "text/markdown").containsEntry("parser_profile", "markdown-v1")
-                .containsEntry("text_hash", TEXT_HASH).containsEntry("content", CONTENT).containsEntry("mode", "MODEL");
+                .containsEntry("text_hash", TEXT_HASH).containsEntry("content_hash", CONTENT_HASH)
+                .containsEntry("content", CONTENT).containsEntry("mode", "MODEL");
+        // 저장 값은 sha256: 접두어가 붙지만 AI 스키마는 접두어 없는 hex 64자만 받는다(S15P31A108-373).
+        assertThat((String) sent.getValue().get("content_hash")).matches(HEX64);
+        assertThat((String) sent.getValue().get("text_hash")).matches(HEX64);
     }
 
     @Test void skipsDocumentsOnceAnInitialBaselineExists() {
@@ -111,6 +115,22 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
                 .isInstanceOfSatisfying(ApiException.class, error -> assertThat(error.getCode()).isEqualTo("question_generation_unavailable"));
         assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
         assertThat(generator.runOnce()).isFalse();
+    }
+
+    @Test void outputCapTruncationIsReportedAsItsOwnCodeAndStaysRetryable() {
+        // AI 가 모델 답이 출력 상한에서 끊겼다고 알리면 일반 장애(ai_unavailable)가 아니라 상한 문제로 남긴다 (S15P31A108-382).
+        doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "cut", org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error\":{\"code\":\"model_output_truncated\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
+        assertThat(generator.runOnce()).isTrue();
+        assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
+                .containsEntry("status", "FAILED").containsEntry("error_code", "ai_output_too_long").containsEntry("retryable", true);
+        // 형식 오류로 거절된 같은 502 는 그대로 일반 장애다.
+        jdbc.update("DELETE FROM planning_question_run");
+        doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "bad", org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error\":{\"code\":\"model_unavailable\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT error_code FROM planning_question_run WHERE document_version_id=?", String.class, version))
+                .isEqualTo("ai_unavailable");
     }
 
     @Test void rejectedRequestIsNotRetryableAndMismatchedOutputIsRejectedWholesale() {

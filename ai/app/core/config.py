@@ -53,20 +53,30 @@ class Settings(BaseSettings):
     # feature so a bad value here cannot disable other routes.
     planning_questions_enabled: bool = False
     planning_questions_max_body_bytes: str = "2097152"
-    planning_questions_llm_timeout_seconds: str = "30"
-    planning_questions_llm_output_token_limit: str = "2048"
+    # Measured need and bounds: app.services.planning_questions.proposer
+    # (S15P31A108-388). Keep the BE beez.planning.question-read-timeout longer.
+    planning_questions_llm_timeout_seconds: str = "90"
+    planning_questions_llm_output_token_limit: str = "8192"
     planning_questions_llm_output_token_parameter: str = "max_completion_tokens"
 
     # Provisional #134 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133.
     design_drafts_enabled: bool = False
     design_drafts_max_body_bytes: str = "2097152"
-    design_drafts_llm_timeout_seconds: str = "45"
-    design_drafts_llm_output_token_limit: str = "4096"
+    # Measured need and bounds: app.services.design_drafts.proposer
+    # (S15P31A108-388). Keep the BE beez.planning.draft-read-timeout longer.
+    design_drafts_llm_timeout_seconds: str = "150"
+    design_drafts_llm_output_token_limit: str = "16384"
     design_drafts_llm_output_token_parameter: str = "max_completion_tokens"
 
     # Provisional #135 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133 and #134.
+    # Document review (AI-A10) model-call limit. BE's read limit (55s) and nginx (60s)
+    # must stay longer than this value (S15P31A108-382). Parsed per request.
+    # A 6,800-character API spec took 31-38 s, beyond the first 30 s default
+    # (S15P31A108-383); app.services.document_review.DEFAULT_TIMEOUT_SECONDS.
+    document_review_llm_timeout_seconds: str = "50"
+
     bee_chat_enabled: bool = False
     bee_chat_max_body_bytes: str = "2097152"
     bee_chat_llm_timeout_seconds: str = "30"

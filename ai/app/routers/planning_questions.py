@@ -28,6 +28,8 @@ from app.services.llm_client import (
     OpenAICompatibleProvider,
 )
 from app.services.planning_questions import (
+    MAX_OUTPUT_TOKEN_LIMIT,
+    MAX_TIMEOUT_SECONDS,
     LLMCandidateProposer,
     generate_planning_questions,
 )
@@ -129,8 +131,8 @@ def require_planning_question_config(
     if (
         not 1024 <= max_body_bytes <= 4_194_304
         or not math.isfinite(timeout_seconds)
-        or not 0 < timeout_seconds <= 120
-        or not 1 <= output_token_limit <= 4096
+        or not 0 < timeout_seconds <= MAX_TIMEOUT_SECONDS
+        or not 1 <= output_token_limit <= MAX_OUTPUT_TOKEN_LIMIT
         or output_token_parameter not in {"max_completion_tokens", "max_tokens"}
     ):
         raise HTTPException(503, detail="planning_questions_not_configured")

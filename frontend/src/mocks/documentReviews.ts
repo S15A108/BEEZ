@@ -116,6 +116,39 @@ function guardAi() {
     fail(502, 'invalid_ai_output', '비비 결과를 확인하지 못했어요.')
 }
 
+// 비비 검토 시작(DOC-A16)의 실패 장면 스위치(목 전용). localStorage 'beez.mock.reviewRun' = timeout(504) | unavailable(503).
+// 대화·직접 요청의 스위치(beez.mock.review)와 따로 둔다. 실패한 요청도 작업본에 남겨(서버 bee_review_request 대역)
+// 새로고침·다른 팀원 화면에서 보이게 한다.
+function guardReview(target: StoredWorkingCopy) {
+  let scenario: string | null
+  try {
+    scenario = localStorage.getItem('beez.mock.reviewRun')
+  } catch {
+    scenario = null
+  }
+  const failure =
+    scenario === 'timeout'
+      ? {
+          status: 504,
+          code: 'review_timeout',
+          message: '비비 검토 시간이 초과됐어요.',
+        }
+      : scenario === 'unavailable'
+        ? {
+            status: 503,
+            code: 'review_unavailable',
+            message: '비비를 부를 수 없어요.',
+          }
+        : undefined
+  if (!failure) return
+  target.bee_review_request = {
+    status: 'FAILED',
+    error_code: failure.code,
+    updated_at: now(),
+  }
+  fail(failure.status, failure.code, failure.message)
+}
+
 // 대화·직접 요청은 지금 작성 내용의 최신 검토에서만 쓴다(DOC-A22·A23).
 function latestReview(
   project: MockProject,
@@ -183,8 +216,9 @@ async function editWith(
   target.file_name = fileName
   target.revision += 1
   target.status = 'EDITING'
-  // 직접 고치면 이전 비비 검토는 무효가 된다.
+  // 직접 고치면 이전 비비 검토는 무효가 되고 새 검토 요청이 생길 때까지 요청 상태도 비어 보인다.
   delete target.latest_review
+  delete target.bee_review_request
   return { data: view(project, target) }
 }
 
@@ -230,6 +264,7 @@ export async function reviewRoutes(
     case 'DOC-A16': {
       const target = workingCopy(project, params.document_id)
       guardOwner(context, project, target, body.expected_revision)
+      guardReview(target)
       const document = findById(project.documents, target.document_id)
       const others = project.documents.filter((item) => item.id !== document.id)
       const approvedFirst = others.find((item) => item.approved_version)
@@ -327,6 +362,7 @@ export async function reviewRoutes(
           : {}),
       }
       target.latest_review = review
+      target.bee_review_request = { status: 'COMPLETED', updated_at: now() }
       return { status: 201, data: review }
     }
     case 'DOC-A17': {
@@ -605,6 +641,34 @@ export async function reviewRoutes(
       target.revision += 1
       delete target.latest_review
       return { data: view(project, target) }
+    }
+    case 'DOC-A25': {
+      const target = workingCopy(project, params.document_id)
+      const document = findById(project.documents, target.document_id)
+      const caller = requireAccount(context)
+      const leader = project.members.find(
+        (member) => member.account_id === caller.id,
+      )?.role
+      if (caller.id !== target.owner_account_id && leader !== 'LEADER')
+        fail(403, 'forbidden', '등록한 사람이나 팀장만 취소할 수 있어요.')
+      if (target.status === 'SUBMITTED')
+        fail(409, 'submission_locked', '먼저 팀장 검토 요청을 취소해 주세요.')
+      if (target.status === 'APPROVED' || document.approved_version)
+        fail(409, 'document_approved', '승인된 적이 있는 문서예요.')
+      if (project.project.current_baseline)
+        fail(
+          409,
+          'change_proposal_required',
+          '기준 설계가 생긴 뒤에는 변경 제안으로 바꿔 주세요.',
+        )
+      // 서버는 삭제하지 않고 폐기 표시만 하지만, 예시에서는 목록에서 치워 같은 효과를 낸다.
+      project.documents = project.documents.filter(
+        (item) => item.id !== document.id,
+      )
+      project.working_copies = project.working_copies.filter(
+        (item) => item.document_id !== document.id,
+      )
+      return { data: { document_id: document.id, discarded: true } }
     }
     default:
       return undefined

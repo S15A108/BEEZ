@@ -1,6 +1,7 @@
 """Generate review proposals for a BE-authorized immutable snapshot."""
 
 import json
+import logging
 from typing import Literal
 from uuid import uuid4
 
@@ -110,6 +111,47 @@ def _steps(body: DocumentReviewRequest):
     return steps, sorted(used)
 
 
+def _quote_ok(source: Source, contents: dict[str, str]) -> bool:
+    """A quote, when present, is a nonblank exact substring of its reference."""
+    content = contents.get(source.reference_id)
+    return source.quote is None or (
+        content is not None
+        and _nonblank(source.quote, 10000)
+        and source.quote in content
+    )
+
+
+def _merge_sources(
+    parsed: ClassifiedReview, body: DocumentReviewRequest
+) -> ClassifiedReview:
+    """Keep one source per reference in each suggestion.
+
+    The model sometimes cites the same reference several times with different
+    quotes. The BE stores one source per reference and rejects repeats, so one
+    repeat used to discard the whole review (S15P31A108-383). Per reference the
+    best source is kept: a verified quote, then no quote, then the first
+    unverifiable quote, which the quote check below still rejects as forged.
+    """
+    contents = {ref.reference_id: ref.content for ref in body.references}
+
+    def rank(source: Source) -> int:
+        if source.quote is None:
+            return 1
+        return 2 if _quote_ok(source, contents) else 0
+
+    suggestions = []
+    for suggestion in parsed.suggestions:
+        best: dict[str, Source] = {}
+        for source in suggestion.sources:
+            kept = best.get(source.reference_id)
+            if kept is None or rank(source) > rank(kept):
+                best[source.reference_id] = source
+        suggestions.append(
+            suggestion.model_copy(update={"sources": list(best.values())})
+        )
+    return parsed.model_copy(update={"suggestions": suggestions})
+
+
 def _validate_result(
     parsed: ClassifiedReview, body: DocumentReviewRequest, steps: list[dict]
 ):
@@ -117,6 +159,7 @@ def _validate_result(
         raise ValueError("invalid summary")
     step_by_name = {step["step"]: step for step in steps}
     refs = {ref.reference_id: ref for ref in body.references}
+    contents = {id: ref.content for id, ref in refs.items()}
     expected = {id for step in steps for id in step["reference_ids"]}
     if (
         not parsed.body_reviewed
@@ -139,12 +182,8 @@ def _validate_result(
             or (suggestion.step != "BODY" and not ids)
         ):
             raise ValueError("invalid source")
-        for source in suggestion.sources:
-            if source.quote is not None and (
-                not _nonblank(source.quote, 10000)
-                or source.quote not in refs[source.reference_id].content
-            ):
-                raise ValueError("invalid quote")
+        if not all(_quote_ok(source, contents) for source in suggestion.sources):
+            raise ValueError("invalid quote")
         if suggestion.type == "PATCH":
             original, replacement = (
                 suggestion.original_text,
@@ -176,7 +215,37 @@ def _validate_result(
     validate_patch_sequence(body.content, patches)
 
 
-async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) -> dict:
+# Measured: a 6,800-character API spec with two approved references took 31-38 s
+# on the default model, so 30 s still failed it (S15P31A108-383). The chain stays
+# model 50 s < BE read 55 s < nginx /api/ 60 s.
+DEFAULT_TIMEOUT_SECONDS = 50.0
+
+logger = logging.getLogger(__name__)
+
+
+def rejection_reason(exc: Exception) -> str:
+    """Why the model's answer was rejected, without any document or model text.
+
+    The 502 returned for a rejected answer carries no detail, so repeated failures
+    could not be told apart (S15P31A108-382). ValueError messages are fixed phrases
+    raised by this module; pydantic errors are reduced to field path and error type.
+    """
+    if isinstance(exc, ValidationError):
+        return "schema: " + ", ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}:{error['type']}"
+            for error in exc.errors()[:5]
+        )
+    if isinstance(exc, ValueError):
+        return f"rule: {exc}"[:120]
+    return type(exc).__name__
+
+
+async def analyze(
+    body: DocumentReviewRequest,
+    client: LLMClient,
+    model: str,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict:
     steps, used = _steps(body)
     # Send only comparison references that the BE will consider reviewed.
     payload = {
@@ -217,12 +286,12 @@ async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) ->
                 request_key=body.request_key,
             ),
             call_keys=(call_key,),
-            timeout_seconds=15.0,
+            timeout_seconds=timeout_seconds,
             response_format={"type": "json_object"},
         )
     )
     try:
-        parsed = ClassifiedReview.model_validate(result.result)
+        parsed = _merge_sources(ClassifiedReview.model_validate(result.result), body)
         _validate_result(parsed, body, steps)
         response = {
             "document_id": body.document_id,
@@ -275,7 +344,19 @@ async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) ->
             > 1_048_576
         ):
             raise ValueError("result too large")
-    except (ValidationError, ValueError, TypeError, UnicodeError, AttributeError):
+    except (
+        ValidationError,
+        ValueError,
+        TypeError,
+        UnicodeError,
+        AttributeError,
+    ) as exc:
+        output_tokens = result.usage[-1].output_tokens if result.usage else None
+        logger.warning(
+            "document review answer rejected: %s (output_tokens=%s)",
+            rejection_reason(exc),
+            output_tokens,
+        )
         raise result.invalid_output_error() from None
     return {
         "origin": "MODEL",

@@ -154,3 +154,28 @@ def test_discuss_rejects_deletion_of_entire_document(api):
     response = post(api, payload)
     assert response.status_code == 502
     assert response.json()["usage"][0]["failed"] is True
+
+
+def test_rejected_request_answer_logs_why_without_document_text(api, caplog):
+    import logging
+
+    # 모델이 본문에 없는 원문을 골랐을 때(직접 요청이 502 로 거절되는 대표 사례)
+    api[1].output = {
+        "suggestions": [
+            {
+                "type": "PATCH",
+                "step": "BODY",
+                "explanation": "속도를 반영해요",
+                "sources": [],
+                "original_text": "본문에 없는 문장입니다",
+                "replacement_text": "대체문",
+            }
+        ]
+    }
+    with caplog.at_level(logging.WARNING, logger="app.services.document_review_modes"):
+        response = post(api, input_for("REQUEST"))
+    assert response.status_code == 502
+    text = " ".join(record.getMessage() for record in caplog.records)
+    assert "REQUEST answer rejected" in text
+    assert "patch original is absent or ambiguous" in text
+    assert "본문에 없는 문장입니다" not in text

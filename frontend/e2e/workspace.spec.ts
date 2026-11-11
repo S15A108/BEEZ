@@ -205,7 +205,12 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
   const dialog = page.getByRole('dialog')
   await dialog.getByText('프로젝트 삭제 권한은 인간 팀장만 가지나요?').click()
   await dialog.getByRole('textbox', { name: '답변' }).fill('팀장만 삭제해요.')
-  await dialog.getByRole('button', { name: '저장', exact: true }).click()
+  // 다음 질문이 있으면 저장하고 바로 다음 질문으로 넘어간다. 질문 목록으로 돌아가려면 시트를 닫는다.
+  await dialog
+    .getByRole('button', { name: '저장하고 다음', exact: true })
+    .click()
+  await expect(dialog.getByText('질문 2 / ', { exact: false })).toBeVisible()
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
   await expect(dialog.getByText('답변을 저장했어요.')).toBeVisible()
   await dialog.getByRole('button', { name: '답변으로 초안 만들기' }).click()
   const candidate = dialog

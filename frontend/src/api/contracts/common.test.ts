@@ -4,6 +4,7 @@ import {
   comparisonSchema,
   documentBeeReviewSchema,
   documentVersionSchema,
+  documentWorkingCopySchema,
   meetingEntrySchema,
   notificationSchema,
   pageSchema,
@@ -288,4 +289,45 @@ it('에이전트 작업 현황은 작업 상태가 DRAFT여도 응답 전체를 
     has_more: false,
   })
   expect(page.items[0].task_status).toBe('DRAFT')
+})
+
+// 서버(non_null)는 null 필드를 빼고 보내지만, 설정이 바뀌어 null 이 와도 작업본 조회가 깨지지 않아야 한다(PR 리뷰).
+const workingCopy = {
+  document_id: '221',
+  owner_account_id: '11',
+  revision: 1,
+  status: 'EDITING',
+  content: '본문',
+  file_name: 'plan.md',
+  submissions: [],
+}
+it('비비 검토 요청 상태는 없어도, null 이어도, error_code 가 null 이어도 받는다', () => {
+  expect(documentWorkingCopySchema.parse(workingCopy).bee_review_request).toBe(
+    undefined,
+  )
+  expect(
+    documentWorkingCopySchema.parse({
+      ...workingCopy,
+      bee_review_request: null,
+    }).bee_review_request,
+  ).toBeNull()
+  const parsed = documentWorkingCopySchema.parse({
+    ...workingCopy,
+    bee_review_request: {
+      status: 'COMPLETED',
+      error_code: null,
+      updated_at: '2026-11-10T09:00:00Z',
+    },
+  })
+  expect(parsed.bee_review_request?.error_code).toBeNull()
+  expect(
+    documentWorkingCopySchema.parse({
+      ...workingCopy,
+      bee_review_request: {
+        status: 'FAILED',
+        error_code: 'review_timeout',
+        updated_at: '2026-11-10T09:00:00Z',
+      },
+    }).bee_review_request?.error_code,
+  ).toBe('review_timeout')
 })

@@ -59,6 +59,8 @@ class LLMError(Exception):
         api_code = {
             "invalid_input": "invalid_ai_input",
             "invalid_output": "model_unavailable",
+            # 출력 상한에 닿아 답이 끊김. 호출한 쪽이 상한 문제로 안내할 수 있게 따로 둔다.
+            "output_truncated": "model_output_truncated",
         }.get(self.code, self.code)
         result: dict = {"error": {"code": api_code, "message": str(self)}}
         if self.usage:
