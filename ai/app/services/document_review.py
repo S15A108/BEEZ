@@ -202,6 +202,37 @@ def _suggestion_problem(
     return None, (start, end, original, replacement)
 
 
+def _safe_patch_set(
+    candidates: list[tuple[ClassifiedSuggestion, tuple[int, int, str, str] | None]],
+    content: str,
+    dropped: Counter,
+) -> list[ClassifiedSuggestion]:
+    """Keep the suggestions whose PATCHes stay safe together in every order and subset.
+
+    The sequence check is expensive, so the whole set is checked once first; only when
+    it fails is each PATCH added one by one and the one that breaks the set dropped.
+    """
+    patches = [patch for _, patch in candidates if patch]
+    try:
+        validate_patch_sequence(content, patches)
+        return [suggestion for suggestion, _ in candidates]
+    except ValueError as exc:
+        if str(exc) == "invalid patch input document":
+            raise
+    kept: list[ClassifiedSuggestion] = []
+    safe: list[tuple[int, int, str, str]] = []
+    for suggestion, patch in candidates:
+        if patch:
+            try:
+                validate_patch_sequence(content, [*safe, patch])
+            except ValueError:
+                dropped["patch sequence"] += 1
+                continue
+            safe.append(patch)
+        kept.append(suggestion)
+    return kept
+
+
 def _select_suggestions(
     parsed: ClassifiedReview, body: DocumentReviewRequest, steps: list[dict]
 ) -> tuple[ClassifiedReview, Counter]:
@@ -247,19 +278,7 @@ def _select_suggestions(
         if patch:
             ranges.append(patch[:2])
         candidates.append((suggestion, patch))
-    kept: list[ClassifiedSuggestion] = []
-    patches: list[tuple[int, int, str, str]] = []
-    for suggestion, patch in candidates:
-        if patch:
-            try:
-                validate_patch_sequence(body.content, [*patches, patch])
-            except ValueError as exc:
-                if str(exc) == "invalid patch input document":
-                    raise
-                dropped["patch sequence"] += 1
-                continue
-            patches.append(patch)
-        kept.append(suggestion)
+    kept = _safe_patch_set(candidates, body.content, dropped)
     if parsed.suggestions and not kept:
         raise ValueError("no usable suggestion")
     return parsed.model_copy(update={"suggestions": kept}), dropped

@@ -444,9 +444,16 @@ it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변
         status: 'OPEN',
         freshness: 'CURRENT',
       },
+      {
+        id: '5',
+        number: 5,
+        question: '반려된 문서의 질문',
+        status: 'OPEN',
+        freshness: 'AWAITING_RESUBMISSION',
+      },
     ],
     has_more: false,
-    total_count: 4,
+    total_count: 5,
   })
   renderPanel()
   await screen.findByText('갱신 중인 질문')
@@ -476,6 +483,13 @@ it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변
     within(current).queryByText(/이전 본문 기준|갱신하지 못함/),
   ).not.toBeInTheDocument()
   expect(current).toHaveAttribute('role', 'button')
+
+  const awaiting = cardOf('반려된 문서의 질문')
+  expect(
+    within(awaiting).getByText('반려된 문서 · 다시 제출 대기'),
+  ).toBeInTheDocument()
+  expect(awaiting).not.toHaveAttribute('role', 'button')
+  expect(within(awaiting).getByText(/문서를 다시 제출하면/)).toBeInTheDocument()
 })
 
 // 질문 생성이 시작되기 전 문서 재분석 단계에는 진행 안내가 없어 목록을 다시 읽지 않았다. '갱신 중' 질문이 있으면 끝날 때까지 따라간다.

@@ -207,12 +207,16 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
 
     // 질문의 기준 버전은 승인본 우선, 없으면 최신 초안이다(QuestionBasisVersion — 기획 분석 화면·설계 초안과 같은 규칙).
     // 반려 뒤 다시 낸 초안은 그대로 기준이 되어, 이전 버전 질문은 그 초안의 갱신 상태를 따르고 새 질문이 만들어지면
-    // 미답변은 조회할 때 대체로 판정돼 목록·개수·번호에서 빠진다(행은 바꾸지 않는다).
+    // 미답변은 조회할 때 대체로 판정돼 목록·개수·번호에서 빠진다(행은 바꾸지 않는다). 다시 내기 전, 기준 버전이 없는 동안은
+    // '다시 제출 대기'로 보이고 미답변 질문에는 답할 수 없다.
     @Test void afterARejectedDraftIsResubmittedTheNewDraftBecomesTheBasis() {
         generator.runOnce();
         long[] id = ids();
         questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
         jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness"))
+                .containsOnly("AWAITING_RESUBMISSION");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
         version = documentVersion(document, 2, CONTENT);
 
         assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");

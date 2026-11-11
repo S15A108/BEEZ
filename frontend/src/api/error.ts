@@ -161,7 +161,7 @@ Object.assign(messages, {
   question_superseded:
     '문서가 다시 분석되어 질문이 바뀌었어요. 목록을 새로고침해 주세요.',
   question_outdated:
-    '이전 본문으로 만든 질문이라 답할 수 없어요. 새 본문으로 질문을 다시 만든 뒤 답해 주세요.',
+    '이전 본문으로 만든 질문이라 지금은 답할 수 없어요. 목록을 새로고침해 질문의 상태를 확인해 주세요.',
   design_already_published:
     '이미 기준 설계가 발행되어 답변을 바꿀 수 없어요. 변경 제안에서 요청해 주세요.',
   invalid_ai_output:

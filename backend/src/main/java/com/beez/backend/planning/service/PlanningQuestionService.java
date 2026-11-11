@@ -86,9 +86,11 @@ public class PlanningQuestionService {
         // 이전 본문으로 만든 미답변 질문은 새 본문으로 다시 만드는 중이거나 그러지 못한 상태다 — 답하거나 닫지 않는다.
         // 이미 답한·닫은 질문은 이력이라 그대로 두고 다시 고칠 수도 있다(S15P31A108-396).
         if ("OPEN".equals(row.get("status")) && !"CURRENT".equals(row.get("freshness"))) {
-            throw new ApiException(HttpStatus.CONFLICT, "question_outdated", "REFRESH_FAILED".equals(row.get("freshness"))
-                    ? "이 질문은 이전 본문으로 만든 거라 답할 수 없어요. 질문을 다시 만든 뒤 답해 주세요."
-                    : "문서가 바뀌어 질문을 새 본문으로 다시 만드는 중이에요. 잠시 뒤 목록을 새로 불러와 주세요.");
+            throw new ApiException(HttpStatus.CONFLICT, "question_outdated", switch (String.valueOf(row.get("freshness"))) {
+                case "REFRESH_FAILED" -> "이 질문은 이전 본문으로 만든 거라 답할 수 없어요. 질문을 다시 만든 뒤 답해 주세요.";
+                case "AWAITING_RESUBMISSION" -> "문서가 반려돼 이 질문은 답할 수 없어요. 문서를 다시 제출하면 새 본문으로 질문을 만들어요.";
+                default -> "문서가 바뀌어 질문을 새 본문으로 다시 만드는 중이에요. 잠시 뒤 목록을 새로 불러와 주세요.";
+            });
         }
         if ("DISMISSED".equals(input.status())) {
             if (input.answer() != null || input.answerPayload() != null) throw invalid("닫는 요청에는 답변을 함께 보낼 수 없습니다.");

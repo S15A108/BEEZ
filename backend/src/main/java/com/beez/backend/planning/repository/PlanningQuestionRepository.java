@@ -135,15 +135,17 @@ public class PlanningQuestionRepository {
     /**
      * 질문이 지금 본문으로 만든 것인지(S15P31A108-396). 판정은 질문이 붙은 버전이 아니라 그 문서의 <b>현재 버전</b>(워커가 질문을
      * 만드는 기준 버전 {@link QuestionBasisVersion}, 승인본 우선)으로 한다. 현재 버전의 질문 생성이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT, 분석이나 질문
-     * 생성이 도는 중이면 REFRESHING, 그러다 실패했으면 REFRESH_FAILED 다. 워커({@link #nextRunnable})가 다시 만들 일이 없는 경우 —
-     * 현재 버전 없음·기준 설계 발행·보관된 프로젝트·본문 없음·분석 기록 없음 — 와 실행 기록이 없는 같은 버전의 옛 질문은 CURRENT 로 둬
-     * '갱신 중'이 영원히 남지 않게 한다.
+     * 생성이 도는 중이면 REFRESHING, 그러다 실패했으면 REFRESH_FAILED 다. 첫 제출이 반려돼 문서에 기준 버전이 아직 없으면
+     * AWAITING_RESUBMISSION 이다 — 다시 제출해야 새 본문으로 질문을 만든다. 워커({@link #nextRunnable})가 다시 만들 일이 없는 경우 —
+     * 버전 없는 옛 질문·기준 설계 발행·보관된 프로젝트·본문 없음·분석 기록 없음 — 와 실행 기록이 없는 같은 버전의 옛 질문은
+     * CURRENT 로 둬 '갱신 중'이 영원히 남지 않게 한다.
      *
      * <p>현재 버전이 아닌(반려 뒤 다시 낸 초안·새로 승인한 버전에 밀린) 버전의 미답변 질문은 현재 버전 질문이 다 만들어지면
      * SUPERSEDED 다. 행을 바꾸지 않고 조회할 때 판정하므로, 새 버전이 반려돼 현재 버전이 되돌아오면 그 질문이 다시 보인다.
      * 목록·개수는 이 행을 빼고, 답변은 409 question_superseded 다. 답한·닫은 질문은 이력이라 CURRENT 로 남는다.
      */
-    private static final String FRESHNESS = "CASE WHEN cur.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL THEN 'CURRENT'"
+    private static final String FRESHNESS = "CASE WHEN v.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL THEN 'CURRENT'"
+            + " WHEN cur.id IS NULL THEN 'AWAITING_RESUBMISSION'"
             + " WHEN q.document_version_id<>cur.id AND " + SETTLED + " THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
             + " WHEN " + SETTLED + " OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'"
             + " WHEN dp.status='FAILED' OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'"

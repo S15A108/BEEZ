@@ -42,6 +42,14 @@ const typeLabel = {
 const freshnessLabel = {
   REFRESHING: '이전 본문 기준 · 갱신 중',
   REFRESH_FAILED: '최신 본문으로 갱신하지 못함',
+  AWAITING_RESUBMISSION: '반려된 문서 · 다시 제출 대기',
+} as const
+const lockedMessage = {
+  REFRESHING: '새 본문으로 질문을 다시 만드는 중이라 끝난 뒤 답할 수 있어요.',
+  REFRESH_FAILED:
+    '이전 본문으로 만든 질문이라 답할 수 없어요. 질문을 새 본문으로 다시 만든 뒤 답해 주세요.',
+  AWAITING_RESUBMISSION:
+    '문서가 반려돼 이 질문은 답할 수 없어요. 문서를 다시 제출하면 새 본문으로 질문을 만들어요.',
 } as const
 
 const isOutdated = (question: PlanningQuestion) =>
@@ -345,13 +353,15 @@ function QuestionCard({
           기준 설계가 발행되어 답변을 바꿀 수 없어요.
         </p>
       )}
-      {isLeader && !published && locked && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {question.freshness === 'REFRESH_FAILED'
-            ? '이전 본문으로 만든 질문이라 답할 수 없어요. 질문을 새 본문으로 다시 만든 뒤 답해 주세요.'
-            : '새 본문으로 질문을 다시 만드는 중이라 끝난 뒤 답할 수 있어요.'}
-        </p>
-      )}
+      {isLeader &&
+        !published &&
+        locked &&
+        question.freshness &&
+        question.freshness !== 'CURRENT' && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {lockedMessage[question.freshness]}
+          </p>
+        )}
       {clickable && (
         <p className="mt-3 text-xs text-muted-foreground">
           {answered ? '눌러서 답변 수정' : '눌러서 답변하기'}
