@@ -278,7 +278,7 @@ public class DocumentIndexWorker {
             var hit = new LinkedHashMap<String, Object>(Map.<String, Object>of("type", "DOCUMENT_CHUNK", "id", row.get("id").toString(), "title", row.get("title"),
                     "snippet", row.get("text"), "score", row.get("score"), "source", Map.of("document_id", row.get("document_id").toString(),
                     "document_version_id", row.get("document_version_id").toString(), "version_no", row.get("version_no"),
-                    "location", locator.get("start_line") + "~" + locator.get("end_line") + "행")));
+                    "location", ChunkRetrievalMetadata.location(locator))));
             ChunkRetrievalMetadata.addToHit(hit, row);
             return hit;
         }).toList();

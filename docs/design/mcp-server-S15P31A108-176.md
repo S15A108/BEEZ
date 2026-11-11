@@ -158,7 +158,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 
 | 도구 | 어댑터(`mcp/tool`) | 부르는 서비스 | 담당 |
 | --- | --- | --- | --- |
-| MCP-01 `get_development_context` | `GetDevelopmentContextTool` | `ContextMcpService.getDevelopmentContext` — 구성 모듈 연결 전에는 `context_not_ready` | 박상은(-131·-132) / 변준성 |
+| MCP-01 `get_development_context` | `GetDevelopmentContextTool` | `ContextMcpService.getDevelopmentContext` → `DevelopmentContextComposer`(AI-A14, -399). 색인·구성 AI 미준비는 `context_not_ready` | 박상은(-131·-132) / 변준성 |
 | MCP-02 `get_document` | `GetDocumentTool` | `DocumentApplicationService.getForAgent` — MCP 전용(REST DOC-A02 `get`은 문서 검토용이라 따로 둠) | 오서현(-192) |
 | MCP-03 `get_design_changes` | `GetDesignChangesTool` | `DesignChangesService.getChanges` | 변준성 |
 | MCP-04 `propose_design_change` | `ProposeDesignChangeTool` | `ProposalCommandService.create` (REST CHG-A01과 같음) | 오서현(-195) |
