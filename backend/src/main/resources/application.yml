@@ -180,6 +180,19 @@ beez:
     worker-read-timeout: ${DOCUMENT_REVIEW_WORKER_READ_TIMEOUT:120s}
     # 검토를 동시에 처리하는 워커 스레드 수. 필수 문서 4종을 연달아 올려도 줄 서지 않게 4(S15P31A108-391)
     worker-concurrency: ${DOCUMENT_REVIEW_WORKER_CONCURRENCY:4}
+  # 작업 계획 문서 초안(S15P31A108-385). 사슬: AI 모델 호출 30초 < 이 값 40초 < nginx /api/ 60초.
+  # max-calls-per-hour: 한 사람이 한 프로젝트에서 한 시간에 받을 수 있는 초안 횟수(비용 가드)
+  task-plan-draft:
+    read-timeout: ${TASK_PLAN_DRAFT_READ_TIMEOUT:40s}
+    max-calls-per-hour: ${TASK_PLAN_DRAFT_MAX_CALLS_PER_HOUR:20}
+    retrieval-limit: ${TASK_PLAN_DRAFT_RETRIEVAL_LIMIT:12}
+    max-excerpt-chars: ${TASK_PLAN_DRAFT_MAX_EXCERPT_CHARS:4000}
+    total-excerpt-chars: ${TASK_PLAN_DRAFT_TOTAL_EXCERPT_CHARS:12000}
+    max-design-items: ${TASK_PLAN_DRAFT_MAX_DESIGN_ITEMS:100}
+    design-summary-chars: ${TASK_PLAN_DRAFT_DESIGN_SUMMARY_CHARS:300}
+    selected-excerpts: ${TASK_PLAN_DRAFT_SELECTED_EXCERPTS:6}
+    similarity-drop: ${TASK_PLAN_DRAFT_SIMILARITY_DROP:0.15}
+    lexical-weight: ${TASK_PLAN_DRAFT_LEXICAL_WEIGHT:0.2}
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
     # 초대 메일 발송 한도 (Q05 결정 2026-11-09, S15P31A108-334). 초대한 계정마다 MEM-A01 새 초대 + MEM-A11 다시 보내기를 합쳐 센다.

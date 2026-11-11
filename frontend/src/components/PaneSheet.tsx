@@ -56,6 +56,7 @@ export function PaneSheet({
   back = '뒤로',
   title,
   description,
+  actions,
   busy = false,
   onClose,
   className,
@@ -65,6 +66,8 @@ export function PaneSheet({
   back?: string
   title: ReactNode
   description?: ReactNode
+  /** 머리줄 오른쪽에 둘 버튼(작은 창에서는 제목 아래 오른쪽) */
+  actions?: ReactNode
   /** 저장 중이면 닫지 않는다 */
   busy?: boolean
   onClose: () => void
@@ -121,6 +124,7 @@ export function PaneSheet({
               {description ?? '입력한 내용을 확인한 뒤 저장해 주세요.'}
             </DialogDescription>
           </DialogHeader>
+          {actions && <div className="flex justify-end">{actions}</div>}
           {children}
         </DialogContent>
       </Dialog>
@@ -139,13 +143,16 @@ export function PaneSheet({
         <ChevronLeft className="size-4" />
         {back}
       </button>
-      <div>
-        <h3 className="text-lg font-bold">{title}</h3>
-        {description && (
-          <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {description}
-          </p>
-        )}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-bold">{title}</h3>
+          {description && (
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
+              {description}
+            </p>
+          )}
+        </div>
+        {actions}
       </div>
       {/* 폼은 남은 높이를 채워 아래 버튼 줄(SheetSubmit)을 맨 아래에 둔다. 격자 폼은 줄이 늘어나지 않게 위로 붙인다. */}
       <div className="flex flex-1 flex-col gap-4 [&>form]:flex-1 [&>form.grid]:content-start">

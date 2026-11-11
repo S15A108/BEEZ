@@ -58,6 +58,9 @@ class LLMRequest:
     pricing: Pricing | None = None
     model_options: dict[str, Any] | None = field(default=None, repr=False)
     allowed_response_models: tuple[str, ...] = ()
+    # 이 이름을 주면 호출이 끝날 때 `<이름>_completion` 진단 로그를 남긴다(실제 토큰·추론 토큰·종료 사유·지연).
+    # 기능 이름(feature)으로 고르지 않고 호출하는 쪽이 직접 켠다. 같은 feature 를 쓰는 다른 기능에는 로그가 생기지 않는다.
+    diagnostics: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,8 @@ class ProviderResponse:
     output_tokens: int | None = None
     estimated_cost_amount: Decimal | None = None
     currency: str | None = None
+    reasoning_tokens: int | None = None
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
