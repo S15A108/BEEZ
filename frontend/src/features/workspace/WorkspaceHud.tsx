@@ -302,8 +302,8 @@ export function WorkspaceHud({
             </li>
           ))}
           <li className="text-[11px] text-muted-foreground">
-            에이전트는 설정 › 에이전트에서 토큰을 발급하고 Claude Code에 BEEZ
-            MCP를 추가하면 연결돼요.
+            에이전트는 설정 › 내 에이전트 관리에서 토큰을 발급하고 Claude Code에
+            BEEZ MCP를 추가하면 연결돼요.
           </li>
         </ul>
       ),
@@ -407,16 +407,16 @@ export function WorkspaceHud({
       done: true,
     },
     {
-      title: '내 담당 영역 확인',
+      title: '내 담당 도메인 확인',
       detail: me?.domain
         ? `${me.domain} (팀장이 정해요)`
-        : '담당 영역은 팀장이 정해요. 아직 정해지지 않았어요.',
+        : '담당 도메인은 팀장이 정해요. 아직 정해지지 않았어요.',
       done: Boolean(me?.domain),
     },
     {
       title: '내 에이전트 연결하기',
       detail:
-        '설정 › 에이전트에서 토큰을 발급하고 Claude Code에 BEEZ MCP를 추가해요.',
+        '설정 › 내 에이전트 관리에서 토큰을 발급하고 Claude Code에 BEEZ MCP를 추가해요.',
       done: onboarding.my_agent_connected,
       action: { label: '설정에서 연결하기', pane: 'settings', focus: 'agent' },
     },

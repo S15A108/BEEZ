@@ -301,7 +301,7 @@ export const endpointRegistry = [
   },
   {
     id: 'MEM-A07',
-    title: '팀원 담당 영역·표시 수정',
+    title: '팀원 담당 도메인·표시 수정',
     method: 'PATCH',
     path: '/projects/{id}/members/{member_id}',
     auth: 'LEADER',
@@ -1199,6 +1199,19 @@ export const endpointRegistry = [
     idempotent: true,
   },
   {
+    id: 'TSK-A09',
+    title: '승인 설계로 작업 생성·배정',
+    method: 'POST',
+    path: '/projects/{id}/task-breakdown',
+    auth: 'LEADER',
+    domain: 'tasks',
+    operation: 'generateBreakdown',
+    multipart: false,
+    binary: false,
+    noContent: false,
+    idempotent: false,
+  },
+  {
     id: 'TSK-A01',
     title: '작업 계획 등록',
     method: 'POST',
@@ -1418,7 +1431,7 @@ export const endpointRegistry = [
     multipart: false,
     binary: false,
     noContent: false,
-    idempotent: true,
+    idempotent: false,
   },
   {
     id: 'BEE-A02',

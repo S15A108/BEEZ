@@ -9,6 +9,8 @@ answers can be reviewed. Nothing is stored and nothing is approved here.
 
 import hashlib
 import json
+import logging
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -38,6 +40,8 @@ from app.services.design_drafts.proposer import (
 from app.services.document_parsing.pipeline import parse_source, resolve_source
 from app.services.llm_client import LLMUsage
 from app.services.planning_questions.rules import block_location, clip, heading_titles
+
+logger = logging.getLogger(__name__)
 
 # Drafts a reviewer can check against something come first; unsupported last.
 _SUPPORT_ORDER = {"DOCUMENT_AND_ANSWER": 0, "ANSWER": 1, "DOCUMENT": 2, "NONE": 3}
@@ -217,8 +221,11 @@ def verify_item(
     Several proposals share a base item when the model split its changes (a
     path change and a response change, say); they are applied in order and
     every verified source, every answer reference and every rationale are
-    kept, so no answer's effect loses its trace. Contradictions of the inputs
-    are rejected; only unverifiable quotes are dropped.
+    kept, so no answer's effect loses its trace. A draft that contradicts the
+    inputs (an unknown base item, malformed content) is rejected on its own;
+    a proposal whose kind differs from the base item, an unverifiable quote
+    and an answer reference to no answered question are dropped from it
+    (S15P31A108-388).
     """
     first = proposals[0]
     base_id = first.base_design_item_version_id
@@ -226,11 +233,11 @@ def verify_item(
     if base_id is not None and base is None:
         raise DraftRejected("unknown base item")
     kind = base.kind if base is not None else first.kind
-    if any(
-        item.kind != kind or item.base_design_item_version_id != base_id
-        for item in proposals
-    ):
-        raise DraftRejected("mismatched base item or kind")
+    if any(item.base_design_item_version_id != base_id for item in proposals):
+        raise DraftRejected("mismatched base item")
+    proposals = [item for item in proposals if item.kind == kind]
+    if not proposals:
+        raise DraftRejected("no proposal keeps the base item's kind")
     try:
         content = merge_content(
             base.content if base is not None else None,
@@ -241,9 +248,7 @@ def verify_item(
         raise DraftRejected("malformed item content") from None
     refs: list[str] = []
     for ref in (ref for item in proposals for ref in item.answer_refs):
-        if ref not in answered:
-            raise DraftRejected("unknown answer reference")
-        if ref not in refs:
+        if ref in answered and ref not in refs:
             refs.append(ref)
     blocks = {block.block_id: block for block in document.blocks}
     titles = heading_titles(document)
@@ -315,44 +320,69 @@ def compose_result(
     allowed_blocks = scope_block_ids(document, request)
     pairs: list[tuple[DraftItem, DraftChange]] = []
     seen_keys: set[str] = set()
+    verified = rejected = 0
+    reasons: Counter[str] = Counter()
     for group in group_proposals(proposal.items):
-        item = verify_item(
-            document,
-            request,
-            group,
-            existing=existing,
-            answered=answered,
-            allowed_blocks=allowed_blocks,
-        )
-        base_id = item.base_design_item_version_id
-        if base_id is not None:
-            changed = field_changes(existing[base_id].content, item.content)
-            conflicts = conflicting_fields([proposed.content for proposed in group])
-            # An unchanged restatement is not a draft, unless the proposals
-            # disagreed on the way there: the reviewer must see that.
-            if not changed and not conflicts:
-                continue
-            change = DraftChange(
-                candidate_key=item.candidate_key,
-                change="UPDATE",
-                base_design_item_version_id=base_id,
-                before=existing[base_id].content,
-                after=item.content,
-                changed_fields=changed,
-                conflicting_fields=conflicts,
-                answer_refs=item.answer_refs,
+        try:
+            item = verify_item(
+                document,
+                request,
+                group,
+                existing=existing,
+                answered=answered,
+                allowed_blocks=allowed_blocks,
             )
-        else:
-            change = DraftChange(
-                candidate_key=item.candidate_key,
-                change="CREATE",
-                after=item.content,
-                answer_refs=item.answer_refs,
-            )
+            base_id = item.base_design_item_version_id
+            if base_id is not None:
+                kept = [proposed for proposed in group if proposed.kind == item.kind]
+                changed = field_changes(existing[base_id].content, item.content)
+                conflicts = conflicting_fields([proposed.content for proposed in kept])
+                change = DraftChange(
+                    candidate_key=item.candidate_key,
+                    change="UPDATE",
+                    base_design_item_version_id=base_id,
+                    before=existing[base_id].content,
+                    after=item.content,
+                    changed_fields=changed,
+                    conflicting_fields=conflicts,
+                    answer_refs=item.answer_refs,
+                )
+            else:
+                change = DraftChange(
+                    candidate_key=item.candidate_key,
+                    change="CREATE",
+                    after=item.content,
+                    answer_refs=item.answer_refs,
+                )
+        except (DraftRejected, ValidationError) as error:
+            # One draft contradicting the inputs no longer costs the others
+            # (S15P31A108-388). Reasons are this module's own fixed words.
+            rejected += 1
+            reasons[
+                str(error) if isinstance(error, DraftRejected) else "invalid draft"
+            ] += 1
+            continue
+        verified += 1
+        # An unchanged restatement is not a draft, unless the proposals
+        # disagreed on the way there: the reviewer must see that.
+        if base_id is not None and not changed and not conflicts:
+            continue
         if item.candidate_key in seen_keys:
             continue
         seen_keys.add(item.candidate_key)
         pairs.append((item, change))
+    if not verified and (rejected or proposal.dropped_items):
+        raise DraftRejected("no usable draft")
+    if rejected or proposal.dropped_items:
+        # Counts only: the rejected text is untrusted model output.
+        logger.warning(
+            "design draft kept %d of %d proposed drafts (%d rejected %s, %d malformed)",
+            verified,
+            verified + rejected + proposal.dropped_items,
+            rejected,
+            dict(reasons),
+            proposal.dropped_items,
+        )
     # Stable: model order is kept inside each support level.
     pairs.sort(key=lambda pair: _SUPPORT_ORDER[pair[0].support])
     omitted = max(0, len(pairs) - request.max_items)

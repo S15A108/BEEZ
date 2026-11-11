@@ -53,17 +53,25 @@ class Settings(BaseSettings):
     # feature so a bad value here cannot disable other routes.
     planning_questions_enabled: bool = False
     planning_questions_max_body_bytes: str = "2097152"
-    planning_questions_llm_timeout_seconds: str = "30"
-    planning_questions_llm_output_token_limit: str = "2048"
+    # Measured need and bounds: app.services.planning_questions.proposer
+    # (S15P31A108-388). Keep the BE beez.planning.question-read-timeout longer.
+    planning_questions_llm_timeout_seconds: str = "90"
+    planning_questions_llm_output_token_limit: str = "8192"
     planning_questions_llm_output_token_parameter: str = "max_completion_tokens"
 
     # Provisional #134 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133.
     design_drafts_enabled: bool = False
     design_drafts_max_body_bytes: str = "2097152"
-    design_drafts_llm_timeout_seconds: str = "45"
-    design_drafts_llm_output_token_limit: str = "4096"
+    # Measured need and bounds: app.services.design_drafts.proposer
+    # (S15P31A108-388). Keep the BE beez.planning.draft-read-timeout longer.
+    design_drafts_llm_timeout_seconds: str = "150"
+    design_drafts_llm_output_token_limit: str = "16384"
     design_drafts_llm_output_token_parameter: str = "max_completion_tokens"
+
+    # Task generation is synchronous. Leave time for the BE and nginx after the model call.
+    task_breakdown_llm_timeout_seconds: str = "50"
+    task_breakdown_llm_output_token_limit: str = "16384"
 
     # Provisional #135 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133 and #134.

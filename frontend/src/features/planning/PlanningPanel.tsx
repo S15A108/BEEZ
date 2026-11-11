@@ -21,6 +21,7 @@ import {
 import { DocumentCandidates } from './DocumentCandidates'
 import { publishNotice } from './draftJobs'
 import { DraftCandidates } from './DraftCandidates'
+import { TaskBreakdown } from './TaskBreakdown'
 import { hasActiveJob } from './draftJobs'
 import { useShowMore } from './useShowMore'
 import {
@@ -270,6 +271,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           공용 문서함
         </Button>
       </header>
+      {isLeader && baseline.data && (
+        <TaskBreakdown key={baseline.data.id} projectId={projectId} />
+      )}
       {action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}

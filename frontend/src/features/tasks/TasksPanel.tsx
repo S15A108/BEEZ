@@ -84,6 +84,7 @@ import {
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import { AgentTaskHandoff } from './AgentTaskHandoff'
 import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
   toValidationView,
@@ -254,7 +255,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   const memberId = members.data?.items.find(
     (member) => member.account_id === session.data?.id,
   )?.id
-  const [tab, setTab] = useState<'mine' | 'team'>('mine')
+  const initialTaskTab = useWorkspaceStore((state) => state.initialTaskTab)
+  const [tab, setTab] = useState(initialTaskTab)
   const entries = tasks.data?.items ?? []
   // ponytail: 불러온 목록을 화면에서 거른다. 목록이 길어지면 assignee_member_id 파라미터로 옮긴다.
   // 담당자 없는 작업(assignee_member_id 생략)은 팀원 목록을 받기 전에도 내 작업으로 세지 않는다.
@@ -687,6 +689,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {active && mine(current) && (
+                      <AgentTaskHandoff key={current.id} taskId={current.id} />
+                    )}
                     <ol
                       aria-label="작업 단계"
                       className="flex rounded-xl border px-2 py-3.5 text-[13px]"
@@ -908,7 +913,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           </strong>
                           <p className="text-muted-foreground">
                             {isLeader
-                              ? "담당자가 나가거나 제외되며 넘겨받을 사람을 고르지 않았어요. 상태와 계획 검증은 그대로예요. 담당자를 정하기 전에는 아무도 계획을 고치거나 시작할 수 없어요. 팀원은 '내가 맡기'로 스스로 맡을 수도 있어요."
+                              ? "담당자를 정하기 전에는 아무도 계획을 고치거나 시작할 수 없어요. 팀원은 '내가 맡기'로 스스로 맡을 수도 있어요."
                               : `'내가 맡기'로 내가 담당자가 되거나 팀장이 정할 수 있어요. 상태와 계획 검증은 그대로예요.${current.status === 'IN_PROGRESS' ? ' 진행 중이던 작업은 맡으면 대기(재검증)로 바뀌고 다시 검증받아요.' : ''} 다른 사람에게 맡기는 건 팀장만 할 수 있어요.`}
                           </p>
                           {active && (

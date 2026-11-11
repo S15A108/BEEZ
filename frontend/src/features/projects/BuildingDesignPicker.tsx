@@ -91,7 +91,7 @@ function DesignDot({ design, size }: { design: BuildingDesign; size: number }) {
   )
 }
 
-// 프로젝트 만들기(SCR-04-v2-create-project)와 설정 › 프로젝트 정보(SCR-06-v2-settings-project 11-02)가 같이 쓰는
+// 프로젝트 만들기(SCR-04-v2-create-project)와 설정 › 프로젝트 관리(SCR-06-v2-settings-project 11-02, S15P31A108-376)가 같이 쓰는
 // 건물 디자인 고르기: 왼쪽 큰 미리 보기와 이름·특징, 오른쪽 그림·이름·특징 카드에 노란 테두리와 체크.
 // small: 설정 창 높이에 맞춘 작은 미리 보기. note: 미리 보기 아래 안내(설정의 '지금 부지').
 export function BuildingDesignPicker({

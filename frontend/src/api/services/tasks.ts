@@ -3,6 +3,15 @@ import { idSchema } from '@/api/contracts/common'
 import { callEndpoint, type RequestOptions } from './request'
 
 export const tasksApi = {
+  generateBreakdown: (projectId: string, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.breakdownResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(idSchema.parse(projectId))}/task-breakdown`,
+      },
+      options,
+    ),
   create: (
     projectId: string,
     input: schemas.CreateInput,

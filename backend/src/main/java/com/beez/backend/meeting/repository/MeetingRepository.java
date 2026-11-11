@@ -122,12 +122,12 @@ public class MeetingRepository {
         return out;
     }
 
-    /** 한 검증에서 이 관련 작업을 가리키는 모델의 BLOCKING 충돌 발견 항목 메시지 전부(저장 순서, 없으면 빈 목록) */
+    /** 한 검증에서 이 관련 작업을 가리키는 BLOCKING 충돌 발견 항목 메시지 전부(저장 순서, 없으면 빈 목록) */
     public List<String> conflictFindingMessages(long validationId, long relatedTaskId) {
         return jdbc.sql("""
                 select message from validation_finding
                  where validation_id = :v and related_task_id = :t
-                   and source = 'MODEL' and kind = 'CONFLICT' and severity = 'BLOCKING'
+                   and kind = 'CONFLICT' and severity = 'BLOCKING'
                  order by id
                 """).param("v", validationId).param("t", relatedTaskId).query(String.class).list();
     }

@@ -1,4 +1,5 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { AxiosError } from 'axios'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -19,6 +20,12 @@ const answer = {
     },
   ],
   unresolved: [],
+  answer_id: '30',
+  citations: [],
+  grounded: false,
+  mode: 'APPROVED' as const,
+  baseline_id: '10',
+  document_version_ids: ['215'],
 }
 
 function Workspace({ projectId }: { projectId: string }) {
@@ -115,4 +122,96 @@ it('창이 내려간 뒤에 도착한 답도 대화에 붙는다', async () => {
     within(log()).getByText('로그인 실패는 어떻게 처리하나요?'),
   ).toBeInTheDocument()
   expect(within(log()).getByText(answer.text)).toBeInTheDocument()
+})
+
+it('근거 문서를 보고 돌아와도 대기 질문이 남고 중복 제출을 막는다', async () => {
+  let resolve!: (value: typeof answer) => void
+  const ask = vi
+    .spyOn(beeApi, 'ask')
+    .mockResolvedValueOnce(answer)
+    .mockReturnValueOnce(new Promise((done) => (resolve = done)))
+  renderWorkspace()
+  await send('첫 질문')
+  await within(log()).findByText(answer.text)
+  await send('기다리는 질문')
+  await userEvent.click(
+    within(screen.getByRole('complementary')).getByRole('button', {
+      name: /문서 201 v2/,
+    }),
+  )
+  backToChat()
+
+  expect(screen.getByRole('status')).toHaveTextContent('찾는 중')
+  expect(within(log()).getByText('기다리는 질문')).toBeInTheDocument()
+  const button = screen.getByRole('button', { name: '보내기' })
+  expect(button).toBeDisabled()
+  await userEvent.type(screen.getByLabelText('설계 질문'), '기다리는 질문')
+  await act(async () => {
+    fireEvent.submit(button.closest('form')!)
+  })
+  expect(ask).toHaveBeenCalledTimes(2)
+
+  await act(async () =>
+    resolve({ ...answer, answer_id: '31', text: '기다리던 답변' }),
+  )
+  expect(await within(log()).findAllByText('기다리던 답변')).toHaveLength(1)
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(button).toBeEnabled()
+})
+
+it('문서를 보는 사이 실패한 질문도 돌아오면 오류와 입력을 복원한다', async () => {
+  let reject!: (error: Error) => void
+  vi.spyOn(beeApi, 'ask')
+    .mockResolvedValueOnce(answer)
+    .mockReturnValueOnce(new Promise((_resolve, fail) => (reject = fail)))
+  renderWorkspace()
+  await send('첫 질문')
+  await within(log()).findByText(answer.text)
+  await send('돌아와서 다시 보낼 질문')
+  await userEvent.click(
+    within(screen.getByRole('complementary')).getByRole('button', {
+      name: /문서 201 v2/,
+    }),
+  )
+  await act(async () => reject(new AxiosError('offline', 'ERR_NETWORK')))
+  backToChat()
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '서버에 연결할 수 없습니다.',
+  )
+  expect(screen.getByLabelText('설계 질문')).toHaveValue(
+    '돌아와서 다시 보낼 질문',
+  )
+  expect(screen.getByRole('button', { name: '다시 보내기' })).toBeEnabled()
+})
+
+it('대기 중인 질문은 같은 프로젝트의 창에서만 전송을 막는다', async () => {
+  let resolveFirst!: (value: typeof answer) => void
+  let resolveSecond!: (value: typeof answer) => void
+  const ask = vi
+    .spyOn(beeApi, 'ask')
+    .mockReturnValueOnce(new Promise((done) => (resolveFirst = done)))
+    .mockReturnValueOnce(new Promise((done) => (resolveSecond = done)))
+  const { switchProject } = renderWorkspace()
+  await send('첫 프로젝트 질문')
+  expect(screen.getByRole('button', { name: '보내기' })).toBeDisabled()
+  switchProject('102')
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '보내기' })).toBeEnabled()
+  await send('둘째 프로젝트 질문')
+  expect(ask).toHaveBeenCalledTimes(2)
+  expect(ask).toHaveBeenLastCalledWith('102', {
+    question: '둘째 프로젝트 질문',
+    scope: 'APPROVED',
+  })
+  switchProject('101')
+  expect(screen.getByRole('status')).toHaveTextContent('찾는 중')
+  expect(within(log()).getByText('첫 프로젝트 질문')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '보내기' })).toBeDisabled()
+  await act(async () => resolveFirst(answer))
+  expect(screen.getByRole('button', { name: '보내기' })).toBeEnabled()
+  switchProject('102')
+  expect(screen.getByRole('status')).toHaveTextContent('찾는 중')
+  expect(within(log()).getByText('둘째 프로젝트 질문')).toBeInTheDocument()
+  await act(async () => resolveSecond({ ...answer, answer_id: '31' }))
 })
