@@ -388,6 +388,74 @@ it('이미 답한 질문의 수정 창에는 답하지 않고 닫기를 보이�
   )
 })
 
+// S15P31A108-396: 본문이 바뀐 뒤 질문을 다시 만드는 중이거나 그러지 못하면 이전 질문을 최신처럼 보이지 않고,
+// 서버가 막는 미답변 질문(409 question_outdated)은 누를 수 없게 한다. 답한 질문은 이력이라 고칠 수 있다.
+it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변 질문은 답할 수 없게 한다', async () => {
+  vi.spyOn(planningApi, 'questions').mockResolvedValue({
+    items: [
+      {
+        id: '1',
+        number: 1,
+        question: '갱신 중인 질문',
+        status: 'OPEN',
+        freshness: 'REFRESHING',
+      },
+      {
+        id: '2',
+        number: 2,
+        question: '갱신 실패한 질문',
+        status: 'OPEN',
+        freshness: 'REFRESH_FAILED',
+      },
+      {
+        id: '3',
+        number: 3,
+        question: '이미 답한 질문',
+        status: 'ANSWERED',
+        answer: '팀장만',
+        freshness: 'REFRESH_FAILED',
+      },
+      {
+        id: '4',
+        number: 4,
+        question: '최신 질문',
+        status: 'OPEN',
+        freshness: 'CURRENT',
+      },
+    ],
+    has_more: false,
+    total_count: 4,
+  })
+  renderPanel()
+  await screen.findByText('갱신 중인 질문')
+  const refreshing = cardOf('갱신 중인 질문')
+  expect(
+    within(refreshing).getByText('이전 본문 기준 · 갱신 중'),
+  ).toBeInTheDocument()
+  expect(refreshing).not.toHaveAttribute('role', 'button')
+  expect(
+    within(refreshing).getByText(/끝난 뒤 답할 수 있어요/),
+  ).toBeInTheDocument()
+
+  const failed = cardOf('갱신 실패한 질문')
+  expect(
+    within(failed).getByText('최신 본문으로 갱신하지 못함'),
+  ).toBeInTheDocument()
+  expect(failed).not.toHaveAttribute('role', 'button')
+
+  const answered = cardOf('이미 답한 질문')
+  expect(
+    within(answered).getByText('최신 본문으로 갱신하지 못함'),
+  ).toBeInTheDocument()
+  expect(answered).toHaveAttribute('role', 'button')
+
+  const current = cardOf('최신 질문')
+  expect(
+    within(current).queryByText(/이전 본문 기준|갱신하지 못함/),
+  ).not.toBeInTheDocument()
+  expect(current).toHaveAttribute('role', 'button')
+})
+
 it('기준 설계가 발행된 프로젝트에서는 질문 카드를 눌러 답할 수 없다', async () => {
   renderPanel(true, '101')
   const question = await screen.findByText(

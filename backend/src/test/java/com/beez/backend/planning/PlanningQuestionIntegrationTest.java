@@ -177,6 +177,34 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(items(questions.list(leaderCaller, project, version, null, null))).hasSize(3);
     }
 
+    // S15P31A108-396: 본문이 바뀌어 질문을 다시 만드는 동안이나 그러지 못했을 때 이전 본문으로 만든 미답변 질문이
+    // 최신처럼 보이고 답할 수 있었다. 갱신 상태를 내려주고, 미답변만 막고 답한 이력은 그대로 둔다.
+    @Test void outdatedQuestionsAreMarkedAndOpenOnesCannotBeAnsweredUntilRegenerated() {
+        generator.runOnce();
+        long[] id = ids();
+        questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+
+        jdbc.update("UPDATE document_processing SET attempt=2 WHERE document_version_id=?", version);
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest(null, null, "DISMISSED")));
+        assertThat(questions.answer(leaderCaller, project, id[0], new AnswerRequest("고친 답", null, null))).as("답한 질문은 이력이라 고칠 수 있다")
+                .containsEntry("answer", "고친 답").containsEntry("freshness", "REFRESHING");
+
+        generator.runOnce();
+        generator.runOnce();
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESH_FAILED");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+
+        doAnswer(call -> questionsResponse("a1", "a2", "a3")).when(ai).planningQuestions(any());
+        documents.retry(leaderCaller, project, document, version, "retry-396");
+        generator.runOnce();
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null))).containsEntry("status", "ANSWERED");
+    }
+
     @Test void answeredQuestionTextIsNotOverwrittenByReanalysis() {
         generator.runOnce();
         long a1 = ids()[0];

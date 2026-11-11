@@ -38,6 +38,17 @@ const typeLabel = {
   SHORT_ANSWER: '단답형',
   ESSAY: '서술형',
 } as const
+// S15P31A108-396: 본문이 바뀐 뒤 질문을 새로 만드는 중이거나 그러지 못한 동안의 이전 질문 표시
+const freshnessLabel = {
+  REFRESHING: '이전 본문 기준 · 갱신 중',
+  REFRESH_FAILED: '최신 본문으로 갱신하지 못함',
+} as const
+
+const isOutdated = (question: PlanningQuestion) =>
+  !!question.freshness && question.freshness !== 'CURRENT'
+// 서버는 이전 본문으로 만든 미답변 질문의 답변·닫기를 막는다(409 question_outdated). 답한·닫은 질문은 이력이라 고칠 수 있다.
+const isLocked = (question: PlanningQuestion) =>
+  isOutdated(question) && !question.answer && question.status !== 'DISMISSED'
 
 export interface QuestionGenerationView {
   /** 질문 생성이 도는 중이거나 실패한 문서 하나(문서 버전마다 따로 온다) */
@@ -224,7 +235,9 @@ export function PlanningQuestions({
       {answering && (
         <QuestionAnswerForm
           question={answering}
-          siblings={allQuestions}
+          siblings={allQuestions.filter(
+            (item) => item.id === answering.id || !isLocked(item),
+          )}
           onNavigate={setAnsweringId}
           onClose={() => setAnsweringId(null)}
           onSubmit={(input) => onAnswer(answering.id, input)}
@@ -251,7 +264,8 @@ function QuestionCard({
 }) {
   const dismissed = question.status === 'DISMISSED'
   const answered = !!question.answer && !dismissed
-  const clickable = isLeader && !busy && answerable
+  const locked = isLocked(question)
+  const clickable = isLeader && !busy && answerable && !locked
   return (
     <article
       className={cn(
@@ -291,6 +305,11 @@ function QuestionCard({
         )}
         {dismissed && <Tag>답변 없이 닫음</Tag>}
         {answered && <Tag tone={operationTone.CREATE}>답변 완료</Tag>}
+        {question.freshness && question.freshness !== 'CURRENT' && (
+          <Tag tone={operationTone.UPDATE}>
+            {freshnessLabel[question.freshness]}
+          </Tag>
+        )}
       </div>
       <p className="text-sm leading-6">{question.question}</p>
       {question.summary && (
@@ -311,6 +330,13 @@ function QuestionCard({
       {isLeader && published && (
         <p className="mt-3 text-xs text-muted-foreground">
           기준 설계가 발행되어 답변을 바꿀 수 없어요.
+        </p>
+      )}
+      {isLeader && !published && locked && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {question.freshness === 'REFRESH_FAILED'
+            ? '이전 본문으로 만든 질문이라 답할 수 없어요. 질문을 새 본문으로 다시 만든 뒤 답해 주세요.'
+            : '새 본문으로 질문을 다시 만드는 중이라 끝난 뒤 답할 수 있어요.'}
         </p>
       )}
       {clickable && (

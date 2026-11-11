@@ -124,6 +124,24 @@ public class PlanningQuestionRepository {
     }
 
     /**
+     * 질문이 지금 본문으로 만든 것인지(S15P31A108-396). 질문 생성 실행이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT,
+     * 분석이나 질문 생성이 지금 본문으로 다시 도는 중이면 REFRESHING, 그러다 실패했으면 REFRESH_FAILED 다. 기준 설계가 발행됐거나
+     * 워커가 질문을 만들지 않는 버전(DRAFT·APPROVED 밖), 실행 기록이 없는 옛 질문은 다시 만들 일이 없으므로 CURRENT 로 둔다.
+     * 갱신이 끝나면 미답변 질문은 새 결과로 바뀌거나 SUPERSEDED 되므로 CURRENT 가 아닌 상태는 그 사이에만 보인다.
+     */
+    private static final String FRESHNESS = """
+            CASE WHEN r.document_version_id IS NULL OR p.current_baseline_id IS NOT NULL OR v.status NOT IN ('DRAFT','APPROVED') THEN 'CURRENT'
+                 WHEN dp.status='FAILED'
+                   OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'
+                 WHEN dp.status='COMPLETED' AND r.status='COMPLETED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash THEN 'CURRENT'
+                 ELSE 'REFRESHING' END AS freshness""";
+
+    /** 앞뒤 공백을 넣어 이어 붙인다(텍스트 블록은 앞 공백을 지운다). */
+    private static final String FRESHNESS_JOINS = " LEFT JOIN project p ON p.id=q.project_id"
+            + " LEFT JOIN document_processing dp ON dp.document_version_id=q.document_version_id"
+            + " LEFT JOIN planning_question_run r ON r.document_version_id=q.document_version_id ";
+
+    /**
      * 목록 정렬 키는 id 하나다. id 는 만든 뒤 바뀌지 않고 새 질문은 항상 더 큰 id 를 받으므로, 쪽 사이에 어느 문서에서든
      * 질문이 생기거나 SUPERSEDED 되거나 rank 가 바뀌어도 다음 쪽이 밀리지 않고 새 질문은 끝에서 이어서 나온다.
      */
@@ -144,8 +162,8 @@ public class PlanningQuestionRepository {
             p.put("ai", after.id());
         }
         return jdbc.sql("SELECT * FROM (SELECT q.*,v.version_no,v.document_id,"
-                + " row_number() OVER (ORDER BY q.id) AS number"
-                + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id"
+                + " row_number() OVER (ORDER BY q.id) AS number," + FRESHNESS
+                + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
                 + " WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter + ") t" + cursor
                 + " ORDER BY t.id LIMIT :limit").params(p).query().listOfRows();
     }
@@ -160,17 +178,17 @@ public class PlanningQuestionRepository {
     }
 
     public Optional<Map<String, Object>> findForUpdate(long project, long id) {
-        return jdbc.sql("""
-                SELECT q.*,v.version_no,v.document_id FROM planning_question q LEFT JOIN document_version v ON v.id=q.document_version_id
-                 WHERE q.project_id=:project AND q.id=:id FOR UPDATE OF q
-                """).param("project", project).param("id", id).query().listOfRows().stream().findFirst();
+        return jdbc.sql("SELECT q.*,v.version_no,v.document_id," + FRESHNESS
+                + " FROM planning_question q LEFT JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
+                + " WHERE q.project_id=:project AND q.id=:id FOR UPDATE OF q")
+                .param("project", project).param("id", id).query().listOfRows().stream().findFirst();
     }
 
     public Optional<Map<String, Object>> find(long project, long id) {
-        return jdbc.sql("""
-                SELECT q.*,v.version_no,v.document_id FROM planning_question q LEFT JOIN document_version v ON v.id=q.document_version_id
-                 WHERE q.project_id=:project AND q.id=:id
-                """).param("project", project).param("id", id).query().listOfRows().stream().findFirst();
+        return jdbc.sql("SELECT q.*,v.version_no,v.document_id," + FRESHNESS
+                + " FROM planning_question q LEFT JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
+                + " WHERE q.project_id=:project AND q.id=:id")
+                .param("project", project).param("id", id).query().listOfRows().stream().findFirst();
     }
 
     public void answer(long id, String text, Object payload, long account) {

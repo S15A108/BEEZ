@@ -343,6 +343,8 @@ export const planningQuestionSchema = z.object({
   question_type: z.enum(['CHOICE', 'SHORT_ANSWER', 'ESSAY']).optional(),
   answer_format: planningAnswerFormatSchema.optional(),
   status: z.enum(['OPEN', 'ANSWERED', 'DISMISSED']).optional(),
+  // S15P31A108-396: 지금 본문으로 만든 질문인지. CURRENT 가 아니면 미답변 질문은 서버가 답변을 막는다(409 question_outdated).
+  freshness: z.enum(['CURRENT', 'REFRESHING', 'REFRESH_FAILED']).optional(),
   evidence_status: z.enum(['REVIEW_CANDIDATE', 'UNVERIFIED']).optional(),
   summary: z.string().optional(),
   source: sourceSchema.optional(),

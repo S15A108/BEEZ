@@ -4530,6 +4530,7 @@ HTTP `200`.
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `design_already_published` | 이미 발행된 초안 |
 | 409 | `question_superseded` | 문서가 다시 분석되어 대체된 질문. 목록을 새로 불러온다 |
+| 409 | `question_outdated` | 이전 본문으로 만든 미답변 질문(`freshness`가 `CURRENT`가 아님)에 답하거나 닫으려 함. 질문이 새 본문으로 다시 만들어진 뒤 답한다. 답한·닫은 질문은 고칠 수 있다. S15P31A108-396 |
 
 ```json
 {
