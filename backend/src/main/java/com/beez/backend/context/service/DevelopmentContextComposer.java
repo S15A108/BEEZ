@@ -60,6 +60,8 @@ public class DevelopmentContextComposer {
     static final int MAX_EVIDENCE_TEXT = 100_000;
     /** 설명이 패킷 constraints 가 되는 종류(-132 3절). AI 는 이 종류에 설명이 없으면 요청을 거부한다 */
     static final Set<String> CONSTRAINT_KINDS = Set.of("POLICY", "CONSTRAINT");
+    /** 제약 설명 상한. AI 요약 상한(500 코드 포인트)보다 길어야 AI 가 붙이는 잘림 표시('…')가 그대로 나온다 */
+    static final int MAX_CONSTRAINT_DESCRIPTION = 1_000;
     static final int MAX_LOCATION = 1000;
     /** 사용량 표 feature. 선택 호출은 임베딩 호출이다. request_key 앞부분(dev-context-)으로 문서 색인과 구분한다 */
     static final String USAGE_FEATURE = "EMBEDDING";
@@ -92,6 +94,7 @@ public class DevelopmentContextComposer {
         List<Map<String, Object>> items = new ArrayList<>();
         List<Map<String, Object>> itemMeta = new ArrayList<>();
         Map<String, String> versionByItem = new HashMap<>();
+        List<String> skipped = new ArrayList<>();
         for (Map<String, Object> row : itemRows) {
             String itemId = row.get("design_item_id").toString();
             String versionId = row.get("design_item_version_id").toString();
@@ -102,7 +105,7 @@ public class DevelopmentContextComposer {
             if (constraintKind && description == null) {
                 // AI 는 설명 없는 POLICY·CONSTRAINT 를 입력 오류로 보고 요청 전체를 거부한다(-132 2절). 한 항목 때문에
                 // 프로젝트의 MCP-01 이 계속 막히지 않게 그 항목만 빼고 남긴다. 저장 검증(DesignContentValidator)을 거치지 않은 옛 데이터용
-                log.warn("MCP-01 skipped {} without description project={} item={} version={}", kind, projectId, itemId, versionId);
+                skipped.add(itemId);
                 continue;
             }
             versionByItem.put(itemId, versionId);
@@ -120,11 +123,17 @@ public class DevelopmentContextComposer {
             meta.put("key", row.get("key"));
             meta.put("kind", kind);
             meta.put("version_no", ((Number) row.get("version_no")).intValue());
-            // 설명은 constraints 가 되는 종류에만 보낸다(-132 2절 조건부). 다른 종류는 본문만 키운다
+            // 설명은 constraints 가 되는 종류에만 보낸다(-132 2절 조건부). AI 는 이 값을 500 코드 포인트로 잘라 constraints 에만
+            // 쓰므로(context_packet.py truncate_summary) 그보다 길게만 남기고 자른다 — 출력은 같고 본문 상한 여유만 커진다
             if (constraintKind) {
-                meta.put("description", description);
+                meta.put("description", cutCodePoints(description, MAX_CONSTRAINT_DESCRIPTION));
             }
             itemMeta.add(meta);
+        }
+        if (!skipped.isEmpty()) {
+            // 호출마다 항목 수만큼 쌓이지 않게 한 줄로 남긴다
+            log.warn("MCP-01 skipped POLICY/CONSTRAINT without description project={} count={} items={}", projectId,
+                    skipped.size(), skipped);
         }
 
         List<Map<String, Object>> relations = relations(projectId, versionByItem);
@@ -214,6 +223,15 @@ public class DevelopmentContextComposer {
                 throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, NOT_READY, "승인 문서 색인이 아직 준비되지 않았습니다.");
             }
             throw unavailable();
+        } catch (RestClientResponseException e) {
+            // 질의 임베딩이 첫 AI 호출이라 내부 토큰 불일치(401)·프로필 불일치(422) 같은 설정 결함은 여기서 먼저 드러난다.
+            // 선택 호출과 같이 4xx 는 error 로 남겨 일시 장애와 구분한다
+            if (e.getStatusCode().is4xxClientError()) {
+                log.error("MCP-01 query embedding rejected the request project={} status={}", projectId, e.getStatusCode().value());
+            } else {
+                log.warn("MCP-01 query embedding failed project={} status={}", projectId, e.getStatusCode().value());
+            }
+            throw unavailable();
         } catch (RestClientException e) {
             log.warn("MCP-01 query embedding failed project={} error={}", projectId, e.getClass().getSimpleName());
             throw unavailable();
@@ -253,11 +271,15 @@ public class DevelopmentContextComposer {
         if (description != null) {
             text.append('\n').append(description);
         }
-        String out = text.toString();
-        if (out.codePointCount(0, out.length()) <= MAX_CANDIDATE_TEXT) {
-            return out;
+        return cutCodePoints(text.toString(), MAX_CANDIDATE_TEXT);
+    }
+
+    /** 코드 포인트 기준으로 자른다. AI 상한은 코드 포인트라 서로게이트 쌍을 끊지 않는다 */
+    static String cutCodePoints(String text, int max) {
+        if (text.codePointCount(0, text.length()) <= max) {
+            return text;
         }
-        return out.substring(0, out.offsetByCodePoints(0, MAX_CANDIDATE_TEXT));
+        return text.substring(0, text.offsetByCodePoints(0, max));
     }
 
     @SuppressWarnings("unchecked")

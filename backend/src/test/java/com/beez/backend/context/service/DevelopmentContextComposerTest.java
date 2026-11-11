@@ -35,4 +35,15 @@ class DevelopmentContextComposerTest {
         assertThat(text.codePointCount(0, text.length())).isEqualTo(DevelopmentContextComposer.MAX_CANDIDATE_TEXT);
         assertThat(Character.isHighSurrogate(text.charAt(text.length() - 1))).isFalse();
     }
+
+    /**
+     * 깨지면: 제약 설명을 AI 요약 상한(500)보다 짧게 잘라 AI 의 잘림 표시('…')가 빠지거나, 길게 그대로 보내 본문 상한(256KiB)을 채운다
+     * (-132 3절 constraints 500 코드 포인트, AI 는 설명을 constraints 에만 쓴다).
+     */
+    @Test
+    void constraintDescriptionCap_staysAboveTheAiSummaryLimit() {
+        assertThat(DevelopmentContextComposer.MAX_CONSTRAINT_DESCRIPTION).isGreaterThan(500);
+        String cut = DevelopmentContextComposer.cutCodePoints("가".repeat(10_000), DevelopmentContextComposer.MAX_CONSTRAINT_DESCRIPTION);
+        assertThat(cut.codePointCount(0, cut.length())).isEqualTo(DevelopmentContextComposer.MAX_CONSTRAINT_DESCRIPTION);
+    }
 }

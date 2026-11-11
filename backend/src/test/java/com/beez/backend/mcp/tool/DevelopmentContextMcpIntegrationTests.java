@@ -344,8 +344,10 @@ class DevelopmentContextMcpIntegrationTests extends IntegrationTestSupport {
         }
         assertThat(recheck.get("status").asString()).isEqualTo("NEEDS_RECHECK");
         assertThat(recheck.get("to_design_item_version_id").asString()).isEqualTo(String.valueOf(outVersion));
-        // 후보 텍스트는 본문 JSON 전문이 아니다
-        assertThat(body.get("items").get(0).get("text").asString()).doesNotContain("{");
+        // 후보 텍스트는 본문 JSON 전문이 아니다(모든 항목). POL-01 은 설명이 그대로 들어간다
+        assertThat(body.get("items")).allSatisfy(item -> assertThat(item.get("text").asString()).doesNotContain("{"));
+        assertThat(body.get("items")).extracting(item -> item.get("text").asString())
+                .anySatisfy(text -> assertThat(text).contains("로그인 실패 5회면 잠근다"));
     }
 
     // ---- 가짜 AI ----
