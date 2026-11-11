@@ -412,6 +412,167 @@ it('이미 답한 질문의 수정 창에는 답하지 않고 닫기를 보이�
   )
 })
 
+// S15P31A108-396: 본문이 바뀐 뒤 질문을 다시 만드는 중이거나 그러지 못하면 이전 질문을 최신처럼 보이지 않고,
+// 서버가 막는 미답변 질문(409 question_outdated)은 누를 수 없게 한다. 답한 질문은 이력이라 고칠 수 있다.
+it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변 질문은 답할 수 없게 한다', async () => {
+  vi.spyOn(planningApi, 'questions').mockResolvedValue({
+    items: [
+      {
+        id: '1',
+        number: 1,
+        question: '갱신 중인 질문',
+        status: 'OPEN',
+        freshness: 'REFRESHING',
+      },
+      {
+        id: '2',
+        number: 2,
+        question: '갱신 실패한 질문',
+        status: 'OPEN',
+        freshness: 'REFRESH_FAILED',
+      },
+      {
+        id: '3',
+        number: 3,
+        question: '이미 답한 질문',
+        status: 'ANSWERED',
+        answer: '팀장만',
+        freshness: 'REFRESH_FAILED',
+      },
+      {
+        id: '4',
+        number: 4,
+        question: '최신 질문',
+        status: 'OPEN',
+        freshness: 'CURRENT',
+      },
+      {
+        id: '5',
+        number: 5,
+        question: '반려된 문서의 질문',
+        status: 'OPEN',
+        freshness: 'AWAITING_RESUBMISSION',
+      },
+    ],
+    has_more: false,
+    total_count: 5,
+  })
+  renderPanel()
+  await screen.findByText('갱신 중인 질문')
+  const refreshing = cardOf('갱신 중인 질문')
+  expect(
+    within(refreshing).getByText('이전 본문 기준 · 갱신 중'),
+  ).toBeInTheDocument()
+  expect(refreshing).not.toHaveAttribute('role', 'button')
+  expect(
+    within(refreshing).getByText(/끝난 뒤 답할 수 있어요/),
+  ).toBeInTheDocument()
+
+  const failed = cardOf('갱신 실패한 질문')
+  expect(
+    within(failed).getByText('최신 본문으로 갱신하지 못함'),
+  ).toBeInTheDocument()
+  expect(failed).not.toHaveAttribute('role', 'button')
+
+  const answered = cardOf('이미 답한 질문')
+  expect(
+    within(answered).getByText('최신 본문으로 갱신하지 못함'),
+  ).toBeInTheDocument()
+  expect(answered).toHaveAttribute('role', 'button')
+
+  const current = cardOf('최신 질문')
+  expect(
+    within(current).queryByText(/이전 본문 기준|갱신하지 못함/),
+  ).not.toBeInTheDocument()
+  expect(current).toHaveAttribute('role', 'button')
+
+  const awaiting = cardOf('반려된 문서의 질문')
+  expect(
+    within(awaiting).getByText('반려된 문서 · 다시 제출 대기'),
+  ).toBeInTheDocument()
+  expect(awaiting).not.toHaveAttribute('role', 'button')
+  expect(within(awaiting).getByText(/문서를 다시 제출하면/)).toBeInTheDocument()
+})
+
+// 질문 생성이 시작되기 전 문서 재분석 단계에는 진행 안내가 없어 목록을 다시 읽지 않았다. '갱신 중' 질문이 있으면 끝날 때까지 따라간다.
+it('갱신 중인 질문이 있으면 목록을 다시 읽어 갱신이 끝난 것을 보인다', async () => {
+  let refreshed = false
+  vi.spyOn(planningApi, 'questions').mockImplementation(async () => ({
+    items: [
+      {
+        id: '1',
+        number: 1,
+        question: '다시 만드는 질문',
+        status: 'OPEN',
+        freshness: refreshed ? 'CURRENT' : 'REFRESHING',
+      },
+    ],
+    has_more: false,
+    total_count: 1,
+  }))
+  renderPanel()
+  expect(
+    await screen.findByText('이전 본문 기준 · 갱신 중'),
+  ).toBeInTheDocument()
+  refreshed = true
+  await waitFor(() =>
+    expect(
+      screen.queryByText('이전 본문 기준 · 갱신 중'),
+    ).not.toBeInTheDocument(),
+  )
+  expect(cardOf('다시 만드는 질문')).toHaveAttribute('role', 'button')
+})
+
+// 답하는 동안 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠지면 창이 안내 없이 닫히고 쓰던 답이 사라졌다.
+it('답하던 질문이 목록에서 빠져도 답변 창과 쓰던 답을 그대로 둔다', async () => {
+  let gone = false
+  const essay = {
+    id: '1',
+    number: 1,
+    question: '답하던 질문',
+    status: 'OPEN' as const,
+    freshness: 'CURRENT' as const,
+    question_type: 'ESSAY' as const,
+    answer_format: { type: 'ESSAY' as const, max_length: 2000 },
+  }
+  // 답한 질문이 '갱신 중'이면 목록을 계속 다시 읽는다.
+  const refreshing = {
+    id: '2',
+    number: 2,
+    question: '갱신 중인 답한 질문',
+    status: 'ANSWERED' as const,
+    answer: '답',
+    freshness: 'REFRESHING' as const,
+  }
+  const questions = vi
+    .spyOn(planningApi, 'questions')
+    .mockImplementation(async () => ({
+      items: gone ? [refreshing] : [essay, refreshing],
+      has_more: false,
+      total_count: gone ? 1 : 2,
+    }))
+  const user = renderPanel()
+  await screen.findByText('답하던 질문')
+  await user.click(cardOf('답하던 질문'))
+  const dialog = await screen.findByRole('dialog')
+  await user.type(
+    within(dialog).getByRole('textbox', { name: '답변' }),
+    '쓰던 답',
+  )
+  gone = true
+  const calls = questions.mock.calls.length
+  await waitFor(() =>
+    expect(questions.mock.calls.length).toBeGreaterThan(calls + 1),
+  )
+  expect(
+    screen.queryByText('답하던 질문', { selector: 'article *' }),
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('dialog')).getByRole('textbox', { name: '답변' }),
+  ).toHaveValue('쓰던 답')
+})
+
 it('기준 설계가 발행된 프로젝트에서는 질문 카드를 눌러 답할 수 없다', async () => {
   renderPanel(true, '101')
   const question = await screen.findByText(

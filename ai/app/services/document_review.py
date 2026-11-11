@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections import Counter
 from typing import Literal
 from uuid import uuid4
 
@@ -123,14 +124,19 @@ def _quote_ok(source: Source, contents: dict[str, str]) -> bool:
 
 def _merge_sources(
     parsed: ClassifiedReview, body: DocumentReviewRequest
-) -> ClassifiedReview:
-    """Keep one source per reference in each suggestion.
+) -> tuple[ClassifiedReview, list[str]]:
+    """Keep one source per reference in each suggestion, with only verified quotes.
 
     The model sometimes cites the same reference several times with different
     quotes. The BE stores one source per reference and rejects repeats, so one
     repeat used to discard the whole review (S15P31A108-383). Per reference the
-    best source is kept: a verified quote, then no quote, then the first
-    unverifiable quote, which the quote check below still rejects as forged.
+    best source is kept: a verified quote, then no quote, then an unverifiable one.
+
+    A quote is optional evidence. One that is not an exact substring of its
+    reference used to discard the whole review too, and a review compared with two
+    references failed three times in a row on it (S15P31A108-396). Such a quote is
+    now removed while the source and the suggestion stay. The reference IDs of the
+    removed quotes are returned for logging, never the quoted text.
     """
     contents = {ref.reference_id: ref.content for ref in body.references}
 
@@ -139,6 +145,7 @@ def _merge_sources(
             return 1
         return 2 if _quote_ok(source, contents) else 0
 
+    dropped: list[str] = []
     suggestions = []
     for suggestion in parsed.suggestions:
         best: dict[str, Source] = {}
@@ -146,20 +153,112 @@ def _merge_sources(
             kept = best.get(source.reference_id)
             if kept is None or rank(source) > rank(kept):
                 best[source.reference_id] = source
-        suggestions.append(
-            suggestion.model_copy(update={"sources": list(best.values())})
-        )
-    return parsed.model_copy(update={"suggestions": suggestions})
+        sources = []
+        for source in best.values():
+            if rank(source) == 0:
+                dropped.append(source.reference_id)
+                source = source.model_copy(update={"quote": None})
+            sources.append(source)
+        suggestions.append(suggestion.model_copy(update={"sources": sources}))
+    return parsed.model_copy(update={"suggestions": suggestions}), dropped
 
 
-def _validate_result(
+def _suggestion_problem(
+    suggestion: ClassifiedSuggestion,
+    body: DocumentReviewRequest,
+    step: dict,
+) -> tuple[str | None, tuple[int, int, str, str] | None]:
+    """Why one suggestion cannot be kept, or its PATCH range when it can."""
+    if suggestion.category == "REJECTION_FIX" and body.mode != "RERUN":
+        return "rejection fix without a rejected submission", None
+    if step["status"] != "COMPLETE" or not _nonblank(suggestion.explanation, 10000):
+        return "invalid suggestion", None
+    if suggestion.step != "BODY" and not suggestion.sources:
+        return "invalid source", None
+    if suggestion.type != "PATCH":
+        if (
+            suggestion.original_text is not None
+            or suggestion.replacement_text is not None
+        ):
+            return "invalid comment", None
+        return None, None
+    original, replacement = suggestion.original_text, suggestion.replacement_text
+    if (
+        not original
+        or replacement is None
+        or _length(original) > 100000
+        or _length(replacement) > 100000
+    ):
+        return "invalid patch", None
+    start = body.content.find(original)
+    if start < 0 or body.content.rfind(original) != start:
+        return "patch is not unique", None
+    return None, (start, start + len(original), original, replacement)
+
+
+def _overlaps(patch: tuple[int, int, str, str], kept: list[tuple[int, int, str, str]]):
+    start, end = patch[:2]
+    return any(
+        start < other_end and other_start < end for other_start, other_end, *_ in kept
+    )
+
+
+def _safe_patch_set(
+    candidates: list[tuple[ClassifiedSuggestion, tuple[int, int, str, str] | None]],
+    content: str,
+    dropped: Counter,
+) -> list[ClassifiedSuggestion]:
+    """Keep the suggestions whose PATCHes stay safe together in every order and subset.
+
+    The sequence check is expensive, so the whole set is checked once first; only when
+    it overlaps or fails is each PATCH added one by one and the one that breaks the set
+    dropped. Overlap is checked against the PATCHes actually kept, so a PATCH dropped
+    later as unsafe does not block a sound one on the same text (#279 review).
+    """
+    patches = [patch for _, patch in candidates if patch]
+    if not any(_overlaps(patch, patches[:i]) for i, patch in enumerate(patches)):
+        try:
+            validate_patch_sequence(content, patches)
+            return [suggestion for suggestion, _ in candidates]
+        except ValueError as exc:
+            if str(exc) == "invalid patch input document":
+                raise
+    kept: list[ClassifiedSuggestion] = []
+    safe: list[tuple[int, int, str, str]] = []
+    for suggestion, patch in candidates:
+        if patch:
+            if _overlaps(patch, safe):
+                dropped["overlapping patches"] += 1
+                continue
+            try:
+                validate_patch_sequence(content, [*safe, patch])
+            except ValueError:
+                dropped["patch sequence"] += 1
+                continue
+            safe.append(patch)
+        kept.append(suggestion)
+    return kept
+
+
+def _select_suggestions(
     parsed: ClassifiedReview, body: DocumentReviewRequest, steps: list[dict]
-):
+) -> tuple[ClassifiedReview, Counter]:
+    """Keep the usable suggestions and drop only the ones that break the contract.
+
+    One unknown source or one non-unique PATCH used to discard the whole review, so a
+    long document compared with approved references failed although the other
+    suggestions were fine (S15P31A108-396). A source that is not an input reference
+    of the suggestion's step is removed; a suggestion is dropped when it is unusable
+    on its own (no source left on a comparison step, a PATCH whose original is missing,
+    repeated or overlapping, a PATCH that would break the document when applied with
+    the kept ones, a COMMENT with patch fields, a rejection fix outside a rerun).
+    The review itself is still rejected when it does not stand: no summary, the body
+    or the expected references not reviewed, or suggestions that all had to be dropped.
+    Returns the counts of what was dropped by reason, never any text.
+    """
     if not _nonblank(parsed.summary, 10000):
         raise ValueError("invalid summary")
     step_by_name = {step["step"]: step for step in steps}
-    refs = {ref.reference_id: ref for ref in body.references}
-    contents = {id: ref.content for id, ref in refs.items()}
     expected = {id for step in steps for id in step["reference_ids"]}
     if (
         not parsed.body_reviewed
@@ -167,52 +266,26 @@ def _validate_result(
         or set(parsed.reviewed_reference_ids) != expected
     ):
         raise ValueError("incomplete review")
-    ranges: list[tuple[int, int]] = []
-    patches: list[tuple[int, int, str, str]] = []
+    dropped: Counter = Counter()
+    candidates: list[tuple[ClassifiedSuggestion, tuple[int, int, str, str] | None]] = []
     for suggestion in parsed.suggestions:
-        if suggestion.category == "REJECTION_FIX" and body.mode != "RERUN":
-            raise ValueError("rejection fix requires a rejected submission")
         step = step_by_name[suggestion.step]
-        if step["status"] != "COMPLETE" or not _nonblank(suggestion.explanation, 10000):
-            raise ValueError("invalid suggestion")
-        ids = [source.reference_id for source in suggestion.sources]
-        if (
-            len(set(ids)) != len(ids)
-            or any(id not in step["reference_ids"] for id in ids)
-            or (suggestion.step != "BODY" and not ids)
-        ):
-            raise ValueError("invalid source")
-        if not all(_quote_ok(source, contents) for source in suggestion.sources):
-            raise ValueError("invalid quote")
-        if suggestion.type == "PATCH":
-            original, replacement = (
-                suggestion.original_text,
-                suggestion.replacement_text,
-            )
-            if (
-                not original
-                or replacement is None
-                or _length(original) > 100000
-                or _length(replacement) > 100000
-            ):
-                raise ValueError("invalid patch")
-            start = body.content.find(original)
-            if start < 0 or body.content.rfind(original) != start:
-                raise ValueError("patch is not unique")
-            end = start + len(original)
-            if any(
-                start < other_end and other_start < end
-                for other_start, other_end in ranges
-            ):
-                raise ValueError("overlapping patches")
-            ranges.append((start, end))
-            patches.append((start, end, original, replacement))
-        elif (
-            suggestion.original_text is not None
-            or suggestion.replacement_text is not None
-        ):
-            raise ValueError("invalid comment")
-    validate_patch_sequence(body.content, patches)
+        # _merge_sources already keeps one source per reference.
+        sources = [
+            s for s in suggestion.sources if s.reference_id in step["reference_ids"]
+        ]
+        if len(sources) != len(suggestion.sources):
+            dropped["unknown source"] += len(suggestion.sources) - len(sources)
+            suggestion = suggestion.model_copy(update={"sources": sources})
+        problem, patch = _suggestion_problem(suggestion, body, step)
+        if problem:
+            dropped[problem] += 1
+            continue
+        candidates.append((suggestion, patch))
+    kept = _safe_patch_set(candidates, body.content, dropped)
+    if parsed.suggestions and not kept:
+        raise ValueError("no usable suggestion")
+    return parsed.model_copy(update={"suggestions": kept}), dropped
 
 
 # Measured: a 6,800-character API spec with two approved references took 31-38 s
@@ -291,8 +364,22 @@ async def analyze(
         )
     )
     try:
-        parsed = _merge_sources(ClassifiedReview.model_validate(result.result), body)
-        _validate_result(parsed, body, steps)
+        raw = ClassifiedReview.model_validate(result.result)
+        parsed, quotes = _merge_sources(raw, body)
+        parsed, dropped = _select_suggestions(parsed, body, steps)
+        if quotes or dropped:
+            logger.warning(
+                "document review kept %d of %d suggestion(s); dropped: %s;"
+                " removed %d unverifiable quote(s) from %s",
+                len(parsed.suggestions),
+                len(raw.suggestions),
+                ", ".join(
+                    f"{reason}={count}" for reason, count in sorted(dropped.items())
+                )
+                or "none",
+                len(quotes),
+                ", ".join(sorted(set(quotes))) or "none",
+            )
         response = {
             "document_id": body.document_id,
             "revision": body.revision,

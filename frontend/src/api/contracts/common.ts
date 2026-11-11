@@ -343,6 +343,11 @@ export const planningQuestionSchema = z.object({
   question_type: z.enum(['CHOICE', 'SHORT_ANSWER', 'ESSAY']).optional(),
   answer_format: planningAnswerFormatSchema.optional(),
   status: z.enum(['OPEN', 'ANSWERED', 'DISMISSED']).optional(),
+  // S15P31A108-396: 지금 본문으로 만든 질문인지. CURRENT 가 아니면 미답변 질문은 서버가 답변을 막는다(409 question_outdated).
+  // AWAITING_RESUBMISSION: 첫 제출이 반려돼 다시 제출하기 전이라 새 본문으로 질문을 만들 버전이 없다.
+  freshness: z
+    .enum(['CURRENT', 'REFRESHING', 'REFRESH_FAILED', 'AWAITING_RESUBMISSION'])
+    .optional(),
   evidence_status: z.enum(['REVIEW_CANDIDATE', 'UNVERIFIED']).optional(),
   summary: z.string().optional(),
   source: sourceSchema.optional(),
