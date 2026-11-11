@@ -119,7 +119,7 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
 | `SCHEDULING_POOL_SIZE` | | `8` (워커마다 스레드 하나: 문서 색인·원본 정리·검증·CDC 복구 스캔·기획 질문·설계 초안 등) | 기본값 |
 | `BEEZ_PLANNING_QUESTION_READ_TIMEOUT`·`BEEZ_PLANNING_DRAFT_READ_TIMEOUT` | | `40s`·`55s` | 기본값. AI 모델 제한(질문 30초·초안 45초)보다 길어야 하며, `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다 |
-| `DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_READ_TIMEOUT` | | `30`·`40s` | 기본값. 문서 비비 검토(DOC-A16, AI-A10)의 AI 모델 호출 제한(초, ai 컨테이너)과 backend 의 AI 읽기 제한. **대기 시간 사슬: 모델 호출 < backend 읽기 < nginx `/api/` 읽기 대기(60초)** 를 지킨다. 앞의 둘은 서버 env 파일에 넣고 재배포하면 반영된다(`infra/compose.yaml` 이 ai·backend 로 전달). nginx 값은 env 가 아니라 서버의 `dev.beez.ai.kr.conf` 의 `proxy_read_timeout` 이라 모델·backend 값을 올리면 함께 고쳐 reload 한다(S15P31A108-382) |
+| `DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_READ_TIMEOUT` | | `50`·`55s` | 기본값. 문서 비비 검토(DOC-A16, AI-A10)의 AI 모델 호출 제한(초, ai 컨테이너)과 backend 의 AI 읽기 제한. **대기 시간 사슬: 모델 호출 < backend 읽기 < nginx `/api/` 읽기 대기(60초)** 를 지킨다. 앞의 둘은 서버 env 파일에 넣고 재배포하면 반영된다(`infra/compose.yaml` 이 ai·backend 로 전달). nginx 값은 env 가 아니라 서버의 `dev.beez.ai.kr.conf` 의 `proxy_read_timeout` 이라 모델·backend 값을 올리면 함께 고쳐 reload 한다(S15P31A108-382) |
 | `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
 | `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |

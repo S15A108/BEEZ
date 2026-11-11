@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.schemas.document_review import DocumentReviewRequest
 from app.services.document_review import (
+    DEFAULT_TIMEOUT_SECONDS,
     Suggestion,
     _length,
     _nonblank,
@@ -118,7 +119,7 @@ async def analyze_mode(
     body: DocumentReviewRequest,
     client: LLMClient,
     model: str,
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict:
     """Run one mode against the immutable BE input and return its v2 echo."""
     if body.mode not in {"DISCUSS", "REQUEST"}:

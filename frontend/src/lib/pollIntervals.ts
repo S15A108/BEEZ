@@ -17,6 +17,11 @@ export const REVIEW_POLL_MS = inTest ? 40 : 3000
 export const SLOW_POLL_MS = 15_000
 /** 비비 상태·사무실 장면처럼 계속 띄워 두는 화면을 새로 맞추는 주기. */
 export const BACKGROUND_POLL_MS = 30_000
+/**
+ * 비비 검토가 실패한 문서를 보는 팀원 창이 올린 사람의 재검토를 SLOW_POLL_MS로 따라가는 기간.
+ * 서버가 오래 걸린 검토를 실패로 보는 기준(10분)과 같다(S15P31A108-383).
+ */
+export const FAILED_REVIEW_FOLLOW_MS = 10 * 60_000
 
 /**
  * 보완 질문 생성이 이만큼 이어지면 '평소보다 오래 걸려요'를 덧붙인다. 서버 워커는 문서를 한 번에 하나씩 처리해

@@ -25,8 +25,11 @@ public class AiClient {
     /** 질문 생성(30초)·초안 생성(45초) 모델 제한보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
     static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
-    /** 문서 검토 모델 제한(30초)보다 길고 nginx(60초)보다 짧아야 한다 (S15P31A108-382). */
-    static final Duration DEFAULT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(40);
+    /**
+     * 문서 검토 모델 제한(50초)보다 길고 nginx(60초)보다 짧아야 한다 (S15P31A108-382). 6,800자 API 명세서 검토가
+     * 31~38초 걸려 처음 값(모델 30초·읽기 40초)으로는 실패했다(S15P31A108-383).
+     */
+    static final Duration DEFAULT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(55);
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -43,7 +46,7 @@ public class AiClient {
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
                     @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
-                    @Value("${beez.document-review.read-timeout:40s}") Duration reviewReadTimeout) {
+                    @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
