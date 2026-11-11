@@ -232,6 +232,21 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
     }
 
+    // 등록을 취소한 문서(DOC-A25)는 다시 제출할 수 없다 — '다시 제출 대기'가 아니라 미답변 질문을 대체로 판정해 목록에서 뺀다.
+    @Test void questionsOfADiscardedDocumentLeaveTheListExceptAnsweredHistory() {
+        generator.runOnce();
+        long[] id = ids();
+        questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
+        jdbc.update("UPDATE document SET discarded_at=now() WHERE id=?", document);
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
+
+        var page = questions.list(leaderCaller, project, null, null, null);
+        assertThat(items(page)).extracting(i -> i.get("id")).containsExactly("" + id[0]);
+        assertThat(items(page)).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(page.get("total_count")).isEqualTo(1L);
+        fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+    }
+
     // 승인본 뒤에 다시 낸 초안이 검토 중이면 기준은 계속 승인본이다 — 설계 초안이 쓰는 승인본의 질문에 계속 답할 수 있고,
     // 검토 중인 초안의 질문은 만들지 않는다. 그 초안이 승인돼 기준이 되면 그때 질문을 만들고 이전 승인본 질문이 따라간다.
     @Test void aResubmittedDraftBehindTheApprovedVersionBecomesTheBasisOnlyWhenApproved() {

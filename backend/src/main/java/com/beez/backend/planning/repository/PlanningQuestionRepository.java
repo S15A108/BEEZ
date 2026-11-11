@@ -143,8 +143,10 @@ public class PlanningQuestionRepository {
      * <p>현재 버전이 아닌(반려 뒤 다시 낸 초안·새로 승인한 버전에 밀린) 버전의 미답변 질문은 현재 버전 질문이 다 만들어지면
      * SUPERSEDED 다. 행을 바꾸지 않고 조회할 때 판정하므로, 새 버전이 반려돼 현재 버전이 되돌아오면 그 질문이 다시 보인다.
      * 목록·개수는 이 행을 빼고, 답변은 409 question_superseded 다. 답한·닫은 질문은 이력이라 CURRENT 로 남는다.
+     * 등록을 취소한(DOC-A25, discarded_at) 문서는 다시 제출할 수 없으므로 그 문서의 미답변 질문도 같은 방식으로 대체로 판정한다.
      */
     private static final String FRESHNESS = "CASE WHEN v.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL THEN 'CURRENT'"
+            + " WHEN qd.discarded_at IS NOT NULL THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
             + " WHEN cur.id IS NULL THEN 'AWAITING_RESUBMISSION'"
             + " WHEN q.document_version_id<>cur.id AND " + SETTLED + " THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
             + " WHEN " + SETTLED + " OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'"
@@ -153,6 +155,7 @@ public class PlanningQuestionRepository {
 
     /** 질문 버전 {@code v} 를 조인한 뒤 붙인다. 앞뒤 공백을 넣어 이어 붙인다(텍스트 블록은 앞 공백을 지운다). */
     private static final String FRESHNESS_JOINS = " LEFT JOIN project p ON p.id=q.project_id"
+            + " LEFT JOIN document qd ON qd.id=v.document_id"
             + " LEFT JOIN document_version cur ON cur.id=" + QuestionBasisVersion.idOf("v.document_id")
             + " LEFT JOIN document_processing dp ON dp.document_version_id=cur.id"
             + " LEFT JOIN planning_question_run r ON r.document_version_id=cur.id ";
