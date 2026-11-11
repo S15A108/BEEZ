@@ -986,4 +986,24 @@ describe('이름이 없을 때', () => {
     expect(await screen.findByText('계획 검증')).toBeInTheDocument()
     expect(screen.queryByText(/#77|#601/)).not.toBeInTheDocument()
   })
+
+  // PR #280 리뷰: 검증이 여러 건이면 줄끼리 구별되게 오래된 검증부터 순번을 붙인다.
+  it('검증별 줄이 여러 개면 오래된 검증부터 순번을 붙여 구별한다', async () => {
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 3,
+        currency: 'USD',
+        estimated_cost_amount: '1',
+        by_validation: [bucket('1001', 2), bucket('99', 1), bucket('601', 1)],
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    await user.click(await screen.findByRole('tab', { name: '검증별' }))
+    expect(await screen.findByText('계획 검증 1')).toBeInTheDocument()
+    expect(screen.getByText('계획 검증 2')).toBeInTheDocument()
+    expect(screen.getByText('계획 검증 3')).toBeInTheDocument()
+    expect(screen.queryByText(/#99|#601|#1001/)).not.toBeInTheDocument()
+  })
 })

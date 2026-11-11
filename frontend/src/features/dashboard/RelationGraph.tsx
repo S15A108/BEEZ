@@ -48,6 +48,14 @@ export function RelationGraph({
     return from && to ? [{ ...edge, from, to, text: lineLabel(edge) }] : []
   })
   const rows = Math.max(1, ...columns.map((nodes) => nodes.length))
+  // 관계 목록은 그래프에 못 그린 항목도 읽으므로 전체 항목에서 이름을 찾는다. DB 번호는 보이지 않는다.
+  const labels = new Map(
+    data.nodes.map((node) => [`${node.type}:${node.id}`, node.label]),
+  )
+  const nameOf = (type: string, id: string) =>
+    [nodeKind(type).label, labels.get(`${type}:${id}`)]
+      .filter(Boolean)
+      .join(' ')
   const { routes, rowTops, height } = layoutEdges(drawn, rows, columnCount - 1)
   const edges = drawn.map((edge, index) => ({ ...edge, route: routes[index] }))
   const width = nodeX(columnCount) - COLUMN_GAP
@@ -133,14 +141,6 @@ export function RelationGraph({
                 >
                   {kind.label}
                 </text>
-                <text
-                  x={x + NODE_W - 12}
-                  y={y + 17}
-                  textAnchor="end"
-                  className="fill-muted-foreground text-[10px]"
-                >
-                  #{node.id}
-                </text>
                 <foreignObject
                   x={x + 12}
                   y={y + 22}
@@ -207,7 +207,7 @@ export function RelationGraph({
               className="flex flex-wrap items-center gap-2"
             >
               <span className="text-xs text-muted-foreground">
-                {nodeKind(node.type).label} #{node.id}
+                {nodeKind(node.type).label}
               </span>
               {nodeKind(node.type).link ? (
                 <button
@@ -226,8 +226,8 @@ export function RelationGraph({
         <ul className="mt-4 grid gap-2 border-t pt-4 text-xs text-muted-foreground">
           {data.edges.map((edge, index) => (
             <li key={index}>
-              {nodeKind(edge.from_type).label} #{edge.from_id} →{' '}
-              {nodeKind(edge.to_type).label} #{edge.to_id} ·{' '}
+              {nameOf(edge.from_type, edge.from_id)} →{' '}
+              {nameOf(edge.to_type, edge.to_id)} ·{' '}
               {relationLabel(edge.relation)} ·{' '}
               {edge.confirmed ? '확인됨' : '후보'}
             </li>
