@@ -254,3 +254,29 @@ test('silhouette rendering restores room visibility, background, materials and r
   outline.dispose()
   originalTarget.dispose()
 })
+
+// S15P31A108-380: 비비 GLB와 Kenney 사람 모델은 뼈대로 자세를 잡는 스킨 메쉬다. 마스크를 뼈대 없는 메쉬로 그리면
+// 기본 자세로 그려져 실제 몸과 깊이가 어긋나고, 몸 안쪽에 노란 선이 여러 겹 생겼다.
+test('스킨 메쉬의 윤곽 마스크는 같은 뼈대로 그려 움직이는 자세를 따라간다', () => {
+  const scene = new THREE.Scene(),
+    bone = new THREE.Bone(),
+    mesh = new THREE.SkinnedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial(),
+    ),
+    outline = new OfficeAimOutline()
+  mesh.add(bone)
+  mesh.position.set(1, 0, -4)
+  scene.add(mesh)
+  scene.updateMatrixWorld(true)
+  mesh.bind(new THREE.Skeleton([bone]))
+  outline.update(mesh)
+  const [mask] = outline.maskScene.children
+  assert.instanceOf(mask, THREE.SkinnedMesh)
+  if (!(mask instanceof THREE.SkinnedMesh)) return
+  assert.strictEqual(mask.geometry, mesh.geometry)
+  assert.strictEqual(mask.skeleton, mesh.skeleton)
+  assert.strictEqual(mask.bindMode, mesh.bindMode)
+  assert.isOk(mask.bindMatrix.equals(mesh.bindMatrix))
+  outline.dispose()
+})

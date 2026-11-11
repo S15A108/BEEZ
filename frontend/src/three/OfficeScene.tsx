@@ -453,15 +453,15 @@ function OfficeRuntime(
       gl.domElement.setAttribute('data-street-y', me.y.toFixed(2))
       return
     }
+    // 산책에서 돌아오면 나가기 전 자리·방향에서 이어 간다(S15P31A108-379). 산책 중에는 player를 건드리지 않고
+    // 1인칭 시선은 renderer가, 1·3인칭은 store가 그대로 들고 있다. 엘리베이터 앞으로 옮기던 처리는 뺐다.
+    let returned = false
     if (street.current) {
       street.current.dispose()
       street.current = null
       outdoorPlayer.current = null
       keys.current.clear()
-      if (state.floor.outdoorExit)
-        Object.assign(player.current, state.floor.outdoorExit.landing, {
-          moving: false,
-        })
+      returned = true
     }
     const free = (x: number, y: number) => officeWalkable(state.floor, x, y)
     if (lastFloor.current !== state.floor) {
@@ -486,6 +486,11 @@ function OfficeRuntime(
       enabled: state.phase >= 3,
       caller: player.current,
     })
+    // 그 자리가 막혔거나 누가 서 있으면 가장 가까운 빈 칸에 선다.
+    if (returned && state.phase >= 3) {
+      const landing = officeLanding(state.floor, player.current, residents)
+      if (landing) Object.assign(player.current, landing)
+    }
     const me = player.current,
       before = { x: me.x, y: me.y }
     // 나도 다른 사람을 뚫고 지나가지 않는다(다가가는 걸음만 막고 비켜 가는 걸음은 둔다).
