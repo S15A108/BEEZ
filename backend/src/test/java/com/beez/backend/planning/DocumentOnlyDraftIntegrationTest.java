@@ -340,6 +340,39 @@ class DocumentOnlyDraftIntegrationTest extends PlanningTestSupport {
         assertThat(jobs("AND document_version_id=? AND mode='DOCUMENT_ONLY'", longVersion)).isEqualTo(1);
     }
 
+    // ---- 재리뷰 반영 (S15P31A108-389) ----
+
+    @Test void aNewerApprovedVersionIsNotMarkedAsOverlappingTheOlderVersionsCandidatesAndTheOldOnesCannotBeAdopted() {
+        manual("m1", longVersion);
+        while (runner.runOnce()) { /* v1 후보를 만든다 */ }
+        long oldCandidate = jdbc.queryForObject("SELECT id FROM design_draft_candidate WHERE project_id=? ORDER BY id LIMIT 1", Long.class, project);
+        long doc = jdbc.queryForObject("SELECT document_id FROM document_version WHERE id=?", Long.class, longVersion);
+        long v2 = documentVersion(doc, 2, LONG);
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=created_by,approved_at=now() WHERE id=?", v2);
+        manual("m2", v2);
+        while (runner.runOnce()) { /* v2 후보를 만든다 */ }
+
+        // 대체된 v1 의 아직 결정하지 않은 후보와 같다고 v2 후보가 접히지 않는다.
+        assertThat(count("SELECT count(*) FROM design_draft_candidate c JOIN design_draft_job j ON j.id=c.job_id WHERE j.document_version_id=? AND c.overlap_kind IS NOT NULL", v2)).isZero();
+        // 대체된 버전의 후보는 채택할 수 없다.
+        var result = batches.adopt(leaderCaller, project, new BatchRequest(List.of(new BatchItem(Long.toString(oldCandidate), null, null))));
+        @SuppressWarnings("unchecked") var results = (List<Map<String, Object>>) result.get("results");
+        assertThat(results.get(0)).containsEntry("result", "FAILED").containsEntry("error_code", "candidate_stale");
+    }
+
+    @Test void aKnownDuplicateCanBeAdoptedWithConfirmDuplicate() {
+        manual("m1", longVersion, version);
+        while (runner.runOnce()) { /* 모두 처리한다 */ }
+        String description = "절 시작 1 규칙은 이렇게 동작해야 한다.";
+        var ids = jdbc.queryForList("SELECT id FROM design_draft_candidate WHERE project_id=? AND proposed_after->>'description'=? ORDER BY id", Long.class, project, description);
+        drafts.adopt(leaderCaller, project, ids.get(0), null);
+        var result = batches.adopt(leaderCaller, project, new BatchRequest(List.of(
+                new BatchItem(ids.get(1).toString(), null, null, true))));
+        @SuppressWarnings("unchecked") var results = (List<Map<String, Object>>) result.get("results");
+        assertThat(results.get(0)).containsEntry("result", "ADOPTED");
+        assertThat(count("SELECT count(*) FROM design_item_version v JOIN design_item i ON i.id=v.design_item_id WHERE i.project_id=? AND v.content->>'description'=?", project, description)).isEqualTo(2);
+    }
+
     // ---- 일괄 채택 ----
 
     @Test void batchAdoptReportsEachCandidateAndAdoptsTheRestWhenSomeFail() {

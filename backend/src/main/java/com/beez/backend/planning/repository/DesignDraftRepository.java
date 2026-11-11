@@ -197,10 +197,22 @@ public class DesignDraftRepository {
 
     /** 다른 작업에서 아직 결정하지 않은(PENDING) 후보의 지문. 문서끼리 같은 후보를 겹침으로 표시하는 데 쓴다. */
     public List<Map<String, Object>> pendingFingerprints(long project, long exceptJob) {
+        // 같은 문서의 더 새 버전이 이미 승인되어 대체된 버전의 작업은 비교에서 뺀다(새 버전의 후보가 옛 후보에 밀려 접히지 않게).
         return jdbc.sql("""
-                SELECT id,fingerprint FROM design_draft_candidate
-                 WHERE project_id=:project AND job_id<>:job AND fingerprint IS NOT NULL AND status='PENDING' ORDER BY id
+                SELECT c.id,c.fingerprint FROM design_draft_candidate c
+                  JOIN design_draft_job j ON j.id=c.job_id JOIN document_version v ON v.id=j.document_version_id
+                 WHERE c.project_id=:project AND c.job_id<>:job AND c.fingerprint IS NOT NULL AND c.status='PENDING'
+                   AND NOT EXISTS (SELECT 1 FROM document_version n WHERE n.document_id=v.document_id AND n.status='APPROVED' AND n.version_no>v.version_no)
+                 ORDER BY c.id
                 """).param("project", project).param("job", exceptJob).query().listOfRows();
+    }
+
+    /** 같은 문서에 더 새 버전이 승인되어 이 버전이 대체되었는지. 대체된 버전의 후보는 채택하지 않는다. */
+    public boolean isSupersededVersion(long version) {
+        return jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM document_version v JOIN document_version n ON n.document_id=v.document_id
+                               WHERE v.id=:version AND n.status='APPROVED' AND n.version_no>v.version_no)
+                """).param("version", version).query(Boolean.class).single();
     }
 
     /** 이미 채택하거나 폐기한 후보의 지문. */

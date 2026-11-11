@@ -15,7 +15,11 @@ public final class DraftDtos {
     }
 
     /** 일괄 채택·폐기 요청의 한 건. 채택은 단건과 같은 확인 값(근거 없음 확인, 충돌 필드 확정)을 건별로 받는다. */
-    public record BatchItem(String candidateId, Boolean confirmNoEvidence, List<String> resolvedFields) { }
+    public record BatchItem(String candidateId, Boolean confirmNoEvidence, List<String> resolvedFields, Boolean confirmDuplicate) {
+        public BatchItem(String candidateId, Boolean confirmNoEvidence, List<String> resolvedFields) {
+            this(candidateId, confirmNoEvidence, resolvedFields, null);
+        }
+    }
 
     public record BatchRequest(List<BatchItem> items) { }
 
@@ -23,5 +27,9 @@ public final class DraftDtos {
      * 후보 채택. {@code confirmNoEvidence} 는 근거가 없는(support=NONE) 후보를 알고 채택한다는 확인,
      * {@code resolvedFields} 는 충돌 필드(conflicting_fields)를 사용자가 확정했다는 확인이다.
      */
-    public record AdoptRequest(Boolean confirmNoEvidence, List<String> resolvedFields) { }
+    public record AdoptRequest(Boolean confirmNoEvidence, List<String> resolvedFields, Boolean confirmDuplicate) {
+        public AdoptRequest(Boolean confirmNoEvidence, List<String> resolvedFields) {
+            this(confirmNoEvidence, resolvedFields, null);
+        }
+    }
 }

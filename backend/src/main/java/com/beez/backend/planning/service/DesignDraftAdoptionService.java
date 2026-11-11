@@ -41,7 +41,7 @@ public class DesignDraftAdoptionService {
             var result = new LinkedHashMap<String, Object>();
             result.put("candidate_id", item.candidateId());
             try {
-                var view = drafts.adopt(caller, project, Long.parseLong(item.candidateId()), new AdoptRequest(item.confirmNoEvidence(), item.resolvedFields()));
+                var view = drafts.adopt(caller, project, Long.parseLong(item.candidateId()), new AdoptRequest(item.confirmNoEvidence(), item.resolvedFields(), item.confirmDuplicate()));
                 result.put("result", "ADOPTED");
                 result.put("design_item_version_id", view.get("design_item_version_id"));
                 adopted++;
@@ -91,7 +91,7 @@ public class DesignDraftAdoptionService {
             catch (NumberFormatException e) { throw invalid("candidate_id가 올바르지 않습니다."); }
             if (id < 1 || !seen.add(id)) throw invalid("candidate_id에 중복이거나 잘못된 값이 있습니다.");
         }
-        return input.items().stream().map(i -> new BatchItem(i.candidateId().trim(), i.confirmNoEvidence(), i.resolvedFields())).toList();
+        return input.items().stream().map(i -> new BatchItem(i.candidateId().trim(), i.confirmNoEvidence(), i.resolvedFields(), i.confirmDuplicate())).toList();
     }
 
     private static void failed(Map<String, Object> result, String code, String message) {

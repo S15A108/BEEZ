@@ -357,10 +357,16 @@ public class DesignDraftService {
 
         String kind = c.get("kind").toString();
         Map<String, Object> after = json(c.get("proposed_after"));
+        // 문서에서 뽑은 후보는 그 문서에 더 새 버전이 승인되면 낡은 것이다 — 새 버전의 후보를 다시 만들게 한다.
+        if ("DOCUMENT_ONLY".equals(job.get("mode")) && drafts.isSupersededVersion(documentVersion)) {
+            throw stale();
+        }
         // 문서끼리 같은 후보를 한꺼번에 채택해도 같은 설계 항목이 두 번 생기지 않게, 채택 직전에 지금 있는 항목과 지문을 다시 비교한다.
+        // 지문이 같아도 내용이 다를 수 있어(예: 데이터 계약은 엔티티 이름만 비교) confirm_duplicate=true 로 알고 채택할 수 있다.
         if ("CREATE".equals(c.get("change_kind")) && c.get("fingerprint") != null
+                && !(input != null && Boolean.TRUE.equals(input.confirmDuplicate()))
                 && DraftOverlap.liveFingerprints(drafts, project).containsKey(c.get("fingerprint").toString())) {
-            throw conflict("candidate_duplicate", "이미 같은 설계 항목이 있어요. 이 후보는 폐기해 주세요.");
+            throw conflict("candidate_duplicate", "이미 같은 설계 항목이 있어요. 내용이 다르면 확인하고 채택하거나, 아니면 이 후보를 폐기해 주세요.");
         }
         String title = content.validate(kind, 1, after);
         String contentJson = canonical(after);
