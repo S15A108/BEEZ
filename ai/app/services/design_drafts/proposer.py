@@ -6,6 +6,9 @@ service against those inputs; a proposal is never an approval or a decision.
 """
 
 import json
+import logging
+import re
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, Self
 
@@ -33,6 +36,8 @@ from app.services.planning_questions.rules import block_location, heading_titles
 
 # Serialized payload bound, the same as the other internal AI routes.
 MAX_PAYLOAD_BYTES = 262_144
+
+logger = logging.getLogger(__name__)
 # The default model counts its reasoning tokens against max_completion_tokens.
 # Real 3,000-7,000-character documents measured 4,854-8,825 completion tokens and
 # 38-77 s, so the old 4,096-token / 45 s defaults cut every answer off
@@ -135,6 +140,9 @@ def _fields_as_array(content: Any) -> Any:
     an array, so ERD documents produced no data contract at all
     (S15P31A108-388). The array element shape is not enforced; the common
     example uses ``name``, so the key becomes ``name`` and nothing is lost.
+    Only for a new item: an update's ``fields`` patch replaces the whole array,
+    so a partial object turned into an array would silently drop the base
+    item's other fields. Such an update stays malformed and is rejected alone.
     """
     if not isinstance(content, dict) or not isinstance(content.get("fields"), dict):
         return content
@@ -145,6 +153,13 @@ def _fields_as_array(content: Any) -> Any:
         for name, value in content["fields"].items()
     ]
     return {**content, "fields": fields}
+
+
+def _field_name(name: Any) -> str:
+    """A key the model invented, safe to log: plain short names only."""
+    if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_]{1,40}", name):
+        return name
+    return "<other>"
 
 
 def _usable_refs(raw: Any) -> Any:
@@ -173,17 +188,23 @@ def lenient_draft(raw: Any) -> tuple[ModelDraft, int]:
         raise TypeError("items must be a list")
     items: list[ModelItem] = []
     dropped = 0
+    unknown: Counter[str] = Counter()
     for entry in entries:
         if not isinstance(entry, dict):
             dropped += 1
             continue
         cleaned = {name: value for name, value in entry.items() if name in _ITEM_FIELDS}
+        unknown.update(_field_name(name) for name in entry if name not in _ITEM_FIELDS)
         if isinstance(cleaned.get("sources"), list):
             sources = [_usable_source(source) for source in cleaned["sources"]]
             cleaned["sources"] = [s for s in sources if s][:MAX_SOURCES_PER_ITEM]
         if "answer_refs" in cleaned:
             cleaned["answer_refs"] = _usable_refs(cleaned["answer_refs"])
-        if cleaned.get("kind") == "DATA_CONTRACT" and "content" in cleaned:
+        if (
+            cleaned.get("kind") == "DATA_CONTRACT"
+            and cleaned.get("base_design_item_version_id") is None
+            and "content" in cleaned
+        ):
             cleaned["content"] = _fields_as_array(cleaned["content"])
         try:
             items.append(ModelItem.model_validate(cleaned))
@@ -191,6 +212,16 @@ def lenient_draft(raw: Any) -> tuple[ModelDraft, int]:
             dropped += 1
     if entries and not items:
         raise ValueError("no usable item")
+    # Names only, never values: a model drifting from the contract shows up here
+    # instead of as an unexplained 'malformed item content' (S15P31A108-388).
+    if unknown:
+        logger.warning("design draft items carried unknown fields %s", dict(unknown))
+    if len(items) > MAX_ITEMS:
+        logger.warning(
+            "design draft answer had %d usable items; kept the first %d",
+            len(items),
+            MAX_ITEMS,
+        )
     texts = raw.get("unresolved", [])
     unresolved = [
         text[:2000]

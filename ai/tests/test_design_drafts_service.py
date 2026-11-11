@@ -5,7 +5,7 @@ from hashlib import sha256
 
 import pytest
 
-from app.schemas.design_drafts import DesignDraftRequest
+from app.schemas.design_drafts import MAX_ITEMS, DesignDraftRequest
 from app.services.design_drafts import (
     DraftProposal,
     LLMDraftProposer,
@@ -472,7 +472,7 @@ async def test_structurally_invalid_model_output_keeps_failed_usage(bad_output):
 # S15P31A108-388: the shapes the real model returned on 3,000-7,000-character
 # documents. Each used to discard the whole answer.
 @pytest.mark.asyncio
-async def test_broken_items_are_dropped_and_usable_ones_are_kept():
+async def test_broken_items_are_dropped_and_usable_ones_are_kept(caplog):
     good = item("POLICY", "발행 전 검토를 거친다.")
     provider = FakeProvider(
         {
@@ -500,6 +500,8 @@ async def test_broken_items_are_dropped_and_usable_ones_are_kept():
     assert proposal.dropped_items == 2
     assert proposal.unresolved == ("x" * 2000,)
     assert not proposal.usage[0].failed
+    # 지운 필드는 이름만 남겨, 모델이 계약에서 벗어나기 시작하면 로그로 보인다.
+    assert "'priority': 1" in caplog.text
 
 
 # S15P31A108-388: the real model wrote every ERD data contract with fields keyed
@@ -539,6 +541,51 @@ async def test_data_contract_fields_keyed_by_name_become_the_array():
         ),
     )
     assert outcome.result.items[0].content.model_dump()["entity"] == "users"
+
+
+# S15P31A108-388 리뷰: 갱신 제안의 fields 패치는 배열을 통째로 바꾸므로, 바뀐 필드만 담은 객체를 배열로
+# 바꾸면 기준 항목의 나머지 필드가 조용히 사라진다. 갱신은 바꾸지 않고(그 초안만 거절) 새 항목만 바꾼다.
+@pytest.mark.asyncio
+async def test_fields_keyed_by_name_are_converted_only_for_a_new_data_contract():
+    patch = {
+        "description": "회원",
+        "entity": "users",
+        "fields": {"nickname": "VARCHAR(30)"},
+    }
+    provider = FakeProvider(
+        {
+            "items": [
+                {**item("DATA_CONTRACT", "회원"), "content": patch},
+                {
+                    **item("DATA_CONTRACT", "회원"),
+                    "content": patch,
+                    "base_design_item_version_id": "1103",
+                },
+            ],
+            "unresolved": [],
+        }
+    )
+    body = request()
+    proposal = await llm_proposer(provider).propose(
+        body, parse_source(body.to_source_input())
+    )
+    assert proposal.items[0].content["fields"] == [
+        {"name": "nickname", "description": "VARCHAR(30)"}
+    ]
+    assert proposal.items[1].content["fields"] == {"nickname": "VARCHAR(30)"}
+
+
+@pytest.mark.asyncio
+async def test_items_beyond_the_cap_are_cut_and_logged(caplog):
+    many = [item("POLICY", f"정책 {n}") for n in range(MAX_ITEMS + 3)]
+    body = request()
+    proposal = await llm_proposer(
+        FakeProvider({"items": many, "unresolved": []})
+    ).propose(body, parse_source(body.to_source_input()))
+    assert len(proposal.items) == MAX_ITEMS
+    assert (
+        f"had {MAX_ITEMS + 3} usable items; kept the first {MAX_ITEMS}" in caplog.text
+    )
 
 
 @pytest.mark.asyncio
