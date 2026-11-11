@@ -564,7 +564,7 @@ it('설계 초안이 있어도 채택하지 않은 후보가 있으면 후보 �
     jobs: [
       {
         id: '1',
-        document_version_id: '11',
+        document_version_id: approved.id,
         status: 'COMPLETED',
         mode: 'DOCUMENT_ONLY',
         candidates: [

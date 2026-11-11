@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { DocumentCandidates } from './DocumentCandidates'
-import { draftWork, publishNotice } from './draftJobs'
+import { currentVersionJobs, draftWork, publishNotice } from './draftJobs'
 import type { DraftCandidate, DraftJob } from './schemas'
 
 const candidate = (
@@ -349,4 +349,89 @@ it('다른 문서에서 뽑은 후보와 같은 후보는 그렇게 표시하고
   await user.click(screen.getByRole('checkbox', { name: '전체 선택' }))
   await user.click(screen.getByRole('button', { name: '선택한 항목 채택' }))
   expect(onAdopt).toHaveBeenCalledWith({ items: [{ candidate_id: '21' }] })
+})
+
+it('이미 같은 항목이 있는 후보는 알고 채택한다는 확인을 해야 채택되고 요청에 확인이 담긴다', async () => {
+  const user = userEvent.setup()
+  const onAdopt = vi
+    .fn()
+    .mockResolvedValue({ succeeded: 1, failed: 0, results: [] })
+  show(
+    [
+      job('2', '12', {
+        candidates: [
+          candidate('22', '겹치는 후보', {
+            overlap: { kind: 'EXISTING_ITEM', ref_id: '7' },
+          }),
+        ],
+      }),
+    ],
+    { onAdopt },
+  )
+  await user.click(screen.getByText(/비슷한 후보 1개/))
+  await user.click(screen.getByRole('checkbox', { name: '겹치는 후보 선택' }))
+  const adopt = screen.getByRole('button', { name: '선택한 항목 채택' })
+  expect(adopt).toBeDisabled()
+  await user.click(
+    screen.getByRole('checkbox', { name: /이미 같은 설계 항목이 있다는 점/ }),
+  )
+  expect(adopt).toBeEnabled()
+  await user.click(adopt)
+  expect(onAdopt).toHaveBeenCalledWith({
+    items: [{ candidate_id: '22', confirm_duplicate: true }],
+  })
+})
+
+it('이전에 폐기한 후보와 같은 후보는 확인 없이 채택할 수 있다', async () => {
+  const user = userEvent.setup()
+  show([
+    job('2', '12', {
+      candidates: [
+        candidate('22', '폐기했던 후보', {
+          overlap: { kind: 'DISCARDED_CANDIDATE', ref_id: '5' },
+        }),
+      ],
+    }),
+  ])
+  await user.click(screen.getByText(/비슷한 후보 1개/))
+  await user.click(screen.getByRole('checkbox', { name: '폐기했던 후보 선택' }))
+  expect(screen.getByRole('button', { name: '선택한 항목 채택' })).toBeEnabled()
+})
+
+it('표시가 없던 후보가 candidate_duplicate 로 거절되면 다음부터 확인을 받는다', async () => {
+  const user = userEvent.setup()
+  const onAdopt = vi.fn().mockResolvedValue({
+    succeeded: 0,
+    failed: 1,
+    results: [
+      {
+        candidate_id: '21',
+        result: 'FAILED',
+        error_code: 'candidate_duplicate',
+      },
+    ],
+  })
+  show([job('2', '12', { candidates: [candidate('21', '새 후보')] })], {
+    onAdopt,
+  })
+  await user.click(screen.getByRole('checkbox', { name: '새 후보 선택' }))
+  await user.click(screen.getByRole('button', { name: '선택한 항목 채택' }))
+  expect(
+    await screen.findByRole('checkbox', {
+      name: /이미 같은 설계 항목이 있다는 점/,
+    }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '선택한 항목 채택' }),
+  ).toBeDisabled()
+})
+
+it('더 새 버전이 승인되어 대체된 문서 버전의 작업은 보이지 않는다', () => {
+  const jobs = [
+    job('1', '11', { candidates: [candidate('21', '옛 후보')] }),
+    job('2', '12', { candidates: [candidate('22', '새 후보')] }),
+  ]
+  expect(currentVersionJobs(jobs, ['12']).map((item) => item.id)).toEqual(['2'])
+  // 대체된 버전의 미채택 후보는 발행 안내와 시작 전 안내에도 세지 않는다.
+  expect(draftWork(currentVersionJobs(jobs, ['12'])).pending).toBe(1)
 })

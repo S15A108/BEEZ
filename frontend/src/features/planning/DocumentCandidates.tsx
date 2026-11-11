@@ -118,16 +118,23 @@ function CandidateRow({
   candidate,
   checked,
   confirmed,
+  duplicate,
+  duplicateConfirmed,
   disabled,
   onToggle,
   onConfirm,
+  onConfirmDuplicate,
 }: {
   candidate: DraftCandidate
   checked: boolean
   confirmed: boolean
+  /** 이미 같은 설계 항목이 있을 수 있어 알고 채택한다는 확인이 필요한 후보 */
+  duplicate: boolean
+  duplicateConfirmed: boolean
   disabled: boolean
   onToggle: (checked: boolean) => void
   onConfirm: (confirmed: boolean) => void
+  onConfirmDuplicate: (confirmed: boolean) => void
 }) {
   const title = candidateTitle(candidate)
   const quote = candidate.sources.find((source) => source.quote)
@@ -187,6 +194,18 @@ function CandidateRow({
           문서에서 근거를 찾지 못한 제안이라는 점을 확인했어요.
         </label>
       )}
+      {checked && duplicate && (
+        <label className="mt-2 ml-7 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={duplicateConfirmed}
+            disabled={disabled}
+            onChange={(event) => onConfirmDuplicate(event.target.checked)}
+          />
+          이미 같은 설계 항목이 있다는 점을 확인했고, 내용이 달라 따로 채택해요.
+        </label>
+      )}
     </li>
   )
 }
@@ -217,6 +236,9 @@ export function DocumentCandidates({
 }) {
   const [selected, setSelected] = useState<string[]>([])
   const [confirmed, setConfirmed] = useState<string[]>([])
+  const [duplicateConfirmed, setDuplicateConfirmed] = useState<string[]>([])
+  // 채택하다 candidate_duplicate 로 거절당한 후보. 겹침 표시가 없어도 다음부터 확인을 받는다.
+  const [duplicates, setDuplicates] = useState<string[]>([])
   const [working, setWorking] = useState(false)
   const [outcome, setOutcome] = useState<{
     kind: 'adopt' | 'discard'
@@ -239,9 +261,15 @@ export function DocumentCandidates({
   const shownIds = new Set(freshList.shown.map((candidate) => candidate.id))
   const all = [...allFresh, ...overlapped]
   const chosen = all.filter((candidate) => selected.includes(candidate.id))
+  // 이미 있는 항목·이미 채택한 후보·다른 문서의 같은 후보와 같으면 알고 채택하는 확인이 필요하다.
+  // 이전에 폐기한 후보와 같은 것은 설계 항목이 아니므로 확인 없이 채택한다.
+  const isDuplicate = (candidate: DraftCandidate) =>
+    duplicates.includes(candidate.id) ||
+    (!!candidate.overlap && candidate.overlap.kind !== 'DISCARDED_CANDIDATE')
   const needsConfirm = chosen.filter(
     (candidate) =>
-      candidate.support === 'NONE' && !confirmed.includes(candidate.id),
+      (candidate.support === 'NONE' && !confirmed.includes(candidate.id)) ||
+      (isDuplicate(candidate) && !duplicateConfirmed.includes(candidate.id)),
   )
   const disabled = busy || working || !isLeader
   const toggle = (id: string, on: boolean) =>
@@ -263,6 +291,9 @@ export function DocumentCandidates({
         ...(kind === 'adopt' && candidate.support === 'NONE'
           ? { confirm_no_evidence: true }
           : {}),
+        ...(kind === 'adopt' && isDuplicate(candidate)
+          ? { confirm_duplicate: true }
+          : {}),
       })),
     }
     try {
@@ -275,6 +306,14 @@ export function DocumentCandidates({
         .map((result) => result.candidate_id)
       // 처리된 후보는 선택에서 빼고, 실패한 후보만 선택으로 남겨 다시 시도하거나 사유를 확인하게 한다.
       setSelected((current) => current.filter((id) => failedIds.includes(id)))
+      setDuplicates((current) => [
+        ...new Set([
+          ...current,
+          ...response.results
+            .filter((result) => result.error_code === 'candidate_duplicate')
+            .map((result) => result.candidate_id),
+        ]),
+      ])
     } catch (cause) {
       setError(getApiErrorMessage(cause))
     } finally {
@@ -384,10 +423,21 @@ export function DocumentCandidates({
                         candidate={candidate}
                         checked={selected.includes(candidate.id)}
                         confirmed={confirmed.includes(candidate.id)}
+                        duplicate={isDuplicate(candidate)}
+                        duplicateConfirmed={duplicateConfirmed.includes(
+                          candidate.id,
+                        )}
                         disabled={disabled}
                         onToggle={(on) => toggle(candidate.id, on)}
                         onConfirm={(on) =>
                           setConfirmed((current) =>
+                            on
+                              ? [...current, candidate.id]
+                              : current.filter((id) => id !== candidate.id),
+                          )
+                        }
+                        onConfirmDuplicate={(on) =>
+                          setDuplicateConfirmed((current) =>
                             on
                               ? [...current, candidate.id]
                               : current.filter((id) => id !== candidate.id),
@@ -418,10 +468,19 @@ export function DocumentCandidates({
                   candidate={candidate}
                   checked={selected.includes(candidate.id)}
                   confirmed={confirmed.includes(candidate.id)}
+                  duplicate={isDuplicate(candidate)}
+                  duplicateConfirmed={duplicateConfirmed.includes(candidate.id)}
                   disabled={disabled}
                   onToggle={(on) => toggle(candidate.id, on)}
                   onConfirm={(on) =>
                     setConfirmed((current) =>
+                      on
+                        ? [...current, candidate.id]
+                        : current.filter((id) => id !== candidate.id),
+                    )
+                  }
+                  onConfirmDuplicate={(on) =>
+                    setDuplicateConfirmed((current) =>
                       on
                         ? [...current, candidate.id]
                         : current.filter((id) => id !== candidate.id),

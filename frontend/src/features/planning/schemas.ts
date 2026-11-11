@@ -202,6 +202,8 @@ export type DraftsResponse = z.infer<typeof draftsResponseSchema>
 
 export const adoptCandidateInputSchema = z.object({
   confirm_no_evidence: z.boolean().optional(),
+  // 이미 같은 설계 항목이 있어도(지문이 같아도 내용이 다를 수 있다) 알고 채택한다는 확인
+  confirm_duplicate: z.boolean().optional(),
   resolved_fields: z.string().array().optional(),
 })
 export type AdoptCandidateInput = z.infer<typeof adoptCandidateInputSchema>
@@ -219,6 +221,7 @@ export const batchCandidatesInputSchema = z.object({
     .object({
       candidate_id: common.idSchema,
       confirm_no_evidence: z.boolean().optional(),
+      confirm_duplicate: z.boolean().optional(),
       resolved_fields: z.string().array().optional(),
     })
     .array()

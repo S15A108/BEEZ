@@ -19,7 +19,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { DocumentCandidates } from './DocumentCandidates'
-import { publishNotice } from './draftJobs'
+import { currentVersionJobs, publishNotice } from './draftJobs'
 import { DraftCandidates } from './DraftCandidates'
 import { TaskBreakdown } from './TaskBreakdown'
 import { hasActiveJob } from './draftJobs'
@@ -141,6 +141,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         : false,
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
+  const versionIds = versions.map((version) => version.id)
   // 설계 항목 초안은 10개씩 보인다. 발행 조건과 스냅샷 해시는 받아 둔 전체 초안을 기준으로 한다.
   const itemList = useShowMore(items, 10)
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
@@ -395,7 +396,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               {(data) => (
                 <>
                   <DocumentCandidates
-                    jobs={data.jobs}
+                    jobs={currentVersionJobs(data.jobs, versionIds)}
                     labelOfVersion={labelOfVersion}
                     isLeader={isLeader}
                     busy={action.busy}
@@ -429,7 +430,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                     }
                   />
                   <DraftCandidates
-                    jobs={data.jobs}
+                    jobs={currentVersionJobs(data.jobs, versionIds)}
                     labelOfVersion={labelOfVersion}
                     isLeader={isLeader}
                     busy={action.busy}
@@ -720,7 +721,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       {publishing && (
         <FormDialog
           title="최초 기준 설계 승인·발행"
-          description={`문서 ${publishing.documents.length}개와 검토한 항목 ${publishing.items.length}개를 함께 승인해요. 승인할 원본·항목·초안이 달라지면 최신 내용을 다시 검토해야 해요.${publishNotice(draftJobs.data?.jobs ?? [])}`}
+          description={`문서 ${publishing.documents.length}개와 검토한 항목 ${publishing.items.length}개를 함께 승인해요. 승인할 원본·항목·초안이 달라지면 최신 내용을 다시 검토해야 해요.${publishNotice(currentVersionJobs(draftJobs.data?.jobs ?? [], versionIds))}`}
           fields={[
             {
               name: 'confirmation',

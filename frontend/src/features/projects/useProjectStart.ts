@@ -1,6 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
-import { draftWork, hasActiveJob } from '@/features/planning/draftJobs'
+import {
+  currentVersionJobs,
+  draftWork,
+  hasActiveJob,
+} from '@/features/planning/draftJobs'
 import { getApiErrorCode } from '@/api/error'
 import { documentsApi, planningApi } from '@/api/services'
 import type { DesignItemVersion } from '@/api/contracts/common'
@@ -84,7 +88,15 @@ export function useProjectStart(projectId: string, enabled = true) {
     needsDrafts: drafts.data?.items.length === 0,
     ready: approvedCount === 4 && indexed,
     // 설계 초안이 있어도 후보가 남아 있으면 기획 분석 창으로 돌아가 이어서 하게 한다.
-    work: draftWork(jobs.data?.jobs ?? []),
+    work: draftWork(
+      currentVersionJobs(
+        jobs.data?.jobs ?? [],
+        (documents.data?.items ?? []).flatMap((document) => {
+          const version = document.approved_version ?? document.latest_draft
+          return version ? [version.id] : []
+        }),
+      ),
+    ),
     busy: action.busy,
     error: action.error,
     start: () =>

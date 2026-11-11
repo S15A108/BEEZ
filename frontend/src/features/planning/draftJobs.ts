@@ -19,6 +19,13 @@ export function latestJobs(jobs: DraftJob[]): DraftJob[] {
   )
 }
 
+// 화면에 지금 보이는 문서 버전(승인본, 없으면 최신 작성본)의 작업만 본다. 더 새 버전이 승인되어 대체된 버전의 작업과 후보는
+// 낡았으므로 숨긴다(서버도 그 후보의 채택을 막는다).
+export const currentVersionJobs = (
+  jobs: DraftJob[],
+  versionIds: readonly string[],
+) => jobs.filter((job) => versionIds.includes(job.document_version_id))
+
 export const hasActiveJob = (jobs: DraftJob[]) =>
   latestJobs(jobs).some(isActiveJob)
 
