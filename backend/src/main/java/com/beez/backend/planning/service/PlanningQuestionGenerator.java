@@ -135,7 +135,6 @@ public class PlanningQuestionGenerator {
             if ("OPEN".equals(row.get("status")) && !seen.contains((String) row.get("question_key"))) stale.add(((Number) row.get("id")).longValue());
         }
         questions.supersedeOpen(stale);
-        questions.supersedeOlderVersions(version);
         questions.finishRun(version, runKey, "COMPLETED", null, false);
     }
 

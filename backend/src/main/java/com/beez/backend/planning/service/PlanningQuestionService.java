@@ -78,7 +78,8 @@ public class PlanningQuestionService {
         if (questions.hasBaseline(project)) {
             throw new ApiException(HttpStatus.CONFLICT, "design_already_published", "이미 발행된 초안입니다.");
         }
-        if ("SUPERSEDED".equals(row.get("status"))) {
+        // 현재 버전이 아닌 버전의 미답변 질문은 현재 버전 질문이 다 만들어지면 조회할 때 대체로 판정된다(S15P31A108-396).
+        if ("SUPERSEDED".equals(row.get("status")) || "SUPERSEDED".equals(row.get("freshness"))) {
             throw new ApiException(HttpStatus.CONFLICT, "question_superseded",
                     "문서가 다시 분석되어 이 질문은 더 이상 쓰이지 않아요. 목록을 새로 불러와 주세요.");
         }

@@ -125,34 +125,26 @@ public class PlanningQuestionRepository {
         }
     }
 
-    /**
-     * 새 버전의 질문이 만들어지면 같은 문서의 이전 버전에서 만든 미답변 질문은 대체한다. 반려 뒤 다시 낸 버전·새로 승인한 버전이
-     * 생겨도 이전 버전 질문이 목록에 남아 답할 수 있었다(S15P31A108-396). 답한·닫은 질문은 이력이라 그대로 둔다.
-     */
-    public void supersedeOlderVersions(long version) {
-        jdbc.sql("""
-                UPDATE planning_question q SET status='SUPERSEDED',updated_at=now()
-                  FROM document_version cur, document_version old
-                 WHERE cur.id=:version AND old.document_id=cur.document_id AND old.version_no<cur.version_no
-                   AND q.document_version_id=old.id AND q.status='OPEN'
-                """).param("version", version).update();
-    }
+    /** 현재 버전의 질문이 지금 분석으로 다 만들어졌거나, 워커가 다시 만들 일이 없다(본문 없음·분석 기록 없음). */
+    private static final String SETTLED = "(NOT cur.has_text OR dp.document_version_id IS NULL"
+            + " OR (dp.status='COMPLETED' AND r.status='COMPLETED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash))";
 
     /**
      * 질문이 지금 본문으로 만든 것인지(S15P31A108-396). 판정은 질문이 붙은 버전이 아니라 그 문서의 <b>현재 버전</b>(워커가 질문을
-     * 만드는 최신 DRAFT·APPROVED)으로 한다. 반려·재승인으로 새 버전이 생기면 이전 버전 질문도 그 버전의 갱신 상태를 따른다.
-     * 현재 버전의 질문 생성이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT, 분석이나 질문 생성이 도는 중이면 REFRESHING,
-     * 그러다 실패했으면 REFRESH_FAILED 다. 워커({@link #nextRunnable})가 다시 만들 일이 없는 경우 — 현재 버전 없음·기준 설계 발행·
-     * 보관된 프로젝트·본문 없음·분석 기록 없음 — 와 실행 기록이 없는 같은 버전의 옛 질문은 CURRENT 로 둬 '갱신 중'이 영원히 남지 않게 한다.
+     * 만드는 최신 DRAFT·APPROVED)으로 한다. 현재 버전의 질문 생성이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT, 분석이나 질문
+     * 생성이 도는 중이면 REFRESHING, 그러다 실패했으면 REFRESH_FAILED 다. 워커({@link #nextRunnable})가 다시 만들 일이 없는 경우 —
+     * 현재 버전 없음·기준 설계 발행·보관된 프로젝트·본문 없음·분석 기록 없음 — 와 실행 기록이 없는 같은 버전의 옛 질문은 CURRENT 로 둬
+     * '갱신 중'이 영원히 남지 않게 한다.
+     *
+     * <p>현재 버전이 아닌(반려 뒤 다시 낸 버전·새로 승인한 버전에 밀린) 버전의 미답변 질문은 현재 버전 질문이 다 만들어지면
+     * SUPERSEDED 다. 행을 바꾸지 않고 조회할 때 판정하므로, 새 버전이 반려돼 현재 버전이 되돌아오면 그 질문이 다시 보인다.
+     * 목록·개수는 이 행을 빼고, 답변은 409 question_superseded 다. 답한·닫은 질문은 이력이라 CURRENT 로 남는다.
      */
-    private static final String FRESHNESS = """
-            CASE WHEN cur.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL OR NOT cur.has_text
-                   OR dp.document_version_id IS NULL
-                   OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'
-                 WHEN dp.status='FAILED'
-                   OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'
-                 WHEN dp.status='COMPLETED' AND r.status='COMPLETED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash THEN 'CURRENT'
-                 ELSE 'REFRESHING' END AS freshness""";
+    private static final String FRESHNESS = "CASE WHEN cur.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL THEN 'CURRENT'"
+            + " WHEN q.document_version_id<>cur.id AND " + SETTLED + " THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
+            + " WHEN " + SETTLED + " OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'"
+            + " WHEN dp.status='FAILED' OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'"
+            + " ELSE 'REFRESHING' END AS freshness";
 
     /** 질문 버전 {@code v} 를 조인한 뒤 붙인다. 앞뒤 공백을 넣어 이어 붙인다(텍스트 블록은 앞 공백을 지운다). */
     private static final String FRESHNESS_JOINS = " LEFT JOIN project p ON p.id=q.project_id"
@@ -181,10 +173,8 @@ public class PlanningQuestionRepository {
             cursor = " WHERE t.id > :ai";
             p.put("ai", after.id());
         }
-        return jdbc.sql("SELECT * FROM (SELECT q.*,v.version_no,v.document_id,"
-                + " row_number() OVER (ORDER BY q.id) AS number," + FRESHNESS
-                + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
-                + " WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter + ") t" + cursor
+        // 번호는 조회할 때 대체로 판정된 질문을 뺀 뒤에 센다.
+        return jdbc.sql("SELECT * FROM (SELECT x.*, row_number() OVER (ORDER BY x.id) AS number FROM (" + live(filter) + ") x) t" + cursor
                 + " ORDER BY t.id LIMIT :limit").params(p).query().listOfRows();
     }
 
@@ -193,8 +183,14 @@ public class PlanningQuestionRepository {
         p.put("project", project);
         String filter = "";
         if (version != null) { filter = " AND q.document_version_id=:version"; p.put("version", version); }
-        return jdbc.sql("SELECT count(*) FROM planning_question q WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter)
-                .params(p).query(Long.class).single();
+        return jdbc.sql("SELECT count(*) FROM (" + live(filter) + ") x").params(p).query(Long.class).single();
+    }
+
+    /** 목록에 보이는 질문(저장된 SUPERSEDED 와 조회할 때 대체로 판정된 질문 제외)과 그 freshness. */
+    private static String live(String filter) {
+        return "SELECT * FROM (SELECT q.*,v.version_no,v.document_id," + FRESHNESS
+                + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
+                + " WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter + ") f WHERE f.freshness<>'SUPERSEDED'";
     }
 
     public Optional<Map<String, Object>> findForUpdate(long project, long id) {
