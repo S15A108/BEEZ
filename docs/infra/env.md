@@ -258,7 +258,7 @@ IMPACT_LLM_MODEL=gpt-6-luna'
 docker exec beez-ai-1 env | grep -E '_ENABLED=|^IMPACT_LLM_MODEL=' | sort
 ```
 
-화면에서는 기획 분석의 **보완 질문 만들기**, **답변으로 초안 만들기**, 비비 질문 한 번, 설계 항목을 바꾸는 변경
+화면에서는 기획 분석의 **보완 질문 만들기**, **답변으로 보완 초안 만들기**, 비비 질문 한 번, 설계 항목을 바꾸는 변경
 제안의 영향 분석을 한 번씩 해 봅니다. 영향 분석이 `invalid_output`으로 실패하면 응답의 모델 이름이 요청과 다른
 것이므로 `IMPACT_LLM_ALLOWED_RESPONSE_MODELS`를 봅니다.
 
