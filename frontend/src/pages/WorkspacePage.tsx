@@ -3,6 +3,8 @@ import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
 import { Footprints } from 'lucide-react'
 import type { SceneAgent, SceneTask } from '@/three/types'
+import { idSchema } from '@/api/contracts/common'
+import { getApiErrorStatus, isMissingApi } from '@/api/error'
 import { RequireAccount } from '@/features/auth/RequireAccount'
 import { useSession } from '@/features/auth/useSession'
 import { DocumentsPanel } from '@/features/documents/DocumentsPanel'
@@ -44,6 +46,7 @@ import {
   useWorkspaceStore,
 } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
+import NotFoundPage from './NotFoundPage'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
 // 단축 바 번호(창 머리 'N 또는 Esc로 닫기')
@@ -181,6 +184,18 @@ function Workspace({ projectId }: { projectId: string }) {
       })),
     [query.data?.tasks],
   )
+  // 없는·볼 수 없는 프로젝트(404·403)와 ID가 아닌 주소는 다시 불러와도 같아, 다시 불러오기 대신 나의 도시로 보낸다.
+  const status = getApiErrorStatus(query.error)
+  if (
+    !idSchema.safeParse(projectId).success ||
+    ((status === 403 || status === 404) && !isMissingApi(query.error))
+  )
+    return (
+      <NotFoundPage
+        title="프로젝트를 찾을 수 없거나 볼 권한이 없어요"
+        back="나의 도시로"
+      />
+    )
   return (
     <AsyncState query={query}>
       {(data) => {

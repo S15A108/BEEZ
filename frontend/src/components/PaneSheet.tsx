@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { PaneSheetBody, PaneSheetContext } from './paneSheetContext'
 
 /**
@@ -74,11 +75,17 @@ export function PaneSheet({
   const context = use(PaneSheetContext)
   const host = context?.host
   const track = context?.track
+  const trackSheet = useWorkspaceStore((state) => state.trackSheet)
   useEffect(() => {
     if (!host || !track) return
     track(true)
-    return () => track(false)
-  }, [host, track])
+    // 창 밖의 단축 바도 알 수 있게 센다. 창째 닫혀도 정리 함수가 돌아 수가 남지 않는다.
+    trackSheet(true)
+    return () => {
+      track(false)
+      trackSheet(false)
+    }
+  }, [host, track, trackSheet])
   useEffect(() => {
     if (!host) return
     // Esc는 창 전체가 아니라 이 하위 화면만 닫는다.

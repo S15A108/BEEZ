@@ -125,3 +125,45 @@ it('가입한 이메일은 코드를 보내지 않고, 인증이 만료됐다는
   expect(screen.queryByText('인증됨')).not.toBeInTheDocument()
   expect(email()).toHaveValue('')
 })
+
+// 11-10 QA(S15P31A108-371): 이메일 오류가 "인증 코드 받기"를 다시 눌러야만 갱신돼, 값을 채운 뒤에도 남아 인증 안내를 가렸다.
+it('이메일을 비운 채 코드를 받으려다 이메일을 채우면 이메일 오류가 사라지고, 인증 없이 가입하면 인증 안내가 나온다', async () => {
+  const user = userEvent.setup()
+  render(
+    <MemoryRouter initialEntries={['/register']}>
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await user.click(screen.getByRole('button', { name: '인증 코드 받기' }))
+  expect(await screen.findByText('이메일을 입력해 주세요.')).toBeInTheDocument()
+
+  await user.type(
+    screen.getByRole('textbox', { name: '이메일' }),
+    'late@beez.local',
+  )
+  expect(screen.queryByText('이메일을 입력해 주세요.')).not.toBeInTheDocument()
+  await user.type(screen.getByRole('textbox', { name: '이름' }), '새 팀원')
+  await user.type(screen.getByLabelText(/^비밀번호( \*)?$/), 'beez-2026!')
+  await user.type(screen.getByLabelText(/^비밀번호 확인/), 'beez-2026!')
+  await user.click(screen.getByRole('button', { name: '가입하기' }))
+  expect(
+    await screen.findByText('이메일 인증을 먼저 해 주세요.'),
+  ).toBeInTheDocument()
+  expect(authApi.register).not.toHaveBeenCalled()
+})
+
+it('빈 폼에서 가입하기를 누르면 다른 칸과 함께 이메일 칸에도 입력 안내가 나온다', async () => {
+  const user = userEvent.setup()
+  render(
+    <MemoryRouter initialEntries={['/register']}>
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await user.click(screen.getByRole('button', { name: '가입하기' }))
+  expect(await screen.findByText('이름을 입력해 주세요.')).toBeInTheDocument()
+  expect(await screen.findByText('이메일을 입력해 주세요.')).toBeInTheDocument()
+})

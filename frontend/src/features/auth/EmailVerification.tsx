@@ -23,10 +23,13 @@ const schema = z.object({
 /** 회원가입 이메일 인증 (SCR-01 수정안, ACC-A11·A12). 인증한 이메일과 가입 토큰을 onVerified로 알린다. */
 export function EmailVerification({
   needed,
+  attempt = 0,
   onVerified,
 }: {
   /** 인증 없이 가입하기를 눌렀을 때 */
   needed: boolean
+  /** 가입하기를 누른 횟수. 바뀔 때마다 다른 칸처럼 이메일 칸도 검사한다(빈 칸·형식). */
+  attempt?: number
   onVerified: (
     verified: { email: string; verified_token: string } | null,
   ) => void
@@ -36,6 +39,7 @@ export function EmailVerification({
     trigger,
     getValues,
     resetField,
+    clearErrors,
     formState: { errors },
   } = useForm({
     resolver: zodResolver(schema),
@@ -48,6 +52,9 @@ export function EmailVerification({
   const [sendError, setSendError] = useState('')
   const [message, setMessage] = useState('')
   const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (attempt) void trigger('email')
+  }, [attempt, trigger])
   useEffect(() => {
     if (!sent || verified) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
@@ -151,7 +158,9 @@ export function EmailVerification({
             aria-invalid={Boolean(errors.email)}
             className="h-10"
             {...register('email', {
+              // 이 폼은 제출하지 않아 입력 중에 다시 검사되지 않는다. 지난 오류가 남아 가입 시 인증 안내를 가리지 않게 지운다.
               onChange: () => {
+                clearErrors('email')
                 setSendError('')
                 if (sent) restart()
               },

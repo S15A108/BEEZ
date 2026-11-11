@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { useForm, useWatch } from 'react-hook-form'
@@ -63,6 +63,8 @@ interface Props {
   onCancel?: () => void
   /** 제출 실패 문구. 화면마다 다르게 안내할 오류 코드가 있을 때 넘긴다. 기본은 공통 문구(getApiErrorMessage)다. */
   errorMessage?: (cause: unknown) => string
+  /** 입력 값이 처음 값과 달라지거나 처음 값으로 돌아오면 알린다(닫기 전에 확인할 때). */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 export function ActionForm({
@@ -79,6 +81,7 @@ export function ActionForm({
   columns,
   onCancel,
   errorMessage = getApiErrorMessage,
+  onDirtyChange,
 }: Props) {
   const formId = useId()
   const [error, setError] = useState('')
@@ -137,7 +140,7 @@ export function ActionForm({
     register,
     handleSubmit,
     control,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<Record<string, string>>({
     resolver: zodResolver(schema),
     mode: auth ? 'onTouched' : 'onSubmit',
@@ -151,6 +154,9 @@ export function ActionForm({
     ),
   })
   const watched = useWatch({ control })
+  useEffect(() => {
+    onDirtyChange?.(isDirty)
+  }, [isDirty, onDirtyChange])
   const submitDisabled = isSubmitting || disabled || disableWhen?.(watched)
   return (
     // 입력 칸은 안쪽 격자에 둔다. 창 안 하위 화면에서는 폼이 남은 높이를 채워 버튼 줄이 맨 아래로 간다.

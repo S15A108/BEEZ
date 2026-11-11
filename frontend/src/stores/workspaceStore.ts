@@ -31,6 +31,9 @@ interface WorkspaceState {
   officeTime: 'auto' | OfficeTime
   setOfficeTime: (officeTime: 'auto' | OfficeTime) => void
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
+  /** 창 안에 열린 하위 화면(PaneSheet) 수. 열려 있으면 단축 바 숫자 키를 무시한다(D46). 저장하지 않는다. */
+  sheets: number
+  trackSheet: (open: boolean) => void
   setViewMode: (viewMode: 'first' | 'third') => void
   setOutdoor: (outdoor: boolean) => void
   /** 도시에 보이는 칸(빈 칸을 당긴 번호)을 한꺼번에 저장한다. 칸 없는(lot null) 항목은 건너뛴다. */
@@ -54,6 +57,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       officeTime: 'auto',
       setOfficeTime: (officeTime) => set({ officeTime }),
       openPane: (pane, focusId = null) => set({ pane, focusId }),
+      sheets: 0,
+      trackSheet: (open) =>
+        set((state) => ({ sheets: state.sheets + (open ? 1 : -1) })),
       setViewMode: (viewMode) => set({ viewMode }),
       setOutdoor: (outdoor) => set({ outdoor }),
       placeProjects: (accountId, items) =>
