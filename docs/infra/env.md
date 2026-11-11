@@ -113,6 +113,7 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `AI_BASE_URL` | 필수 | `http://localhost:8000` | `http://ai:8000` |
 | `AI_INTERNAL_TOKEN` | 필수 | `change-me` | env 파일 |
 | `AI_CONNECT_TIMEOUT`·`AI_READ_TIMEOUT` | | `3s`·`20s` | 기본값 |
+| `TASK_BREAKDOWN_LLM_TIMEOUT_SECONDS`·`TASK_BREAKDOWN_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_TASK_BREAKDOWN_READ_TIMEOUT` | | `50`·`16384`·`55s` | 승인 설계 작업 분해(TSK-A09) 전용. 생성 토큰에는 추론 토큰이 포함된다. 동기 요청의 대기 시간은 AI 모델 50초 < 백엔드 읽기 55초 < nginx `/api/` 읽기 60초 순서로 둔다. 서버 env 파일의 값은 `infra/compose.yaml`이 ai·backend 컨테이너로 전달한다. |
 | `INVITE_BASE_URL` | 필수 | `http://localhost:5173` | `PUBLIC_ORIGIN` |
 | `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
 | `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |

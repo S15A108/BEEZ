@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     design_drafts_llm_output_token_limit: str = "16384"
     design_drafts_llm_output_token_parameter: str = "max_completion_tokens"
 
+    # Task generation is synchronous. Leave time for the BE and nginx after the model call.
+    task_breakdown_llm_timeout_seconds: str = "50"
+    task_breakdown_llm_output_token_limit: str = "16384"
+
     # Provisional #135 transport is disabled until explicitly configured; the
     # model call reuses gms_key and bee_default_model like #133 and #134.
     # Document review (AI-A10) model-call limits, parsed per request (0 < value <= 120).

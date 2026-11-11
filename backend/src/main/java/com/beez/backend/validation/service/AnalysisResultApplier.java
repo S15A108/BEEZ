@@ -12,7 +12,6 @@ import com.beez.backend.common.auth.CallerContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Value;
 import com.beez.backend.task.service.ValidationStatusLookup;
-import com.beez.backend.validation.event.ConflictFindingsSaved;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -26,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -375,14 +373,11 @@ public class AnalysisResultApplier {
         RuleOutcome rule = reevaluateRules(v);
         boolean needsInput = "NEEDS_INPUT".equals(rule.decidedStatus());
         boolean needsReview = "NEEDS_REVIEW".equals(rule.decidedStatus());
-        for (FindingRow f : rule.findings()) {
-            validations.insertFinding(v.id(), f);
-        }
+        List<FindingRow> findings = new ArrayList<>(rule.findings());
 
         // 후보 저장. 출처는 AI 가 보낸 값 대신 요청에 넣은 출처 객체로 바꿔 저장한다
         // (계약 검사는 네 칸을 문자열로 비교하므로, 숫자 ID·명세에 없는 칸이 섞인 값을 그대로 내보내지 않게)
         Map<String, Map<String, Object>> requestSources = requestSources(request);
-        Set<Long> conflictRelated = new TreeSet<>();   // 회의 자동 개설 대상 (S15P31A108-248)
         for (Map<String, Object> f : objects(result.get("findings"))) {
             String kind = (String) f.get("kind");
             String severity = (String) f.get("severity");
@@ -413,12 +408,14 @@ public class AnalysisResultApplier {
                 needsReview = true;              // MISMATCH·CONFLICT 는 BLOCKING 일 때만 막는다
             }
             Long relatedTask = id(f.get("related_task_id"));
-            if ("CONFLICT".equals(kind) && blocking && relatedTask != null) conflictRelated.add(relatedTask);
-            validations.insertFinding(v.id(), new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
+            findings.add(new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
                     relatedTask, (String) f.get("message"), canonicalSources(f, requestSources), resolution,
                     nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids")),
                     (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs")),
                     (String) f.get("suggested_action")));
+        }
+        for (FindingRow finding : findings) {
+            validations.insertFinding(v.id(), finding);
         }
         String status = "PASS";
         if (needsReview) {
@@ -459,9 +456,7 @@ public class AnalysisResultApplier {
         validations.finish(v.id(), status, summary);
         activities.finishedBySystem(v, status);
         // 저장된 결과일 때만 나간다(앞의 늦은 결과·입력 변경·리스 만료 분기는 이미 return). 회의 개설은 커밋 뒤 리스너가 맡는다
-        if (!conflictRelated.isEmpty()) {
-            publisher.publishEvent(new ConflictFindingsSaved(v.projectId(), v.id(), v.taskId(), List.copyOf(conflictRelated)));
-        }
+        ValidationConflictMeetings.publish(publisher, v, findings);
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
@@ -527,6 +522,7 @@ public class AnalysisResultApplier {
                 null, 0);
         validations.finish(v.id(), rule.decidedStatus(), responses.summary(v.summary()));
         activities.finishedBySystem(v, rule.decidedStatus());
+        ValidationConflictMeetings.publish(publisher, v, rule.findings());
         validations.finishJob(lease.jobId(), "DONE");
         log.info("validation {} attempt {} decided by rules before calling the model: {}", v.id(), lease.attempt(), rule.decidedStatus());
         carryIfPlanRenamed(v);

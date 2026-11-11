@@ -21,6 +21,7 @@ import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import com.beez.backend.task.service.ValidationStatusLookup;
 import com.beez.backend.validation.event.ConflictFindingsSaved;
+import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.repository.ValidationRow;
@@ -116,6 +117,31 @@ class AnalysisResultApplierConflictEventTest {
         var order = inOrder(validations, publisher);
         order.verify(validations).finish(anyLong(), any(), any());
         order.verify(publisher).publishEvent(any(ConflictFindingsSaved.class));
+    }
+
+    @Test void ruleAndModelConflictsArePublishedTogether() {
+        occupiedTask(5L);
+        apply(finding("CONFLICT", "BLOCKING", 3), finding("CONFLICT", "BLOCKING", 5));
+
+        verify(publisher).publishEvent(new ConflictFindingsSaved(1L, 42L, 10L, List.of(3L, 5L)));
+    }
+
+    @Test void ruleConflictIsPublishedWhenWorkerClosesBeforeCallingModel() {
+        occupiedTask(5L);
+
+        assertThat(applier.closeByRulesIfDecided(lease)).isTrue();
+
+        var order = inOrder(validations, publisher);
+        order.verify(validations).insertFinding(anyLong(), any(FindingRow.class));
+        order.verify(validations).finish(anyLong(), any(), any());
+        order.verify(publisher).publishEvent(new ConflictFindingsSaved(1L, 42L, 10L, List.of(5L)));
+    }
+
+    private void occupiedTask(long taskId) {
+        when(rules.evaluate(anyLong(), any(), any(), any(), any(), anyBoolean(), anyBoolean()))
+                .thenReturn(new RuleOutcome("NEEDS_REVIEW", List.of(
+                        FindingRow.rule("CONFLICT", "BLOCKING", 1L, 2L, taskId, "설계 항목이 점유됐습니다", "HUMAN_REVIEW", null)
+                ), List.of()));
     }
 
     @Test void warningConflictIsNotPublished() {

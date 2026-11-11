@@ -93,6 +93,7 @@ export interface MockProject {
   comments: ChangeComment[]
   approvals: Approval[]
   tasks: TaskDetail[]
+  task_breakdown?: { baseline_id: string; task_ids: string[] }
   revisions: TaskPlanRevision[]
   validations: Validation[]
   packets: ContextPacket[]

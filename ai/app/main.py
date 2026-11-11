@@ -19,6 +19,7 @@ from app.routers import (
     meeting_revision,
     planning_questions,
     revision_blocks,
+    task_breakdown,
     validation,
 )
 from app.services.retrieval.tokenization import EmbeddingTokenCounter
@@ -57,6 +58,7 @@ app.include_router(planning_questions.router)
 app.include_router(design_drafts.router)
 app.include_router(bee_chat.router)
 app.include_router(assignment_recommendations.router)
+app.include_router(task_breakdown.router)
 
 
 @app.get("/")
