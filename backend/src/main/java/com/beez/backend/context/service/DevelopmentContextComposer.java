@@ -49,7 +49,16 @@ public class DevelopmentContextComposer {
     static final int MAX_RELATIONS = 1000;
     static final int MAX_DOCUMENT_VERSIONS = 1000;
     static final int MAX_BODY_BYTES = 262_144;
-    static final int MAX_CANDIDATE_TEXT = 100_000;
+    /**
+     * 설계 후보 텍스트 상한(코드 포인트). AI 선택기는 텍스트 하나라도 임베딩 한도(8,192토큰, tokenization.py MAX_INPUT_TOKENS)를
+     * 넘으면 요청 전체를 422 로 거부한다. 문자 하나가 최악 3토큰(UTF-8 3바이트)이어도 넘지 않게 2,500 으로 둔다.
+     * 근거 청크는 색인 때 600토큰 단위로 잘려 이 제한이 필요 없다.
+     */
+    static final int MAX_CANDIDATE_TEXT = 2_500;
+    /** 근거 텍스트 상한(AI CandidateText). 청크는 이보다 훨씬 짧지만 넘는 것은 뺀다 */
+    static final int MAX_EVIDENCE_TEXT = 100_000;
+    /** 설명이 패킷 constraints 가 되는 종류(-132 3절). AI 는 이 종류에 설명이 없으면 요청을 거부한다 */
+    static final Set<String> CONSTRAINT_KINDS = Set.of("POLICY", "CONSTRAINT");
     static final int MAX_LOCATION = 1000;
     /** 사용량 표 feature. 선택 호출은 임베딩 호출이다. request_key 앞부분(dev-context-)으로 문서 색인과 구분한다 */
     static final String USAGE_FEATURE = "EMBEDDING";
@@ -85,6 +94,16 @@ public class DevelopmentContextComposer {
         for (Map<String, Object> row : itemRows) {
             String itemId = row.get("design_item_id").toString();
             String versionId = row.get("design_item_version_id").toString();
+            String kind = row.get("kind").toString();
+            Map<String, Object> content = contentOf(row.get("content"));
+            String description = description(content);
+            boolean constraintKind = CONSTRAINT_KINDS.contains(kind);
+            if (constraintKind && description == null) {
+                // AI 는 설명 없는 POLICY·CONSTRAINT 를 입력 오류로 보고 요청 전체를 거부한다(-132 2절). 한 항목 때문에
+                // 프로젝트의 MCP-01 이 계속 막히지 않게 그 항목만 빼고 남긴다. 저장 검증(DesignContentValidator)을 거치지 않은 옛 데이터용
+                log.warn("MCP-01 skipped {} without description project={} item={} version={}", kind, projectId, itemId, versionId);
+                continue;
+            }
             versionByItem.put(itemId, versionId);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("design_item_id", itemId);
@@ -92,16 +111,16 @@ public class DevelopmentContextComposer {
             item.put("project_id", project);
             item.put("baseline_id", baseline);
             item.put("status", "APPROVED");
-            item.put("text", candidateText(row));
+            item.put("text", candidateText(row, content, description));
             items.add(item);
             Map<String, Object> meta = new LinkedHashMap<>();
             meta.put("design_item_version_id", versionId);
             meta.put("design_item_id", itemId);
             meta.put("key", row.get("key"));
-            meta.put("kind", row.get("kind"));
+            meta.put("kind", kind);
             meta.put("version_no", ((Number) row.get("version_no")).intValue());
-            String description = description(row.get("content"));
-            if (description != null) {
+            // 설명은 constraints 가 되는 종류에만 보낸다(-132 2절 조건부). 다른 종류는 본문만 키운다
+            if (constraintKind) {
                 meta.put("description", description);
             }
             itemMeta.add(meta);
@@ -128,7 +147,7 @@ public class DevelopmentContextComposer {
         List<Map<String, Object>> evidenceMeta = new ArrayList<>();
         for (DocumentIndexWorker.ChunkEvidence chunk : retrieval.evidence()) {
             // AI 는 빈 후보·10만 자 초과 후보를 입력 오류로 거부한다. 그런 청크는 근거로 쓸 수 없어 뺀다
-            if (chunk.text().isBlank() || chunk.text().length() > MAX_CANDIDATE_TEXT) {
+            if (chunk.text().isBlank() || chunk.text().length() > MAX_EVIDENCE_TEXT) {
                 continue;
             }
             String evidenceId = Ids.str(chunk.chunkId());
@@ -216,19 +235,38 @@ public class DevelopmentContextComposer {
                 .param("b", baselineId).param("p", projectId).query().listOfRows();
     }
 
-    /** 의미 비교에 쓰는 후보 텍스트: 키·제목과 승인 본문 JSON. AI 상한은 코드 포인트라 서로게이트 쌍을 끊지 않게 자른다 */
-    static String candidateText(Map<String, Object> row) {
-        String text = row.get("key") + " " + Objects.toString(row.get("title"), "") + "\n" + row.get("content");
-        if (text.codePointCount(0, text.length()) <= MAX_CANDIDATE_TEXT) {
-            return text;
+    /**
+     * 의미 비교에 쓰는 후보 텍스트: 키·제목·설명과 종류별 식별 값(API 의 메서드·경로, 데이터 계약의 엔티티).
+     * 본문 JSON 전문은 넣지 않는다 — 큰 데이터 계약 하나가 임베딩 한도를 넘어 요청 전체가 거부되거나 본문 상한(256KiB)을 채운다.
+     * 전문은 에이전트가 패킷의 design_items 로 받는다. AI 상한은 코드 포인트라 서로게이트 쌍을 끊지 않게 자른다.
+     */
+    static String candidateText(Map<String, Object> row, Map<String, Object> content, String description) {
+        StringBuilder text = new StringBuilder();
+        text.append(row.get("key")).append(' ').append(Objects.toString(row.get("title"), ""));
+        if (content.get("method") instanceof String method && content.get("path") instanceof String path) {
+            text.append('\n').append(method).append(' ').append(path);
         }
-        return text.substring(0, text.offsetByCodePoints(0, MAX_CANDIDATE_TEXT));
+        if (content.get("entity") instanceof String entity) {
+            text.append('\n').append(entity);
+        }
+        if (description != null) {
+            text.append('\n').append(description);
+        }
+        String out = text.toString();
+        if (out.codePointCount(0, out.length()) <= MAX_CANDIDATE_TEXT) {
+            return out;
+        }
+        return out.substring(0, out.offsetByCodePoints(0, MAX_CANDIDATE_TEXT));
     }
 
-    /** content.description. POLICY·CONSTRAINT 는 이 값이 패킷 constraints 가 된다(-132 3절). 설계 저장 검증이 공백을 막는다 */
-    private String description(Object content) {
-        Object value = json.readValue(content.toString(), Map.class).get("description");
-        return value instanceof String s && !s.isBlank() ? s : null;
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> contentOf(Object content) {
+        return json.readValue(content.toString(), Map.class);
+    }
+
+    /** content.description. POLICY·CONSTRAINT 는 이 값이 패킷 constraints 가 된다(-132 3절) */
+    private static String description(Map<String, Object> content) {
+        return content.get("description") instanceof String s && !s.isBlank() ? s : null;
     }
 
     /** 근거 위치. 문서 검색 결과와 같은 표기(DocumentIndexWorker.chunkLocation)를 쓴다 */
@@ -240,13 +278,15 @@ public class DevelopmentContextComposer {
     /**
      * 팀장이 정한 명시 의존(EXPLICIT)의 현재 상태. 쌍마다 한 줄(PK)이다. 버전은 마지막 확정(CONFIRM·KEEP) 이력의 버전이고,
      * AI 는 그 버전이 지금 기준 버전과 다르면 의존을 펼치지 않고 DEPENDENCY_UNVERIFIED 로 표시한다.
-     * 이력 버전이 없으면 두 항목의 현재 기준 버전을 쓰고, 그것도 없으면(기준 밖 항목) 보내지 않는다.
+     * 이력 버전이 없으면 현재 기준 버전을 쓰고, 대상이 기준 밖이면 그 항목의 최신 버전을 쓴다. NEEDS_RECHECK 는 버전과 상관없이
+     * 상태만으로 재확인 필요를 알리므로 이력이 없다고 빼지 않는다(V9 이전 관계는 이력 없이 NEEDS_RECHECK 로 옮겨졌다).
      * 시작 항목이 지금 기준에 없는 관계는 보내지 않는다 — AI 는 기준 항목에서만 의존을 펼치므로 쓰이지 않고, 상한(1,000)만 채운다.
      * 대상 항목이 기준 밖인 관계는 보낸다(AI 가 DEPENDENCY_UNVERIFIED 로 알린다).
      */
     private List<Map<String, Object>> relations(long projectId, Map<String, String> versionByItem) {
         List<Map<String, Object>> rows = jdbc.sql("""
-                        select d.from_item_id, d.to_item_id, d.origin, d.status, h.from_version_id, h.to_version_id
+                        select d.from_item_id, d.to_item_id, d.origin, d.status, h.from_version_id, h.to_version_id,
+                               (select max(v.id) from design_item_version v where v.design_item_id = d.to_item_id) as to_latest_version_id
                           from design_item_dependency d
                           left join lateral (
                                 select from_version_id, to_version_id from design_item_dependency_history h
@@ -266,7 +306,11 @@ public class DevelopmentContextComposer {
             }
             String fromVersion = row.get("from_version_id") != null ? row.get("from_version_id").toString() : versionByItem.get(from);
             String toVersion = row.get("to_version_id") != null ? row.get("to_version_id").toString() : versionByItem.get(to);
-            if (fromVersion == null || toVersion == null) {
+            if (toVersion == null && row.get("to_latest_version_id") != null) {
+                toVersion = row.get("to_latest_version_id").toString();
+            }
+            if (toVersion == null) {
+                // 대상 항목에 버전이 하나도 없다(초안만 있는 항목). 버전 없는 관계는 AI 입력이 될 수 없다
                 continue;
             }
             Map<String, Object> relation = new LinkedHashMap<>();

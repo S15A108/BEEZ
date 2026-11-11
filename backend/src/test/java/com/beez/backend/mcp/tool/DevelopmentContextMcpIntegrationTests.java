@@ -300,6 +300,54 @@ class DevelopmentContextMcpIntegrationTests extends IntegrationTestSupport {
         verify(ai, never()).developmentContextSelection(any());
     }
 
+    /**
+     * 깨지면: 기준 밖에서 시작하는 관계가 관계 상한(1,000)을 채우거나, 이력 없는 NEEDS_RECHECK 의존이 빠져 "재확인 필요"가
+     * 패킷에 남지 않거나, 설명 없는 POLICY 하나 때문에 AI 가 요청 전체를 거부해 MCP-01 이 계속 503 이 된다 (-132 2절).
+     */
+    @Test
+    void snapshot_skipsUnusableInputs_butKeepsRecheckSignals() {
+        long outItem = api.jdbc.sql("insert into design_item(project_id,key,kind) values (:p,'OUT-01','REQUIREMENT') returning id")
+                .param("p", projectId).query(Long.class).single();
+        long outVersion = api.jdbc.sql("""
+                insert into design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,approved_at)
+                values (:i,1,'APPROVED','기준 밖',1,'{"description":"x"}','out-hash','HUMAN',now()) returning id
+                """).param("i", outItem).query(Long.class).single();
+        long api01 = api.designItemId("API-01");
+        long api02 = api.designItemId("API-02");
+        // 이력 없는 NEEDS_RECHECK 두 줄(V9 이 옛 관계를 옮긴 모양): 기준 밖 → 기준, 기준 → 기준 밖
+        api.jdbc.sql("""
+                insert into design_item_dependency(project_id,from_item_id,to_item_id,origin,status)
+                values (:p,:out,:a1,'EXPLICIT','NEEDS_RECHECK'), (:p,:a2,:out,'EXPLICIT','NEEDS_RECHECK')
+                """).params(Map.of("p", projectId, "out", outItem, "a1", api01, "a2", api02)).update();
+        // 설명 없는 POLICY (저장 검증을 거치지 않은 옛 데이터)
+        long badPolicy = api.jdbc.sql("insert into design_item(project_id,key,kind) values (:p,'POL-02','POLICY') returning id")
+                .param("p", projectId).query(Long.class).single();
+        long badVersion = api.jdbc.sql("""
+                insert into design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,approved_at)
+                values (:i,1,'APPROVED','설명 없음',1,'{}','bad-hash','HUMAN',now()) returning id
+                """).param("i", badPolicy).query(Long.class).single();
+        api.jdbc.sql("insert into baseline_item(baseline_id,project_id,design_item_id,design_item_version_id) values (:b,:p,:i,:v)")
+                .params(Map.of("b", baselineId, "p", projectId, "i", badPolicy, "v", badVersion)).update();
+
+        ok(call("get_development_context", Map.of("request", "로그인 화면 구현")));
+
+        JsonNode body = sent.get();
+        assertThat(body.get("metadata").get("design_items")).extracting(n -> n.get("key").asString())
+                .containsExactlyInAnyOrder("API-01", "API-02", "POL-01");
+        assertThat(body.get("relations")).extracting(n -> n.get("from_design_item_id").asString())
+                .containsExactlyInAnyOrder(String.valueOf(api01), String.valueOf(api02));
+        JsonNode recheck = null;
+        for (JsonNode r : body.get("relations")) {
+            if (r.get("from_design_item_id").asString().equals(String.valueOf(api02))) {
+                recheck = r;
+            }
+        }
+        assertThat(recheck.get("status").asString()).isEqualTo("NEEDS_RECHECK");
+        assertThat(recheck.get("to_design_item_version_id").asString()).isEqualTo(String.valueOf(outVersion));
+        // 후보 텍스트는 본문 JSON 전문이 아니다
+        assertThat(body.get("items").get(0).get("text").asString()).doesNotContain("{");
+    }
+
     // ---- 가짜 AI ----
 
     private static Map<String, Object> queryVector() {

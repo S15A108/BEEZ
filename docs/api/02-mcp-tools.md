@@ -175,6 +175,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
 | 409 | `baseline_conflict` | 선택에 사용한 기준이 저장 전 변경됨. 패킷을 저장하지 않고 최신 기준으로 다시 구성한다 |
+| 409 | `revision_conflict` | `task_id` 작업의 계획이나 상태가 구성하는 동안 바뀜. 패킷을 저장하지 않는다. 다시 조회한다 |
 | 503 | `context_not_ready` | 문서 색인 미준비, 컨텍스트 구성 AI 미설정·실패·시간 초과, 스냅샷이 구성 상한 초과. 패킷을 저장하지 않는다. 검색을 마쳤는데 근거가 0건이면 오류가 아니라 정상 응답의 `unresolved`(`NO_MATCH`)로 표시한다 ([서비스 연결 계약](../design/08-mcp-service-contract.md), [AI-A14](03-ai-internal.md#ai-a14)) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.

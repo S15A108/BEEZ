@@ -331,11 +331,11 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
         // 작업의 지금 계획·상태 그대로 → 저장된다
         assertThat(packets.save(memberAgent, projectId, withRelated(taskId, revision1, "READY")).relatedTasks()).hasSize(1);
-        // 상태가 작업의 지금 상태와 다르면 → 400
+        // 상태가 작업의 지금 상태와 다르면 → 409 (구성 뒤 바뀐 경합, -399)
         assertDenied(() -> packets.save(memberAgent, projectId, withRelated(taskId, revision1, "IN_PROGRESS")),
-                HttpStatus.BAD_REQUEST, "validation_failed");
+                HttpStatus.CONFLICT, "revision_conflict");
 
-        // 계획 리비전 2 를 올린 뒤, 지난 리비전 1 을 관련 작업으로 넘기면 → 400
+        // 계획 리비전 2 를 올린 뒤, 지난 리비전 1 을 관련 작업으로 넘기면 → 409
         String plan = api.planJson("로그인 API v2", api.readsRef("API-02"), "[]").trim();
         String body = plan.substring(0, plan.lastIndexOf('}'))
                 + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": "
@@ -346,7 +346,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         // 상태는 지금 값으로 맞추고 리비전만 지난 것을 넘긴다
         String statusNow = api.jdbc.sql("select status from task where id = :t").param("t", taskId).query(String.class).single();
         assertDenied(() -> packets.save(memberAgent, projectId, withRelated(taskId, revision1, statusNow)),
-                HttpStatus.BAD_REQUEST, "validation_failed");
+                HttpStatus.CONFLICT, "revision_conflict");
         assertThat(packets.save(memberAgent, projectId, withRelated(taskId, revision2, statusNow)).relatedTasks()).hasSize(1);
         assertThat(count("select count(*) from dev_context_packet")).isEqualTo(2);
     }

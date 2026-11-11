@@ -2279,7 +2279,7 @@ BE는 권한과 현재 baseline을 확인한 뒤 검색 결과와 명시적 관�
 
 상태: AI 구현(-131·-132), BE 운영 호출 연결(S15P31A108-399). MCP-01 `get_development_context` 만 부른다. 요청·응답 필드, 크기 상한, AI 오류 코드의 정본은 [#132 패킷 구성 계약](../design/development-context-packet-contract-S15P31A108-132.md)과 [#131 HTTP 초안](../experiments/context-selection-http-S15P31A108-131.md)이다. 이 절은 BE 호출 방식만 적는다.
 
-- **입력 수집(BE `DevelopmentContextComposer`)**: 현재 기준의 APPROVED 설계 전부(`text`=키·제목·승인 content JSON, `metadata.design_items[].description`=content.description), 질의 임베딩으로 고른 현재 기준 문서의 READY 색인 청크 상위 20개(`evidence`), `design_item_dependency` 의 EXPLICIT `CONFIRMED`·`NEEDS_RECHECK` 관계 가운데 시작 항목이 현재 기준에 있는 것(버전은 마지막 CONFIRM·KEEP 이력), `task_id` 가 있으면 현재 계획 참조 가운데 기준 버전과 같은 것과 작업 상태·계획 리비전(DRAFT·계획 없음은 생략). `search_status` 는 검색을 실제로 마쳤을 때만 보내므로 항상 `COMPLETE` 다.
+- **입력 수집(BE `DevelopmentContextComposer`)**: 현재 기준의 APPROVED 설계 전부(`text`=키·제목·API 메서드·경로 또는 데이터 계약 엔티티·설명, 2,500 코드 포인트 이하 — 본문 JSON 전문은 텍스트당 8,192토큰 임베딩 한도를 넘을 수 있어 넣지 않는다. `metadata.design_items[].description` 은 POLICY·CONSTRAINT 에만 넣고, 설명이 없는 그 종류 항목은 경고 로그를 남기고 뺀다), 질의 임베딩으로 고른 현재 기준 문서의 READY 색인 청크 상위 20개(`evidence`), `design_item_dependency` 의 EXPLICIT `CONFIRMED`·`NEEDS_RECHECK` 관계 가운데 시작 항목이 현재 기준에 있는 것(버전은 마지막 CONFIRM·KEEP 이력, 없으면 현재 기준 버전, 대상이 기준 밖이면 그 항목의 최신 버전 — 이력 없는 NEEDS_RECHECK 도 보낸다), `task_id` 가 있으면 현재 계획 참조 가운데 기준 버전과 같은 것과 작업 상태·계획 리비전(DRAFT·계획 없음은 생략). `search_status` 는 검색을 실제로 마쳤을 때만 보내므로 항상 `COMPLETE` 다.
 - **응답 사용**: `packet` 을 #132 4절 매핑으로 `SavePacketArgs` 로 옮겨 `ContextPacketService.save` 가 기준·버전·근거·관련 작업을 다시 확인하고 저장한다. 보낸 스냅샷 밖 버전·근거가 오면 저장하지 않는다.
 - **시간 제한**: 질의 임베딩은 `AI_READ_TIMEOUT`, 선택 호출은 `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT`(기본 40초). AI `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` 는 그보다 짧게 둔다([env](../infra/env.md)).
 - **사용량**: 응답·오류 본문의 `usage` 를 `llm_usage` 에 feature `EMBEDDING` 으로 남긴다(BE 요청 키 접두어 `dev-context-`). 응답을 받지 못한 시간 초과·연결 끊김은 "미확인" 한 줄(`failed`, `tokens_known=false`)을 남긴다.
@@ -2293,6 +2293,7 @@ BE는 권한과 현재 baseline을 확인한 뒤 검색 결과와 명시적 관�
 | 검색 중 기준 변경 | 409 `baseline_conflict` |
 | 스냅샷이 AI 입력 상한 초과(설계 200·관계 1,000·문서 버전 1,000·본문 262,144바이트) | 503 `context_not_ready`. 선택 AI 미호출, 저장 없음. 설계·관계 수는 질의 임베딩 전에 본다 |
 | 설계를 읽은 뒤 검색 사이에 기준 변경 | 409 `baseline_conflict`. 선택 AI 미호출 |
+| 구성하는 동안 `task_id` 작업의 계획·상태 변경 | 409 `revision_conflict`(저장 단계 재확인). 저장 없음 |
 | AI 오류 전부(`selection_not_configured`·`embedding_timeout`·`search_failed`·`validation_failed` 등)·시간 초과·응답 모양 불일치 | 503 `context_not_ready`. 저장 없음, AI code 는 BE 로그에만 |
 | 검색을 마쳤는데 근거 0건 | 정상 패킷, `unresolved` 에 `NO_MATCH` |
 
