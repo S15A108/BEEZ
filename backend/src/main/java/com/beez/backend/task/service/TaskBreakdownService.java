@@ -8,11 +8,17 @@ import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.designitem.support.DesignJson;
+import com.beez.backend.task.dto.TaskBreakdownJobResponse;
+import com.beez.backend.task.dto.TaskBreakdownJobResponse.Status;
 import com.beez.backend.task.dto.TaskBreakdownResponse;
 import com.beez.backend.task.dto.TaskBreakdownResponse.GeneratedTask;
 import com.beez.backend.task.dto.TaskDetailResponse;
+import com.beez.backend.task.service.TaskBreakdownJobRepository.Claim;
+import com.beez.backend.task.service.TaskBreakdownJobRepository.Job;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -21,20 +27,26 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
-/** Generates a project's initial backlog from its approved design, then saves it as one batch. */
+/** Captures an approved design for the worker, which saves the initial backlog as one batch. */
 @Service
 public class TaskBreakdownService {
+    private static final Logger log = LoggerFactory.getLogger(TaskBreakdownService.class);
+    private static final int MAX_ATTEMPTS = 2;
     private static final String USAGE_FEATURE = "BEE_DRAFT";
     private static final int MAX_ITEMS = 80;
     private static final int MAX_DOCUMENTS = 8;
@@ -50,11 +62,14 @@ public class TaskBreakdownService {
     private final AiClient ai;
     private final AiUsageRecorder usage;
     private final JdbcClient jdbc;
+    private final TaskBreakdownJobRepository jobs;
     private final TransactionTemplate transaction;
+    private final int leaseSeconds;
 
     public TaskBreakdownService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskPlanService plans,
                                 TaskAssigneeService assignees, AiClient ai, AiUsageRecorder usage, JdbcClient jdbc,
-                                PlatformTransactionManager transactionManager) {
+                                TaskBreakdownJobRepository jobs, PlatformTransactionManager transactionManager,
+                                @Value("${beez.task-breakdown.read-timeout:85s}") Duration readTimeout) {
         this.access = access;
         this.designLookup = designLookup;
         this.plans = plans;
@@ -62,15 +77,36 @@ public class TaskBreakdownService {
         this.ai = ai;
         this.usage = usage;
         this.jdbc = jdbc;
+        this.jobs = jobs;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.leaseSeconds = Math.toIntExact(readTimeout.plusMinutes(1).toSeconds());
     }
 
-    public TaskBreakdownResponse generate(CallerContext caller, long projectId) {
+    public TaskBreakdownJobResponse accept(CallerContext caller, long projectId) {
         ProjectActor actor = access.requireHumanLeader(caller, projectId);
-        TaskBreakdownResponse existing = savedBatch(projectId);
-        if (existing != null) return existing;
+        return transaction.execute(status -> {
+            lockProject(projectId);
+            access.requireLeaderAfterLock(actor);
+            Job latest = jobs.latest(projectId).orElse(null);
+            if (latest != null && latest.status() != Status.FAILED) return response(latest);
 
-        long baselineId = designLookup.requireCurrentBaseline(projectId);
+            TaskBreakdownResponse existing = savedBatch(projectId);
+            if (existing != null) {
+                Job job = jobs.recordExistingBatch(projectId, Long.parseLong(existing.baselineId()));
+                return response(job, existing.tasks());
+            }
+            long baselineId = designLookup.requireCurrentBaseline(projectId);
+            Snapshot snapshot = captureSnapshot(projectId, baselineId);
+            return response(jobs.enqueue(projectId, baselineId, actor.accountId(), DesignJson.canonical(snapshot)));
+        });
+    }
+
+    public TaskBreakdownJobResponse latest(CallerContext caller, long projectId) {
+        access.requireHumanLeader(caller, projectId);
+        return jobs.latest(projectId).map(this::response).orElse(null);
+    }
+
+    private Snapshot captureSnapshot(long projectId, long baselineId) {
         List<DesignItem> items = approvedDesigns(projectId, baselineId);
         if (items.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "design_items_missing", "승인된 설계 항목이 있어야 작업을 만들 수 있어요.");
@@ -82,12 +118,66 @@ public class TaskBreakdownService {
         List<ApprovedDocument> documents = approvedDocuments(projectId, baselineId);
         List<String> areas = loadMembers(projectId).stream().flatMap(member -> member.areas().stream())
                 .distinct().sorted().limit(MAX_AREAS).toList();
-        String requestKey = "task-breakdown-" + UUID.randomUUID();
-        Map<String, Object> input = modelInput(projectId, requestKey, documents, items, areas);
         Map<String, String> designVersions = items.stream().collect(Collectors.toMap(DesignItem::id, DesignItem::versionId));
-        List<TaskBreakdownDraft> drafts = generateDrafts(projectId, requestKey, input, designVersions, Set.copyOf(areas));
+        return new Snapshot(modelInput(projectId, documents, items, areas), designVersions, areas);
+    }
 
-        return transaction.execute(status -> save(caller, actor, baselineId, drafts));
+    @Transactional(propagation = Propagation.NEVER)
+    public boolean runNext() {
+        Claim claim = transaction.execute(status -> jobs.claim(leaseSeconds, MAX_ATTEMPTS).orElse(null));
+        if (claim == null) return false;
+        long projectId = claim.job().projectId();
+        CallerContext caller = CallerContext.human(claim.requestedBy());
+        try {
+            access.requireHumanLeader(caller, projectId);
+            List<TaskBreakdownDraft> drafts = List.of();
+            if (savedBatch(projectId) == null) {
+                requireBaseline(projectId, claim.job().baselineId());
+                Snapshot snapshot = DesignJson.JSON.readValue(claim.inputSnapshot(), Snapshot.class);
+                String requestKey = "task-breakdown-" + claim.job().id() + "-" + claim.leaseToken();
+                Map<String, Object> input = new HashMap<>(snapshot.input());
+                input.put("request_key", requestKey);
+                drafts = generateDrafts(projectId, requestKey, input, snapshot.designVersions(),
+                        Set.copyOf(snapshot.assignmentAreas()));
+            }
+            complete(claim, caller, drafts);
+        } catch (RuntimeException failure) {
+            // Deployment interruption leaves the lease recoverable by a new worker.
+            if (interrupted(failure)) return true;
+            String code = failure instanceof ApiException api ? api.getCode() : "ai_unavailable";
+            if (!(failure instanceof ApiException)) {
+                log.warn("Task breakdown job {} failed ({})", claim.job().id(), failure.getClass().getSimpleName());
+            }
+            transaction.executeWithoutResult(status -> jobs.fail(claim, code));
+        }
+        return true;
+    }
+
+    private void complete(Claim claim, CallerContext caller, List<TaskBreakdownDraft> drafts) {
+        long projectId = claim.job().projectId();
+        transaction.executeWithoutResult(status -> {
+            lockProject(projectId);
+            if (!jobs.holdLease(claim)) return;
+            ProjectActor actor = access.requireHumanLeader(caller, projectId);
+            access.requireLeaderAfterLock(actor);
+
+            TaskBreakdownResponse saved = savedBatch(projectId);
+            if (saved == null) {
+                requireBaseline(projectId, claim.job().baselineId());
+                saved = save(caller, projectId, claim.job().baselineId(), drafts);
+            }
+            jobs.complete(claim, Long.parseLong(saved.baselineId()));
+        });
+    }
+
+    private void lockProject(long projectId) {
+        if (!designLookup.lockProject(projectId)) throw AccessErrors.notFound("project_missing project=" + projectId);
+    }
+
+    private void requireBaseline(long projectId, long baselineId) {
+        if (baselineId != designLookup.requireCurrentBaseline(projectId)) {
+            throw new ApiException(HttpStatus.CONFLICT, "task_breakdown_stale", "승인 기준이 바뀌었어요. 다시 작업을 생성해 주세요.");
+        }
     }
 
     private List<TaskBreakdownDraft> generateDrafts(long projectId, String requestKey, Map<String, Object> input,
@@ -97,6 +187,7 @@ public class TaskBreakdownService {
         try {
             response = ai.taskBreakdown(input);
         } catch (RestClientException e) {
+            if (interrupted(e)) throw e;
             long duration = elapsed(started);
             boolean timeout = e.getCause() instanceof HttpTimeoutException || e.getCause() instanceof SocketTimeoutException;
             String aiErrorCode = null;
@@ -134,16 +225,7 @@ public class TaskBreakdownService {
         return result;
     }
 
-    private TaskBreakdownResponse save(CallerContext caller, ProjectActor actor, long baselineId, List<TaskBreakdownDraft> drafts) {
-        long projectId = actor.projectId();
-        if (!designLookup.lockProject(projectId)) throw AccessErrors.notFound("project_missing project=" + projectId);
-        access.requireLeaderAfterLock(actor);
-        TaskBreakdownResponse existing = savedBatch(projectId);
-        if (existing != null) return existing;
-        if (baselineId != designLookup.requireCurrentBaseline(projectId)) {
-            throw new ApiException(HttpStatus.CONFLICT, "task_breakdown_stale", "승인 기준이 바뀌었어요. 다시 작업을 생성해 주세요.");
-        }
-
+    private TaskBreakdownResponse save(CallerContext caller, long projectId, long baselineId, List<TaskBreakdownDraft> drafts) {
         List<Member> members = loadMembers(projectId);
         Map<Long, Long> loads = members.stream().collect(Collectors.toMap(Member::id, Member::openTasks));
         jdbc.sql("insert into task_breakdown_batch(project_id, baseline_id) values (:project, :baseline)")
@@ -163,6 +245,16 @@ public class TaskBreakdownService {
             savedIds.put(draft.key(), task.id());
         }
         return savedBatch(projectId);
+    }
+
+    private TaskBreakdownJobResponse response(Job job) {
+        List<GeneratedTask> tasks = job.status() == Status.COMPLETED ? savedBatch(job.projectId()).tasks() : null;
+        return response(job, tasks);
+    }
+
+    private static TaskBreakdownJobResponse response(Job job, List<GeneratedTask> tasks) {
+        return new TaskBreakdownJobResponse(Long.toString(job.id()), Long.toString(job.baselineId()),
+                job.status(), tasks, job.errorCode(), job.retryable());
     }
 
     private TaskBreakdownResponse savedBatch(long projectId) {
@@ -230,7 +322,7 @@ public class TaskBreakdownService {
                 .min(Comparator.<Member>comparingLong(member -> loads.get(member.id())).thenComparingLong(Member::id)).orElse(null);
     }
 
-    private static Map<String, Object> modelInput(long projectId, String key, List<ApprovedDocument> documents,
+    private static Map<String, Object> modelInput(long projectId, List<ApprovedDocument> documents,
                                                    List<DesignItem> items, List<String> areas) {
         int documentShare = documents.isEmpty() ? 0 : DOCUMENT_BUDGET / documents.size();
         List<Map<String, String>> documentInput = documents.stream().map(doc ->
@@ -240,7 +332,7 @@ public class TaskBreakdownService {
         List<Map<String, String>> itemInput = items.stream().map(item -> Map.of("design_item_id", item.id(),
                 "design_item_version_id", item.versionId(), "title", excerpt(item.title(), 300), "kind", item.kind(),
                 "content", excerpt(item.content(), itemShare))).toList();
-        return Map.of("project_id", Long.toString(projectId), "request_key", key, "documents", documentInput,
+        return Map.of("project_id", Long.toString(projectId), "documents", documentInput,
                 "design_items", itemInput, "assignment_areas", areas);
     }
 
@@ -254,6 +346,15 @@ public class TaskBreakdownService {
         return (System.nanoTime() - started) / 1_000_000;
     }
 
+    private static boolean interrupted(Throwable error) {
+        if (Thread.currentThread().isInterrupted()) return true;
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof InterruptedException) return true;
+        }
+        return false;
+    }
+
+    private record Snapshot(Map<String, Object> input, Map<String, String> designVersions, List<String> assignmentAreas) { }
     private record DesignItem(String id, String versionId, String title, String kind, String content) { }
     private record ApprovedDocument(String title, String content) { }
     private record Member(long id, List<String> areas, long openTasks) { }
