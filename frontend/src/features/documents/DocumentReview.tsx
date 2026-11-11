@@ -1,4 +1,8 @@
-import { REVIEW_POLL_MS } from '@/lib/pollIntervals'
+import {
+  FAILED_REVIEW_FOLLOW_MS,
+  REVIEW_POLL_MS,
+  SLOW_POLL_MS,
+} from '@/lib/pollIntervals'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
@@ -100,17 +104,29 @@ export function DocumentReview({
     queryFn: () => documentsApi.workingCopy(projectId, documentId),
     // 다른 창에서 이미 검토 중이면 끝날 때까지 다시 읽는다. 올린 사람이 아닌 팀원은 검토를 부르지 않아
     // review_in_progress를 받지 못하므로, 작업본이 비비 검토 단계(1단계, 반려 아님)면 끝날 때까지 다시 읽는다(PR #142 리뷰).
-    refetchInterval: ({ state: { data } }) =>
-      running ||
-      (data &&
-        data.owner_account_id !== session.data?.id &&
-        data.status !== 'REJECTED' &&
-        reviewStage(data).step === 1 &&
-        !reviewStage(data).stale &&
-        // 실패한 검토는 기다려도 끝나지 않는다. 올린 사람이 다시 시도하거나 고칠 때까지 조회를 멈춘다(S15P31A108-382).
-        data.bee_review_request?.status !== 'FAILED')
-        ? REVIEW_POLL_MS
-        : false,
+    refetchInterval: ({ state: { data, status } }) => {
+      if (running) return REVIEW_POLL_MS
+      // 조회가 실패하면(등록 취소로 404 등) 마지막 결과를 붙잡고 계속 부르지 않는다(S15P31A108-383).
+      if (status === 'error') return false
+      if (!data || data.owner_account_id === session.data?.id) return false
+      const stage = reviewStage(data)
+      if (stage.step !== 1 || stage.stale) return false
+      if (!stage.failed) {
+        // 반려된 문서는 올린 사람이 다시 열 때까지 검토가 돌지 않으므로, 반려 사유로 다시 검토하는 중일 때만 따라간다.
+        // 예전에는 반려면 무조건 멈춰, 재검토가 실패했다가 성공해도 팀원 창이 따라가지 못했다(S15P31A108-383).
+        return data.status !== 'REJECTED' ||
+          data.bee_review_request?.status === 'RUNNING'
+          ? REVIEW_POLL_MS
+          : false
+      }
+      // 실패한 검토는 기다려도 끝나지 않는다(S15P31A108-382). 다만 올린 사람이 다시 검토하면 결과가 생기므로
+      // 실패 뒤 얼마 동안은 가끔 확인한다. 멈추면 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다(S15P31A108-383).
+      // 오래 지난 실패는 열어 둔 창이 끝없이 부르지 않게 멈춘다(창을 다시 보면 새로 읽는다).
+      const failedAt = Date.parse(data.bee_review_request?.updated_at ?? '')
+      return Date.now() - failedAt < FAILED_REVIEW_FOLLOW_MS
+        ? SLOW_POLL_MS
+        : false
+    },
   })
   const current = copy.data
   const currentStage = current && reviewStage(current)

@@ -613,3 +613,39 @@ def test_valid_patches_exceeding_be_result_limit_fail_with_usage(api):
     assert response.status_code == 502, response.text[:1000]
     assert response.json()["usage"][0]["failed"] is True
     assert "result" not in response.json()
+
+
+# S15P31A108-383: the model cited one reference twice with different quotes and
+# the whole review was discarded. Per reference the best source is kept.
+@pytest.mark.parametrize(
+    "order", [("forged", "valid", "bare"), ("bare", "valid", "forged")]
+)
+def test_repeated_source_for_one_reference_keeps_the_verified_quote(api, order):
+    sample = fixture("review-contract-complete.json")
+    suggestion = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
+    suggestion.update(category="CONSISTENCY", severity="MAJOR")
+    valid = suggestion["sources"][0]
+    shapes = {
+        "forged": {"reference_id": valid["reference_id"], "quote": "없는 내용"},
+        "valid": valid,
+        "bare": {"reference_id": valid["reference_id"]},
+    }
+    suggestion["sources"] = [shapes[name] for name in order]
+    api[1].output["suggestions"] = [suggestion]
+    response = post(api, sample["input"])
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["suggestions"][0]["sources"] == [valid]
+
+
+def test_repeated_source_with_only_forged_quotes_is_still_rejected(api):
+    sample = fixture("review-contract-complete.json")
+    suggestion = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
+    suggestion.update(category="CONSISTENCY", severity="MAJOR")
+    ref = suggestion["sources"][0]["reference_id"]
+    suggestion["sources"] = [
+        {"reference_id": ref, "quote": "없는 내용"},
+        {"reference_id": ref, "quote": "또 없는 내용"},
+    ]
+    api[1].output["suggestions"] = [suggestion]
+    response = post(api, sample["input"])
+    assert response.status_code == 502, response.text
