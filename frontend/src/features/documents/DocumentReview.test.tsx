@@ -243,6 +243,90 @@ it('검토가 실패하면 다시 검토하기로만 다시 부른다', async ()
   request.mockRestore()
 })
 
+// S15P31A108-391: 검토는 접수(202)되고 서버 워커가 한다. 올린 사람 화면도 작업본을 다시 읽지 않으면
+// 검토가 끝나도 '검토하고 있어요'에 머문다.
+it('검토가 접수되면 올린 사람 화면도 작업본을 다시 읽어 검토가 끝나면 결과를 보인다', async () => {
+  const state = { done: false, runningReads: 0 }
+  const original = documentsApi.workingCopy.bind(documentsApi)
+  // 검토를 부른 뒤(요청 상태가 생긴 뒤)에는 끝날 때까지 RUNNING으로 돌려준다.
+  const read = vi
+    .spyOn(documentsApi, 'workingCopy')
+    .mockImplementation(async (...args) => {
+      const copy = await original(...args)
+      if (state.done || !copy.bee_review_request) return copy
+      state.runningReads += 1
+      return {
+        ...copy,
+        latest_review: undefined,
+        bee_review_request: {
+          status: 'RUNNING' as const,
+          updated_at: new Date().toISOString(),
+        },
+      }
+    })
+  const request = vi.spyOn(documentsApi, 'requestBeeReview')
+  try {
+    mount(true)
+    await waitFor(() => expect(state.runningReads).toBeGreaterThan(0))
+    expect(
+      screen.getByText(/이 화면을 떠나도 검토가 끝나면 알림으로 알려 드려요/),
+    ).toBeInTheDocument()
+    state.done = true
+    expect(
+      await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
+    ).toBeInTheDocument()
+    expect(request).toHaveBeenCalledTimes(1)
+  } finally {
+    read.mockRestore()
+    request.mockRestore()
+  }
+})
+
+// S15P31A108-391: 창을 다시 열거나 새로고침했을 때 검토가 이미 돌고 있으면 새로 부르지 않는다(AI 검토가 두 번 돈다).
+it('이미 도는 검토가 있는 문서를 다시 열면 부르지 않고 지난 시간과 함께 기다린다', async () => {
+  const original = documentsApi.workingCopy.bind(documentsApi)
+  const startedAt = new Date(Date.now() - 70_000).toISOString()
+  const read = vi
+    .spyOn(documentsApi, 'workingCopy')
+    .mockImplementation(async (...args) => ({
+      ...(await original(...args)),
+      latest_review: undefined,
+      bee_review_request: { status: 'RUNNING' as const, updated_at: startedAt },
+    }))
+  const request = vi.spyOn(documentsApi, 'requestBeeReview')
+  try {
+    mount(true)
+    expect(await screen.findByText(/1분 1\d초 지났어요/)).toBeInTheDocument()
+    expect(
+      screen.getByText('문서가 길면 2분까지 걸릴 수 있어요.'),
+    ).toBeInTheDocument()
+    // 끝날 때까지 다시 읽는다.
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(2))
+    expect(request).not.toHaveBeenCalled()
+  } finally {
+    read.mockRestore()
+    request.mockRestore()
+  }
+})
+
+// S15P31A108-391: 실패한 검토는 기다려도 끝나지 않는다. 올린 사람 화면이 실패 뒤에도 계속 부르면 안 된다.
+it('올린 사람 화면은 검토가 실패하면 작업본 다시 읽기를 멈춘다', async () => {
+  localStorage.setItem('beez.mock.reviewRun', 'timeout')
+  const read = vi.spyOn(documentsApi, 'workingCopy')
+  try {
+    mount(true)
+    expect(
+      await screen.findByText('비비 검토 시간이 초과됐어요'),
+    ).toBeInTheDocument()
+    const reads = read.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, REVIEW_POLL_MS * 5))
+    expect(read).toHaveBeenCalledTimes(reads)
+  } finally {
+    localStorage.removeItem('beez.mock.reviewRun')
+    read.mockRestore()
+  }
+})
+
 it('올린 사람이 아니면 검토를 부르지 않고 자동 검토 안내를 본다', async () => {
   await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
   const request = vi.spyOn(documentsApi, 'requestBeeReview')
