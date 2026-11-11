@@ -45,6 +45,12 @@ public class AiClient {
      */
     static final Duration DEFAULT_REVIEW_WORKER_READ_TIMEOUT = Duration.ofSeconds(120);
     static final Duration DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT = Duration.ofSeconds(105);
+    /**
+     * MCP-01 개발 컨텍스트 선택(S15P31A108-399). 에이전트 도구 호출 안에서 기다리는 동기 호출이다. /mcp 는 nginx 제한이 1시간이라
+     * 60초 사슬에 묶이지 않지만 에이전트가 오래 멈추지 않게 둔다. AI 의 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS(권장 30초)보다 길어야
+     * 정상 선택을 먼저 끊지 않는다.
+     */
+    static final Duration DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT = Duration.ofSeconds(40);
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -54,17 +60,19 @@ public class AiClient {
     private final RestClient reviewRest;
     private final RestClient reviewWorkerRest;
     private final RestClient taskBreakdownRest;
+    private final RestClient developmentContextRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
 
     public AiClient(BeezProperties props) {
         this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_REVIEW_READ_TIMEOUT,
-                DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT, DEFAULT_REVIEW_WORKER_READ_TIMEOUT);
+                DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT, DEFAULT_REVIEW_WORKER_READ_TIMEOUT, DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT);
     }
 
     public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
                     Duration taskBreakdownReadTimeout) {
-        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, DEFAULT_REVIEW_WORKER_READ_TIMEOUT);
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, DEFAULT_REVIEW_WORKER_READ_TIMEOUT,
+                DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT);
     }
 
     @Autowired
@@ -73,7 +81,8 @@ public class AiClient {
                     @Value("${beez.planning.draft-read-timeout:170s}") Duration draftReadTimeout,
                     @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout,
                     @Value("${beez.task-breakdown.read-timeout:105s}") Duration taskBreakdownReadTimeout,
-                    @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout) {
+                    @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout,
+                    @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
@@ -88,6 +97,7 @@ public class AiClient {
             throw new IllegalArgumentException("beez.task-breakdown.read-timeout must be positive");
         }
         this.taskBreakdownRest = client(ai, taskBreakdownReadTimeout);
+        this.developmentContextRest = client(ai, max(ai.readTimeout(), developmentContextReadTimeout));
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
         this.chatHttp = http(ai);
@@ -213,6 +223,16 @@ public class AiClient {
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> beeChat(java.util.Map<String, Object> input, Duration readTimeout) {
         return client(chatAi, chatHttp, readTimeout).post().uri("/v1/bee/chat").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /**
+     * MCP-01 개발 컨텍스트 선택·패킷 구성 ({@code POST /v1/development-context-selections}, -131·-132 계약). 본문은 부르는 쪽이
+     * 크기 상한을 확인한 JSON 바이트다. 실패 분류는 부르는 쪽(DevelopmentContextComposer)이 한다.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> developmentContextSelection(byte[] body) {
+        return developmentContextRest.post().uri("/v1/development-context-selections")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(body).retrieve().body(java.util.Map.class);
     }
 
     @SuppressWarnings("unchecked")

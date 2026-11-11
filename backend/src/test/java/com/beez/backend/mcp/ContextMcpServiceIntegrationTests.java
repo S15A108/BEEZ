@@ -33,8 +33,8 @@ import org.springframework.http.HttpStatus;
 
 /**
  * MCP-01·05·06·07 업무 서비스 (S15P31A108-166). 서비스 직접 호출.
- * 패킷 내용 구성(박상은 -131·-132)은 아직 없어, 도구 입구는 503 으로 아무것도 저장하지 않는지 보고
- * 구성 결과가 있을 때의 저장 규칙은 패킷 저장 서비스에 구성 결과를 직접 넣어 확인한다.
+ * 패킷 내용 구성(AI -131·-132 연결, -399)은 DevelopmentContextMcpIntegrationTests 가 본다. 여기서는 도구 입구의 권한·인수 확인과
+ * 검색 미준비 503, 구성 결과가 있을 때의 저장 규칙(패킷 저장 서비스에 구성 결과를 직접 넣어)을 확인한다.
  */
 class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
@@ -96,8 +96,9 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void getDevelopmentContext_withoutCompositionModule_is503_andSavesNothing() {
-        // 구성 모듈(박상은) 연결 전: 빈 패킷을 "근거 없음"처럼 주지 않고 503, 저장도 하지 않는다
+    void getDevelopmentContext_searchNotConfigured_is503_andSavesNothing() {
+        // 시험 프로필은 임베딩 프로필이 미설정이라 근거 검색을 할 수 없다: 빈 패킷을 "근거 없음"처럼 주지 않고 503, 저장도 하지 않는다.
+        // 구성 성공·근거 0건·AI 실패 구분은 DevelopmentContextMcpIntegrationTests (S15P31A108-399)
         assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
                 new GetDevelopmentContextArgs("로그인 화면 구현", String.valueOf(projectId), null)),
                 HttpStatus.SERVICE_UNAVAILABLE, "context_not_ready");

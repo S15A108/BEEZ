@@ -136,7 +136,10 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         assertThat(count("select count(*) from task")).isEqualTo(before);
     }
 
-    /** 깨지면: 구성 모듈 미연결을 "근거 없음"으로 읽게 하거나 빈 패킷을 남긴다 (08 계약 3절 MCP-01 503 context_not_ready). */
+    /**
+     * 깨지면: 검색 미준비(시험 프로필은 임베딩 프로필 미설정)를 "근거 없음"으로 읽게 하거나 빈 패킷을 남긴다
+     * (08 계약 3절 MCP-01 503 context_not_ready). 구성 성공 경로는 DevelopmentContextMcpIntegrationTests.
+     */
     @Test
     void getDevelopmentContext_notReady_isFailureAndSavesNothing() {
         CallToolResult result = call(member, "get_development_context",
