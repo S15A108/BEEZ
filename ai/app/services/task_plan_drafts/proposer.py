@@ -333,31 +333,17 @@ class LLMPlanProposer:
         return PlanProposal(draft, response.model, response.usage, selected_request)
 
     def _check_limits(self, draft: ModelDraft) -> None:
+        # 개수 예산만 확인한다. 글자 수 예산은 프롬프트의 안내이고, 응답 계약의 상한은 ModelDraft 가 이미 지킨다.
         limits = self._output_limits
         assert limits is not None
         checks = [
-            len(draft.plan.goal) <= limits.goal_chars,
-            len(draft.plan.approach) <= limits.approach_chars,
             len(draft.evidence) <= limits.evidence_items,
             len(draft.design_ref_candidates) <= limits.link_candidates,
             len(draft.new_design_items) <= limits.new_items,
             len(draft.unlinked) <= limits.unlinked_items,
+            len(draft.plan.included_scope) <= limits.list_items,
+            len(draft.plan.excluded_scope) <= limits.list_items,
+            len(draft.plan.completion_criteria) <= limits.list_items,
         ]
-        for entries in (
-            draft.plan.included_scope,
-            draft.plan.excluded_scope,
-            draft.plan.completion_criteria,
-        ):
-            checks.append(len(entries) <= limits.list_items)
-            checks.extend(len(text) <= limits.list_entry_chars for text in entries)
-        checks.extend(
-            len(item.reason) <= limits.reason_chars
-            for item in draft.design_ref_candidates
-        )
-        quotes = [
-            *draft.evidence,
-            *(quote for item in draft.new_design_items for quote in item.evidence),
-        ]
-        checks.extend(len(item.quote) <= limits.quote_chars for item in quotes)
         if not all(checks):
             raise ValueError("Model exceeded configured draft budgets")

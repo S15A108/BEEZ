@@ -262,14 +262,15 @@ def test_configured_budgets_reach_prompt_provider_and_output_validation():
         "reasoning_effort": "none",
     }
     assert "goal 20 characters" in provider.requests[0].messages[0].content
-    # 예산을 조금 넘긴 칸은 잘라 쓰지 않고 비워 둔다. 나머지 초안은 살린다.
-    output["plan"]["goal"] = "가" * 21
-    response = call(RecordingProvider(output), settings_kwargs=settings)
-    assert response.status_code == 200
-    assert response.json()["result"]["plan"]["goal"] == ""
-    assert response.json()["result"]["plan"]["approach"] != ""
-    # 예산을 크게(2배 초과) 넘기면 모델이 지시를 따르지 않은 것으로 보고 거절한다.
-    output["plan"]["goal"] = "가" * 41
+    # 글자 수 예산은 프롬프트의 안내다. 넘겨도 이미 나간 출력이라 버리지 않고 그대로 살린다(자르지도 않는다).
+    for length in (21, 41, 400):
+        output["plan"]["goal"] = "가" * length
+        response = call(RecordingProvider(output), settings_kwargs=settings)
+        assert response.status_code == 200
+        assert response.json()["result"]["plan"]["goal"] == "가" * length
+        assert response.json()["result"]["plan"]["approach"] != ""
+    # 응답 계약의 상한(목표 400자)을 넘기면 지금처럼 거절한다.
+    output["plan"]["goal"] = "가" * 401
     response = call(RecordingProvider(output), settings_kwargs=settings)
     assert response.status_code == 502
     assert response.json()["usage"][0]["failed"] is True
@@ -296,16 +297,43 @@ def test_zero_candidate_budget_drops_the_candidates_and_keeps_the_rest():
     assert [item["field"] for item in result["evidence"]] == ["goal", "excluded_scope"]
 
 
-def test_overlong_quotes_are_dropped_never_cut():
+def test_text_longer_than_the_character_budgets_is_kept_verbatim():
     output = model_output()
     long_quote = "고객은 앱에서 메뉴를 고르고 결제하면 주문 번호를 받는다"
     output["evidence"][0]["quote"] = long_quote
-    # 인용 예산을 인용보다 짧게 두면 그 인용만 버려지고 글은 근거 없음으로 표시된다.
-    settings = {"task_plan_drafts_quote_chars": str(len(long_quote) - 1)}
-    result = call(RecordingProvider(output), settings_kwargs=settings).json()["result"]
-    assert [item["field"] for item in result["evidence"]] == ["excluded_scope"]
-    assert "goal" in result["unsupported_fields"]
-    assert all(len(item["quote"]) < len(long_quote) for item in result["evidence"])
+    output["plan"]["approach"] = "나" * 300
+    output["plan"]["included_scope"] = ["다" * 150, "라" * 150]
+    output["design_ref_candidates"][0]["reason"] = "마" * 150
+    settings = {
+        "task_plan_drafts_quote_chars": str(len(long_quote) - 1),
+        "task_plan_drafts_approach_chars": "240",
+        "task_plan_drafts_list_entry_chars": "100",
+        "task_plan_drafts_reason_chars": "100",
+    }
+    response = call(RecordingProvider(output), settings_kwargs=settings)
+    assert response.status_code == 200
+    result = response.json()["result"]
+    # 예산보다 긴 인용·접근 방법·목록 항목·이유가 잘리거나 사라지지 않는다. 인용은 원문 확인이 그대로 된다.
+    first = result["evidence"][0]
+    assert (first["field"], first["quote"]) == ("goal", long_quote)
+    assert "goal" not in result["unsupported_fields"]
+    assert result["plan"]["approach"] == "나" * 300
+    assert result["plan"]["included_scope"] == ["다" * 150, "라" * 150]
+    assert result["design_ref_candidates"][0]["reason"] == "마" * 150
+
+
+def test_text_beyond_the_contract_ceilings_is_still_rejected():
+    for patch in (
+        lambda o: o["plan"].update(approach="나" * 601),
+        lambda o: o["plan"].update(included_scope=["다" * 201]),
+        lambda o: o["evidence"][0].update(quote="가" * 1001),
+        lambda o: o["design_ref_candidates"][0].update(reason="마" * 201),
+    ):
+        output = model_output()
+        patch(output)
+        response = call(RecordingProvider(output))
+        assert response.status_code == 502
+        assert response.json()["usage"][0]["failed"] is True
 
 
 def test_extra_list_entries_are_dropped_from_the_end_and_logged_without_content(
