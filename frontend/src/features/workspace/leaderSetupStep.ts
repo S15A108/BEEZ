@@ -24,7 +24,8 @@ export function leaderSetupStep({
         : started
           ? `아까 건너뛰었어요 · ${[
               !invited && '팀원을 부르면 같이 작업 계획을 올릴 수 있어요.',
-              !agentConnected && '에이전트는 설정 › 에이전트에서 연결해요.',
+              !agentConnected &&
+                '에이전트는 설정 › 내 에이전트 관리에서 연결해요.',
             ]
               .filter(Boolean)
               .join(' ')}`

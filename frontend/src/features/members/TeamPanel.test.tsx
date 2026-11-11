@@ -523,7 +523,7 @@ it('다시 보내는 중에는 그 줄의 버튼만 끈다', async () => {
 })
 
 // PR #72 재전수 SECOND-AMP-01: 역할·담당 영역은 서버가 팀장만 고치게 해서, 팀원에게는 본인 것도 고치기 버튼이 없다.
-it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 않고 mock도 403으로 거절한다', async () => {
+it('팀원에게는 본인 역할·담당 도메인 고치기 버튼을 보이지 않고 mock도 403으로 거절한다', async () => {
   await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
   render(
     <QueryClientProvider client={client}>
@@ -534,7 +534,7 @@ it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 �
   )
   expect((await screen.findAllByText(/김동료/)).length).toBeGreaterThan(0)
   expect(
-    screen.queryByRole('button', { name: '역할·담당 영역' }),
+    screen.queryByRole('button', { name: '역할·담당 도메인' }),
   ).not.toBeInTheDocument()
   const account = await authApi.me()
   const me = (await membersApi.list('101')).items.find(
@@ -802,4 +802,82 @@ it('추방이 작업 상태 변경으로 409면 다시 시도하라고 알리고
   await user.click(screen.getByRole('button', { name: '추방' }))
   expect(await screen.findByText(RETRY_MESSAGE)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '추방' })).toBeEnabled()
+})
+
+// S15P31A108-377(사용자 보고 11-10): 팀장에게 '프로젝트 나가기' 자리에 '프로젝트 삭제'·'프로젝트 제거'가 보였다.
+// MEM-A10은 팀장도 팀장을 넘기고 나가게 한다. 나가기 창 제목은 팀장도 '프로젝트 나가기'이고, 삭제는 그 안의 다른 길이다.
+it('팀장의 나가기 창 제목은 프로젝트 나가기이고 위임하고 나가기와 프로젝트 삭제를 따로 보인다', async () => {
+  renderRemoveView(true)
+  expect(
+    await screen.findByRole('heading', { name: '프로젝트 나가기', level: 2 }),
+  ).toBeInTheDocument()
+  expect(screen.queryByText('프로젝트 제거')).not.toBeInTheDocument()
+  expect(
+    await screen.findByRole('region', { name: '위임하고 나가기' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '프로젝트 삭제' }),
+  ).toBeInTheDocument()
+})
+
+it('혼자 쓰는 프로젝트의 팀장에게는 팀장을 넘길 팀원이 없어 나갈 수 없다고 알리고 삭제만 보인다', async () => {
+  const project = await projectsApi.create({ name: '혼자 프로젝트' })
+  renderRemoveView(true, project.id)
+  expect(
+    await screen.findByText(
+      '팀장을 넘길 팀원이 없어 지금은 나갈 수 없어요. 팀 관리에서 팀원을 초대하고 팀장을 넘기면 나갈 수 있어요.',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '프로젝트 삭제' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('region', { name: '위임하고 나가기' }),
+  ).not.toBeInTheDocument()
+})
+
+// S15P31A108-378(사용자 보고 11-10): 표시 역할·담당 도메인이 무엇을 쓰는 칸인지 몰랐다. 팀원 한 명을 고칠 때 여는 수정 화면의
+// 두 칸 아래에 작은 글로 알린다. 팀 목록 위에 두었던 설명은 사용자 요청(11-10)으로 빼고 목록은 간단하게 둔다.
+// 3D 이름표는 이름(에이전트는 이름 · 상태)만 보여 두 칸이 나오지 않는다(office-actors.ts). 보이는 곳만 적는다.
+const roleHint =
+  '팀에서 맡은 역할 이름이에요(예: 프론트엔드). 팀 목록의 이름 아래에 보여요.'
+const domainHint =
+  '주로 맡는 기능이에요(예: 게시판 작업). 팀 목록과 사무실 팀원 목록에 보여요.'
+
+it('팀 목록 위에는 표시 역할·담당 도메인 설명을 두지 않는다', async () => {
+  renderTeam()
+  await screen.findByText('김동료')
+  expect(
+    screen.queryByRole('group', { name: '표시 역할과 담당 도메인' }),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText(roleHint)).not.toBeInTheDocument()
+  expect(screen.queryByText(domainHint)).not.toBeInTheDocument()
+})
+
+it('팀원 줄 ⋯의 역할 수정 화면에서 표시 역할·담당 도메인 칸 아래에 뜻이 보인다', async () => {
+  const user = userEvent.setup()
+  renderTeam()
+  await screen.findByText('김동료')
+  await user.click(screen.getByRole('button', { name: '김동료 더보기' }))
+  await user.click(await screen.findByRole('menuitem', { name: '역할 수정' }))
+  const sheet = await screen.findByRole('dialog', {
+    name: '김동료 · 역할 수정',
+  })
+  expect(within(sheet).getByLabelText('표시 역할')).toBeInTheDocument()
+  expect(within(sheet).getByText(roleHint)).toBeInTheDocument()
+  expect(within(sheet).getByLabelText('담당 도메인')).toBeInTheDocument()
+  expect(within(sheet).getByText(domainHint)).toBeInTheDocument()
+})
+
+it('역할 수정 창의 표시 역할·담당 도메인 칸 아래에 짧은 설명이 보인다', async () => {
+  const user = userEvent.setup()
+  renderTeam()
+  await user.click(
+    await screen.findByRole('button', { name: '역할·담당 도메인' }),
+  )
+  const sheet = await screen.findByRole('dialog')
+  expect(within(sheet).getByLabelText('표시 역할')).toBeInTheDocument()
+  expect(within(sheet).getByText(roleHint)).toBeInTheDocument()
+  expect(within(sheet).getByText(domainHint)).toBeInTheDocument()
+  expect(within(sheet).queryByText(/3D 이름표/)).not.toBeInTheDocument()
 })
