@@ -54,7 +54,9 @@ export function useOfficeScreens(
     queryFn: () =>
       planningApi.items(projectId, { status: 'APPROVED', limit: 100 }),
     // ponytail: 기준은 승인할 때 바뀌고 승인 성공이 프로젝트 쿼리를 무효화해 다시 읽는다. 다른 브라우저의 승인은 창에 다시 들어올 때 맞춘다.
+    // staleTime이 없으면 업무 창을 닫을 때(enabled false → true)마다 다시 부른다(PR #269 리뷰).
     enabled: active && started,
+    staleTime: BACKGROUND_POLL_MS,
   })
   const open = useQuery({
     queryKey: ['projects', projectId, 'hud-review'],
@@ -69,10 +71,13 @@ export function useOfficeScreens(
       queryKey: ['projects', projectId, 'change', proposal.id],
       queryFn: () => changesApi.get(projectId, proposal.id),
       enabled: active,
+      staleTime: BACKGROUND_POLL_MS,
     })),
   })
   const proposals = list.data?.pages.flatMap((page) => page.items)
   const changed = details.map((query) => query.data?.proposal.items)
+  // 실패한 상세는 바꾸는 항목 없이 세고, 받는 중인 상세만 기다린다. 상세는 주기 재조회가 없어 실패를 기다리면 TV가 멈춘다.
+  const detailsSettled = details.every((query) => query.data || query.isError)
   // 렌더마다 새 객체지만 사무실 화면은 그리는 값이 같으면 다시 그리지 않는다(OfficeWorkSurface 서명 비교).
   return {
     version: baselineVersion,
@@ -82,7 +87,7 @@ export function useOfficeScreens(
         : undefined,
     design: !started
       ? null
-      : items.data && open.data && changed.every(Boolean)
+      : items.data && open.data && detailsSettled
         ? designBoard(
             baselineVersion,
             items.data.items,
