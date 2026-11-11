@@ -107,19 +107,188 @@ public class DesignDraftRepository {
         p.put("project", project); p.put("limit", limit);
         String filter = "";
         if (version != null) { filter = " AND document_version_id=:version"; p.put("version", version); }
-        return jdbc.sql("SELECT id,project_id,document_version_id,status,result_meta,error_code,retryable,created_at,updated_at FROM design_draft_job WHERE project_id=:project"
+        return jdbc.sql("SELECT id,project_id,document_version_id,status,result_meta,error_code,retryable,created_at,updated_at,mode,trigger_kind,attempt_no FROM design_draft_job WHERE project_id=:project"
                 + filter + " ORDER BY id DESC LIMIT :limit").params(p).query().listOfRows();
     }
 
     // ---- 후보 ----
 
     public void insertCandidate(Map<String, Object> c) {
+        var p = new HashMap<>(c);
+        p.putIfAbsent("partNo", null); p.putIfAbsent("fingerprint", null); p.putIfAbsent("overlapKind", null); p.putIfAbsent("overlapRef", null);
         jdbc.sql("""
                 INSERT INTO design_draft_candidate(job_id,project_id,candidate_key,change_kind,kind,base_design_item_version_id,base_status,
-                  before_content,before_hash,proposed_after,changed_fields,conflicting_fields,sources,answer_refs,support,rationale)
+                  before_content,before_hash,proposed_after,changed_fields,conflicting_fields,sources,answer_refs,support,rationale,
+                  part_no,fingerprint,overlap_kind,overlap_ref)
                 VALUES(:job,:project,:key,:change,:kind,:base,:baseStatus,cast(:before AS jsonb),:beforeHash,cast(:after AS jsonb),
-                  cast(:changed AS jsonb),cast(:conflicting AS jsonb),cast(:sources AS jsonb),cast(:refs AS jsonb),:support,:rationale)
-                """).params(c).update();
+                  cast(:changed AS jsonb),cast(:conflicting AS jsonb),cast(:sources AS jsonb),cast(:refs AS jsonb),:support,:rationale,
+                  :partNo,:fingerprint,:overlapKind,:overlapRef)
+                """).params(p).update();
+    }
+
+    // ---- 문서 단독 모드(S15P31A108-389) ----
+
+    public long insertDocumentOnlyJob(long project, long version, long account, String requestKey, Object snapshot, String hash, String trigger) {
+        return jdbc.sql("""
+                INSERT INTO design_draft_job(project_id,document_version_id,requested_by,request_key,status,input_snapshot,input_hash,mode,trigger_kind)
+                VALUES(:project,:version,:account,:key,'PENDING',cast(:snapshot AS jsonb),:hash,'DOCUMENT_ONLY',:trigger) RETURNING id
+                """).param("project", project).param("version", version).param("account", account).param("key", requestKey)
+                .param("snapshot", canonical(snapshot)).param("hash", hash).param("trigger", trigger).query(Long.class).single();
+    }
+
+    public void insertPart(long job, int partNo, int start, int end) {
+        jdbc.sql("INSERT INTO design_draft_job_part(job_id,part_no,start_line,end_line) VALUES(:job,:no,:start,:end)")
+                .param("job", job).param("no", partNo).param("start", start).param("end", end).update();
+    }
+
+    public List<Map<String, Object>> parts(long job) {
+        return jdbc.sql("SELECT * FROM design_draft_job_part WHERE job_id=:job ORDER BY part_no").param("job", job).query().listOfRows();
+    }
+
+    public Optional<Map<String, Object>> nextPendingPart(long job) {
+        return jdbc.sql("SELECT * FROM design_draft_job_part WHERE job_id=:job AND status='PENDING' ORDER BY part_no LIMIT 1")
+                .param("job", job).query().listOfRows().stream().findFirst();
+    }
+
+    public void completePart(long job, int partNo, Object usage) {
+        jdbc.sql("UPDATE design_draft_job_part SET status='COMPLETED',error_code=null,retryable=false,usage=cast(:usage AS jsonb),updated_at=now() WHERE job_id=:job AND part_no=:no")
+                .param("usage", canonical(usage == null ? List.of() : usage)).param("job", job).param("no", partNo).update();
+    }
+
+    public void failPart(long job, int partNo, String code, boolean retryable, Object usage) {
+        jdbc.sql("UPDATE design_draft_job_part SET status='FAILED',error_code=:code,retryable=:retryable,usage=cast(:usage AS jsonb),updated_at=now() WHERE job_id=:job AND part_no=:no")
+                .param("code", code).param("retryable", retryable).param("usage", canonical(usage == null ? List.of() : usage))
+                .param("job", job).param("no", partNo).update();
+    }
+
+    /** 긴 작업 중에 lease 를 연장한다. 아직 내 것일 때만 새 lease 를 돌려준다. */
+    public Optional<Object> renewLease(long id, Object lease, int seconds) {
+        return jdbc.sql("UPDATE design_draft_job SET lease_until=now()+make_interval(secs=>:lease),updated_at=now() WHERE id=:id AND status='RUNNING' AND lease_until=:old RETURNING lease_until")
+                .param("lease", seconds).param("id", id).param("old", lease).query().listOfRows().stream().findFirst().map(row -> row.get("lease_until"));
+    }
+
+    public Optional<Map<String, Object>> latestDocumentOnlyJob(long version) {
+        return jdbc.sql("SELECT * FROM design_draft_job WHERE document_version_id=:version AND mode='DOCUMENT_ONLY' ORDER BY id DESC LIMIT 1")
+                .param("version", version).query().listOfRows().stream().findFirst();
+    }
+
+    /** 실패한 작업을 다시 대기시키고 실패한 부분만 되돌린다. 성공한 부분과 그 후보는 그대로 둔다. */
+    public void retryFailedJob(long id) {
+        jdbc.sql("UPDATE design_draft_job_part SET status='PENDING',error_code=null,retryable=false,updated_at=now() WHERE job_id=:id AND status='FAILED'")
+                .param("id", id).update();
+        jdbc.sql("UPDATE design_draft_job SET status='PENDING',error_code=null,retryable=false,attempt_no=attempt_no+1,lease_until=null,updated_at=now() WHERE id=:id AND status='FAILED'")
+                .param("id", id).update();
+    }
+
+    public boolean hasCandidateKey(long job, String key) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM design_draft_candidate WHERE job_id=:job AND candidate_key=:key)")
+                .param("job", job).param("key", key).query(Boolean.class).single();
+    }
+
+    /** 이 프로젝트에서 지금 살아 있는 설계 항목(항목당 최신 DRAFT/APPROVED 한 버전). 지문 비교용. */
+    public List<Map<String, Object>> liveItems(long project) {
+        return jdbc.sql("""
+                SELECT DISTINCT ON (i.id) v.id AS design_item_version_id,i.kind,v.content
+                  FROM design_item i JOIN design_item_version v ON v.design_item_id=i.id
+                 WHERE i.project_id=:project AND i.retired_at IS NULL AND v.status IN ('DRAFT','APPROVED')
+                 ORDER BY i.id,(v.status='DRAFT') DESC,v.version_no DESC
+                """).param("project", project).query().listOfRows();
+    }
+
+    /** 다른 작업에서 아직 결정하지 않은(PENDING) 후보의 지문. 문서끼리 같은 후보를 겹침으로 표시하는 데 쓴다. */
+    public List<Map<String, Object>> pendingFingerprints(long project, long exceptJob) {
+        // 같은 문서의 더 새 버전이 이미 승인되어 대체된 버전의 작업은 비교에서 뺀다(새 버전의 후보가 옛 후보에 밀려 접히지 않게).
+        return jdbc.sql("""
+                SELECT c.id,c.fingerprint FROM design_draft_candidate c
+                  JOIN design_draft_job j ON j.id=c.job_id JOIN document_version v ON v.id=j.document_version_id
+                 WHERE c.project_id=:project AND c.job_id<>:job AND c.fingerprint IS NOT NULL AND c.status='PENDING'
+                   AND NOT EXISTS (SELECT 1 FROM document_version n WHERE n.document_id=v.document_id AND n.status='APPROVED' AND n.version_no>v.version_no)
+                 ORDER BY c.id
+                """).param("project", project).param("job", exceptJob).query().listOfRows();
+    }
+
+    /** 같은 문서에 더 새 버전이 승인되어 이 버전이 대체되었는지. 대체된 버전의 후보는 채택하지 않는다. */
+    public boolean isSupersededVersion(long version) {
+        return jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM document_version v JOIN document_version n ON n.document_id=v.document_id
+                               WHERE v.id=:version AND n.status='APPROVED' AND n.version_no>v.version_no)
+                """).param("version", version).query(Boolean.class).single();
+    }
+
+    /** 이미 채택하거나 폐기한 후보의 지문. */
+    public List<Map<String, Object>> decidedFingerprints(long project) {
+        return jdbc.sql("""
+                SELECT id,fingerprint,status FROM design_draft_candidate
+                 WHERE project_id=:project AND fingerprint IS NOT NULL AND status IN ('ADOPTED','DISCARDED') ORDER BY id
+                """).param("project", project).query().listOfRows();
+    }
+
+    /**
+     * 자동 접수 대상 프로젝트 id: 기준이 없고 팀장이 있으며 4종 문서가 모두 최신 승인본(작성 중 사본 없음)인 프로젝트 중,
+     * 문서 단독 작업이 아직 없는 버전이 하나라도 있는 프로젝트. {@code afterProject} 보다 큰 id 부터 {@code limit} 개씩 돌려준다
+     * (준비가 덜 된 프로젝트가 앞자리를 계속 차지하지 않게 호출한 쪽이 마지막 id 를 기억해 돌려 가며 본다).
+     * {@code approvedAfter} 가 있으면 4종이 모두 갖춰진 시점(최신 승인본 중 가장 늦은 승인 시각)이 그 뒤인 프로젝트만 본다.
+     */
+    public List<Long> autoTargetProjects(long afterProject, int limit, java.time.Instant approvedAfter) {
+        return jdbc.sql("""
+                WITH latest AS (
+                  SELECT DISTINCT ON (d.id) d.project_id,d.id AS document_id,d.type,v.id AS version_id,v.approved_at
+                    FROM document d JOIN document_version v ON v.document_id=d.id
+                   WHERE d.discarded_at IS NULL AND v.status='APPROVED'
+                     AND NOT EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id AND w.status<>'APPROVED')
+                   ORDER BY d.id,v.version_no DESC)
+                SELECT DISTINCT l.project_id FROM latest l JOIN project p ON p.id=l.project_id
+                 WHERE l.project_id>:after AND p.current_baseline_id IS NULL AND p.archived_at IS NULL
+                   AND EXISTS (SELECT 1 FROM project_member m JOIN account a ON a.id=m.account_id
+                                WHERE m.project_id=l.project_id AND m.role='LEADER' AND m.active=true AND a.deleted_at IS NULL)
+                   AND (SELECT count(DISTINCT x.type) FROM latest x WHERE x.project_id=l.project_id
+                         AND x.type IN ('PLAN','REQ_SPEC','ERD','API_SPEC'))=4
+                   AND (cast(:since AS timestamptz) IS NULL
+                        OR (SELECT max(x.approved_at) FROM latest x WHERE x.project_id=l.project_id) >= cast(:since AS timestamptz))
+                   AND NOT EXISTS (SELECT 1 FROM design_draft_job j WHERE j.document_version_id=l.version_id AND j.mode='DOCUMENT_ONLY')
+                 ORDER BY l.project_id LIMIT :limit
+                """).param("after", afterProject).param("limit", limit)
+                .param("since", approvedAfter == null ? null : java.time.OffsetDateTime.ofInstant(approvedAfter, java.time.ZoneOffset.UTC), java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
+                .query(Long.class).list();
+    }
+
+    public Optional<Long> firstLeader(long project) {
+        return jdbc.sql("""
+                SELECT m.account_id FROM project_member m JOIN account a ON a.id=m.account_id
+                 WHERE m.project_id=:project AND m.role='LEADER' AND m.active=true AND a.deleted_at IS NULL ORDER BY m.account_id LIMIT 1
+                """).param("project", project).query(Long.class).optional();
+    }
+
+    public java.util.Set<String> jobFingerprints(long job) {
+        return new java.util.HashSet<>(jdbc.sql("SELECT fingerprint FROM design_draft_candidate WHERE job_id=:job AND fingerprint IS NOT NULL")
+                .param("job", job).query(String.class).list());
+    }
+
+    /** 프로젝트의 문서마다 최신 승인본 버전(폐기 문서 제외). */
+    public List<Map<String, Object>> latestApprovedVersions(long project) {
+        return jdbc.sql("""
+                SELECT DISTINCT ON (d.id) v.id AS version_id,d.type FROM document d JOIN document_version v ON v.document_id=d.id
+                 WHERE d.project_id=:project AND d.discarded_at IS NULL AND v.status='APPROVED'
+                   AND NOT EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id AND w.status<>'APPROVED')
+                 ORDER BY d.id,v.version_no DESC
+                """).param("project", project).query().listOfRows();
+    }
+
+    /** 이 문서 버전에 문서 단독 작업이 이미 있는지(자동·수동 구분 없이). 자동 접수가 팀장이 수동으로 만든 버전에 중복 접수하지 않게 한다. */
+    public boolean documentOnlyJobExists(long version) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM design_draft_job WHERE document_version_id=:version AND mode='DOCUMENT_ONLY')")
+                .param("version", version).query(Boolean.class).single();
+    }
+
+    /** 문서 버전이 프로젝트의 최신 승인본(작성 중 사본 없음)인지. 접수 직전 재확인용. */
+    public boolean isLatestApproved(long project, long version) {
+        return jdbc.sql("""
+                SELECT EXISTS(
+                  SELECT 1 FROM document_version v JOIN document d ON d.id=v.document_id
+                   WHERE v.id=:version AND d.project_id=:project AND d.discarded_at IS NULL AND v.status='APPROVED'
+                     AND v.version_no=(SELECT max(v2.version_no) FROM document_version v2 WHERE v2.document_id=d.id AND v2.status='APPROVED')
+                     AND NOT EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id AND w.status<>'APPROVED'))
+                """).param("project", project).param("version", version).query(Boolean.class).single();
     }
 
     public List<Map<String, Object>> candidates(long job) {

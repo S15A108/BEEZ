@@ -3,6 +3,8 @@ package com.beez.backend.planning.api;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.document.api.DocumentRequestOriginVerifier;
 import com.beez.backend.planning.dto.DraftDtos.AdoptRequest;
+import com.beez.backend.planning.dto.DraftDtos.BatchRequest;
+import com.beez.backend.planning.service.DesignDraftAdoptionService;
 import com.beez.backend.planning.dto.DraftDtos.CreateRequest;
 import com.beez.backend.planning.service.DesignDraftService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,9 +27,26 @@ import org.springframework.web.bind.annotation.RestController;
 public class DesignDraftController {
     private final DesignDraftService drafts;
     private final DocumentRequestOriginVerifier origins;
+    private final DesignDraftAdoptionService batches;
 
-    public DesignDraftController(DesignDraftService drafts, DocumentRequestOriginVerifier origins) {
-        this.drafts = drafts; this.origins = origins;
+    public DesignDraftController(DesignDraftService drafts, DocumentRequestOriginVerifier origins, DesignDraftAdoptionService batches) {
+        this.drafts = drafts; this.origins = origins; this.batches = batches;
+    }
+
+    @PostMapping("/design-draft-candidates/adopt")
+    @Operation(summary = "생성 후보 여러 개 채택 — 건별 결과, 일부가 실패해도 나머지는 처리")
+    public Map<String, Object> adoptBatch(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+            @RequestBody BatchRequest body) {
+        origins.requireTrustedOrigin(request);
+        return batches.adopt(caller, projectId, body);
+    }
+
+    @PostMapping("/design-draft-candidates/discard")
+    @Operation(summary = "생성 후보 여러 개 폐기 — 설계 항목에는 영향 없음")
+    public Map<String, Object> discardBatch(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+            @RequestBody BatchRequest body) {
+        origins.requireTrustedOrigin(request);
+        return batches.discard(caller, projectId, body);
     }
 
     @PostMapping("/design-drafts")

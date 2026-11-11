@@ -229,6 +229,24 @@ class AnsweredQuestion(_Strict):
         return self
 
 
+class DocumentScope(_Strict):
+    """1-based inclusive line range of the normalized text the model may read.
+
+    The BE splits a long document into parts and sends one part per call. Only
+    blocks that start inside the range reach the model, and a quote counts only
+    when it comes from one of them.
+    """
+
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def ordered(self) -> Self:
+        if self.end_line < self.start_line:
+            raise ValueError("scope end_line must be >= start_line")
+        return self
+
+
 class DesignDraftRequest(_Strict):
     """BE-authorized input: the fixed document, stored questions and items."""
 
@@ -253,9 +271,20 @@ class DesignDraftRequest(_Strict):
         default=(), max_length=MAX_QUESTIONS
     )
     max_items: int = Field(default=DEFAULT_MAX_ITEMS, ge=1, le=MAX_ITEMS)
+    # WITH_ANSWERS is the original behaviour. DOCUMENT_ONLY drafts new items from
+    # the document alone (no answers, no existing items) for the auto generation.
+    mode: Literal["WITH_ANSWERS", "DOCUMENT_ONLY"] = "WITH_ANSWERS"
+    scope: DocumentScope | None = None
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        if self.mode == "DOCUMENT_ONLY" and (self.existing_items or self.questions):
+            raise ValueError("DOCUMENT_ONLY takes no existing items or questions")
+        if (
+            self.scope is not None
+            and self.scope.end_line > self.content.count(chr(10)) + 1
+        ):
+            raise ValueError("scope outside the document")
         # One version per design item: the BE sends the current DRAFT, or the
         # APPROVED one, never both, so every base item is unambiguous.
         versions = [item.design_item_version_id for item in self.existing_items]

@@ -45,10 +45,14 @@ public class DesignDraftRunner {
     private final DesignContentValidator content;
     private final TransactionTemplate tx;
 
+    private final int partMaxItems;
+
     public DesignDraftRunner(DesignDraftRepository drafts, DesignDraftGateway gateway, AiUsageRecorder usage,
-                             DesignProjectRepository projects, DesignContentValidator content, PlatformTransactionManager manager) {
+                             DesignProjectRepository projects, DesignContentValidator content, PlatformTransactionManager manager,
+                             @org.springframework.beans.factory.annotation.Value("${beez.planning.part-max-items:15}") int partMaxItems) {
         this.drafts = drafts; this.gateway = gateway; this.usage = usage; this.projects = projects; this.content = content;
         this.tx = new TransactionTemplate(manager);
+        this.partMaxItems = Math.max(1, Math.min(100, partMaxItems));
     }
 
     /** 처리할 작업 하나를 끝까지 처리한다. 작업이 없으면 false. */
@@ -56,6 +60,7 @@ public class DesignDraftRunner {
     public boolean runOnce() {
         Map<String, Object> job = tx.execute(status -> drafts.claim(LEASE_SECONDS).orElse(null));
         if (job == null) return false;
+        if ("DOCUMENT_ONLY".equals(job.get("mode"))) { runDocumentOnly(job); return true; }
         long id = ((Number) job.get("id")).longValue(), project = ((Number) job.get("project_id")).longValue();
         Object lease = job.get("lease_until");
         Map<String, Object> snapshot = JSON.readValue(job.get("input_snapshot").toString(), Map.class);
@@ -95,6 +100,125 @@ public class DesignDraftRunner {
         }
         tx.executeWithoutResult(status -> save(id, project, lease, parsed, usageOf(response)));
         return true;
+    }
+
+    // ---- 문서 단독 모드(S15P31A108-389): 부분마다 AI 를 한 번씩 부르고 후보를 부분 단위로 저장한다 ----
+
+    /**
+     * 작업의 PENDING 부분을 차례로 처리한다. 부분마다 새 request_key 로 AI 를 부르고(트랜잭션 밖), 사용량을 기록하고, 응답을 검증한 뒤
+     * 프로젝트 잠금 아래 후보와 부분 상태를 한 트랜잭션으로 저장한다. 부분이 실패해도 다른 부분의 후보는 남긴다.
+     * 시간 초과·AI 장애는 다음 부분도 실패할 가능성이 커서 거기서 멈추고(남은 부분은 PENDING), 출력 상한·형식 오류는 그 부분만 실패로 두고 계속한다.
+     * 끝나면 모든 부분이 성공일 때만 COMPLETED, 아니면 FAILED(재시도하면 실패·남은 부분만 다시 돈다).
+     */
+    @SuppressWarnings("unchecked")
+    private void runDocumentOnly(Map<String, Object> job) {
+        long id = ((Number) job.get("id")).longValue(), project = ((Number) job.get("project_id")).longValue();
+        Object lease = job.get("lease_until");
+        Map<String, Object> snapshot = JSON.readValue(job.get("input_snapshot").toString(), Map.class);
+        boolean baselineAppeared = false;
+        Map<String, Object> partMeta = new LinkedHashMap<>();
+        List<String> unresolved = new ArrayList<>();
+        int omitted = 0;
+        while (true) {
+            var part = drafts.nextPendingPart(id);
+            if (part.isEmpty()) break;
+            var renewed = drafts.renewLease(id, lease, LEASE_SECONDS);
+            if (renewed.isEmpty()) return;   // 다른 워커가 이어받았다
+            lease = renewed.get();
+            int partNo = ((Number) part.get().get("part_no")).intValue();
+            String requestKey = "design-draft-job-" + id + "-p" + partNo + "-" + UUID.randomUUID();
+            var payload = new LinkedHashMap<String, Object>();
+            payload.put("request_key", requestKey);
+            payload.putAll(snapshot);
+            payload.put("content_hash", AiHashes.wire(snapshot.get("content_hash")));
+            payload.put("text_hash", AiHashes.wire(snapshot.get("text_hash")));
+            payload.put("project_id", Long.toString(project));
+            payload.put("mode", "DOCUMENT_ONLY");
+            payload.put("scope", Map.of("start_line", part.get().get("start_line"), "end_line", part.get().get("end_line")));
+            payload.put("max_items", partMaxItems);
+
+            long started = System.nanoTime();
+            Map<String, Object> response;
+            try {
+                response = gateway.draft(payload);
+            } catch (AiFailure e) {
+                recordFailedCall(project, requestKey, e, elapsed(started));
+                failPart(id, lease, partNo, e.getCode(), e.retryable(), e.usage());
+                if ("ai_output_too_long".equals(e.getCode())) continue;
+                break;
+            } catch (RuntimeException e) {
+                log.error("design-drafts part call failed unexpectedly: {}", e.toString(), e);
+                usage.recordFailure(FEATURE, project, null, requestKey, elapsed(started));
+                failPart(id, lease, partNo, "ai_unavailable", true, null);
+                break;
+            }
+            int recorded = response == null ? 0 : usage.record(FEATURE, project, null, requestKey, response, elapsed(started));
+            Parsed parsed;
+            try {
+                parsed = parse(response, snapshot, id, project);
+            } catch (IllegalArgumentException | ApiException e) {
+                log.warn("design-drafts output unusable for job {} part {}: {}", id, partNo, e.getMessage());
+                if (recorded == 0) usage.recordFailure(FEATURE, project, null, requestKey, elapsed(started));
+                failPart(id, lease, partNo, "invalid_ai_output", true, usageOf(response));
+                continue;
+            }
+            Object current = lease;
+            Boolean saved = tx.execute(status -> savePart(id, project, current, partNo, parsed, usageOf(response)));
+            if (saved == null) return;           // 작업을 잃었다
+            if (!saved) { baselineAppeared = true; break; }
+            if (parsed.meta().get("unresolved") instanceof List<?> l) for (Object o : l) unresolved.add(o.toString());
+            if (parsed.meta().get("omitted_items") instanceof Number n) omitted += n.intValue();
+            partMeta.put("origin", parsed.meta().get("origin"));
+        }
+        boolean baseline = baselineAppeared;
+        Object finalLease = lease;
+        int omittedTotal = omitted;
+        tx.executeWithoutResult(status -> finishDocumentOnly(id, project, finalLease, baseline, partMeta, unresolved, omittedTotal));
+    }
+
+    private void failPart(long job, Object lease, int partNo, String code, boolean retryable, List<Map<String, Object>> usageLines) {
+        tx.executeWithoutResult(status -> {
+            if (drafts.jobStillRunning(job, lease)) drafts.failPart(job, partNo, code, retryable, usageLines);
+        });
+    }
+
+    /** 부분 하나의 후보와 상태를 저장한다. 작업을 잃었으면 null, 기준 설계가 생겼으면 false(후보를 저장하지 않는다). */
+    private Boolean savePart(long job, long project, Object lease, int partNo, Parsed parsed, List<Map<String, Object>> usageLines) {
+        if (!projects.lockActiveProject(project) || !drafts.jobStillRunning(job, lease)) return null;
+        if (drafts.hasBaseline(project)) return false;
+        var overlap = new DraftOverlap(drafts, project, job);
+        for (var candidate : parsed.candidates()) {
+            if (drafts.hasCandidateKey(job, candidate.get("key").toString()) || !overlap.mark(candidate)) continue;
+            candidate.put("partNo", partNo);
+            drafts.insertCandidate(candidate);
+        }
+        drafts.completePart(job, partNo, usageLines);
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void finishDocumentOnly(long job, long project, Object lease, boolean baseline, Map<String, Object> partMeta,
+                                    List<String> unresolved, int omitted) {
+        if (!projects.lockActiveProject(project) || !drafts.jobStillRunning(job, lease)) return;
+        var parts = drafts.parts(job);
+        var usageLines = new ArrayList<Map<String, Object>>();
+        for (var part : parts) usageLines.addAll((List<Map<String, Object>>) JSON.readValue(part.get("usage").toString(), List.class));
+        if (baseline) {
+            drafts.finishJob(job, lease, "FAILED", "baseline_exists", false, null, usageLines);
+            return;
+        }
+        var failed = parts.stream().filter(p -> "FAILED".equals(p.get("status"))).findFirst();
+        boolean pending = parts.stream().anyMatch(p -> "PENDING".equals(p.get("status")));
+        if (failed.isEmpty() && !pending) {
+            var meta = new LinkedHashMap<String, Object>(partMeta);
+            meta.put("unresolved", unresolved.stream().distinct().limit(50).toList());
+            meta.put("omitted_items", omitted);
+            drafts.finishJob(job, lease, "COMPLETED", null, false, meta, usageLines);
+        } else {
+            String code = failed.map(p -> p.get("error_code").toString()).orElse("ai_unavailable");
+            boolean retryable = failed.map(p -> Boolean.TRUE.equals(p.get("retryable"))).orElse(true);
+            drafts.finishJob(job, lease, "FAILED", code, retryable, null, usageLines);
+        }
     }
 
     private void save(long id, long project, Object lease, Parsed parsed, List<Map<String, Object>> usageLines) {

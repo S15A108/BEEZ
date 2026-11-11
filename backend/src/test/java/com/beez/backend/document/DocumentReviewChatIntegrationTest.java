@@ -360,6 +360,29 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
         assertThat(chat.request(author, pid(), document, reviewId, new DirectRequest(1, "지워줘"), key()).suggestion().replacementText()).isEmpty();
     }
 
+    @Test void directRequestWithNothingToChangeIsANormalAnswerThatAddsNoSuggestion() {
+        var review = review();
+        long reviewId = id(review.id());
+        chatAnswer = input -> envelope(input, Map.of("outcome", "NO_CHANGE", "suggestions", List.of(), "summary", "요청한 내용은 이미 본문에 있어요."));
+        var answer = chat.request(author, pid(), document, reviewId, new DirectRequest(1, "이미 있는 내용을 넣어 줘"), "nochange-1");
+        assertThat(answer.isNoChange()).isTrue();
+        assertThat(answer.suggestion()).isNull();
+        assertThat(answer.reason()).isEqualTo("요청한 내용은 이미 본문에 있어요.");
+        assertThat(copy().latestReview().suggestions()).hasSize(1);   // 제안은 늘지 않는다
+        // 같은 키로 다시 보내면 AI 를 또 부르지 않고 같은 답을 준다
+        int calls = sent.size();
+        assertThat(chat.request(author, pid(), document, reviewId, new DirectRequest(1, "이미 있는 내용을 넣어 줘"), "nochange-1")).isEqualTo(answer);
+        assertThat(sent).hasSize(calls);
+        // 이유가 없거나 제안과 NO_CHANGE 가 섞이면 형식 위반이다
+        for (var bad : List.<Map<String, Object>>of(Map.of("outcome", "NO_CHANGE", "suggestions", List.of()),
+                Map.of("outcome", "NO_CHANGE", "suggestions", List.of(), "summary", " "),
+                Map.of("outcome", "SUGGESTION", "suggestions", List.of(), "summary", "이유"))) {
+            chatAnswer = input -> envelope(input, bad);
+            code(() -> chat.request(author, pid(), document, reviewId, new DirectRequest(1, "말"), key()), "invalid_ai_output");
+        }
+        assertThat(copy().latestReview().suggestions()).hasSize(1);
+    }
+
     @Test void directRequestIsIdempotentAuthorOnlyAndLockedAfterSubmission() {
         var review = review();
         long reviewId = id(review.id());

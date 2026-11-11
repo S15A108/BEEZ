@@ -6,7 +6,7 @@ import { documentsApi } from '@/api/services/documents'
 import type { DocumentReviewSuggestion } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { REVIEW_TEXT_MAX } from './schemas'
+import { REVIEW_TEXT_MAX, noChangeReason } from './schemas'
 
 // 대상 문장은 비비가 본문에서 고칠 자리를 정확히 찾도록 함께 보낸다. 너무 길면 앞부분만 쓴다.
 const QUOTE_MAX = 600
@@ -51,7 +51,10 @@ export function SuggestionRequest({
         expected_revision: revision,
         text: value,
       }),
-    onSuccess: () => setOpen(false),
+    // 고칠 곳이 없다는 답이면 닫지 않고 이유를 보여, 요청을 고쳐 다시 보낼 수 있게 한다.
+    onSuccess: (result) => {
+      if (!noChangeReason(result)) setOpen(false)
+    },
     onError: (cause) => {
       if (getApiErrorCode(cause) === 'review_stale') onStale()
     },
@@ -59,6 +62,7 @@ export function SuggestionRequest({
       client.invalidateQueries({ queryKey: ['projects', projectId] }),
   })
   const trimmed = text.trim()
+  const reason = noChangeReason(request.data)
   if (!open)
     return (
       <Button
@@ -122,6 +126,11 @@ export function SuggestionRequest({
           </Button>
         </span>
       </span>
+      {reason && (
+        <p role="status" className="text-xs text-muted-foreground">
+          비비가 고칠 곳을 찾지 못했어요: {reason}
+        </p>
+      )}
       {request.error && (
         <p role="alert" className="text-xs text-destructive">
           {getApiErrorMessage(request.error)}
