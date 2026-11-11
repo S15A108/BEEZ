@@ -1,6 +1,6 @@
 import { ACTIVE_POLL_MS, SLOW_GENERATION_MS } from '@/lib/pollIntervals'
 import { useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { Lightbulb, RefreshCw } from 'lucide-react'
 import type { PlanningQuestion } from '@/api/contracts/common'
@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { QuestionAnswerForm } from './QuestionAnswerForm'
 import type { GenerationStatus } from './questionGeneration'
 import type { AnswerQuestionInput } from './schemas'
+import { useShowMore } from './useShowMore'
 
 const kindLabel = {
   MISSING_CANDIDATE: '누락 후보',
@@ -212,41 +213,24 @@ export function PlanningQuestions({
             const entries = data.pages.flatMap((page) => page.items)
             const total = data.pages[0]?.total_count
             return (
-              <div className="space-y-3">
-                {entries.length ? (
-                  <>
-                    {total !== undefined && (
-                      <p className="text-xs text-muted-foreground">
-                        전체 질문 {total}개
-                        {entries.length < total &&
-                          ` · ${entries.length}개 표시`}
-                      </p>
-                    )}
-                    {entries.map((question) => (
-                      <QuestionCard
-                        key={question.id}
-                        question={question}
-                        isLeader={isLeader}
-                        busy={busy}
-                        answerable={answerable}
-                        published={published}
-                        onAnswer={() => setOpened(question)}
-                      />
-                    ))}
-                  </>
-                ) : (
-                  <EmptyState>현재 등록된 보완 질문이 없어요.</EmptyState>
+              <QuestionList
+                entries={entries}
+                total={total}
+                hasNextPage={questions.hasNextPage}
+                loadingNext={questions.isFetchingNextPage}
+                loadNext={() => void questions.fetchNextPage()}
+                render={(question) => (
+                  <QuestionCard
+                    key={question.id}
+                    question={question}
+                    isLeader={isLeader}
+                    busy={busy}
+                    answerable={answerable}
+                    published={published}
+                    onAnswer={() => setOpened(question)}
+                  />
                 )}
-                {questions.hasNextPage && (
-                  <Button
-                    variant="outline"
-                    onClick={() => void questions.fetchNextPage()}
-                    disabled={questions.isFetchingNextPage}
-                  >
-                    질문 더 보기
-                  </Button>
-                )}
-              </div>
+              />
             )
           }}
         </AsyncState>
@@ -265,6 +249,58 @@ export function PlanningQuestions({
         />
       )}
     </Card>
+  )
+}
+
+// 질문은 5개씩 보여 준다. 받아 둔 질문을 다 보였는데 서버에 더 있으면 다음 쪽을 받는다.
+function QuestionList({
+  entries,
+  total,
+  hasNextPage,
+  loadingNext,
+  loadNext,
+  render,
+}: {
+  entries: PlanningQuestion[]
+  total: number | undefined
+  hasNextPage: boolean
+  loadingNext: boolean
+  loadNext: () => void
+  render: (question: PlanningQuestion) => ReactNode
+}) {
+  const list = useShowMore(entries)
+  const remaining = list.hidden + (hasNextPage ? 1 : 0)
+  return (
+    <div className="space-y-3">
+      {entries.length ? (
+        <>
+          {total !== undefined && (
+            <p className="text-xs text-muted-foreground">
+              전체 질문 {total}개
+              {list.shown.length < total && ` · ${list.shown.length}개 표시`}
+            </p>
+          )}
+          {list.shown.map(render)}
+        </>
+      ) : (
+        <EmptyState>현재 등록된 보완 질문이 없어요.</EmptyState>
+      )}
+      {remaining > 0 && (
+        <Button
+          variant="outline"
+          disabled={loadingNext}
+          onClick={() => {
+            list.more()
+            if (list.hidden === 0 && hasNextPage) loadNext()
+          }}
+        >
+          질문 더 보기
+          {total !== undefined && total > list.shown.length
+            ? ` (${total - list.shown.length}개 남음)`
+            : ''}
+        </Button>
+      )}
+    </div>
   )
 }
 

@@ -6,6 +6,7 @@ Neither mode changes the document or accepts user content as instructions.
 
 import json
 import logging
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -38,8 +39,11 @@ REQUEST 모드에서는 입력 본문과 사용자 요청만 근거로 본문 �
 "original_text":"원문","replacement_text":"대체문"}]}.
 원문은 입력 본문에 정확히 한 번 나오는 비어 있지 않은 연속 구간이어야 하며 대체문은
 선택한 원문 부분만 바꿉니다. 삭제할 때 대체문을 빈 문자열로 쓰세요. 수정으로 빈 문서,
-허용되지 않는 문자 또는 길이 초과가 생기지 않아야 합니다. 안전한 수정이 불가능하면
-추측하여 원문을 만들지 마세요."""
+허용되지 않는 문자 또는 길이 초과가 생기지 않아야 합니다.
+요청한 내용이 이미 입력 본문에 있거나 안전한 수정이 불가능하면 추측하여 원문을 만들지
+말고 {"outcome":"NO_CHANGE","suggestions":[],"summary":"고칠 곳이 없는 이유"}를
+반환하세요. summary에는 본문의 어느 부분에 이미 있는지 등 이유를 사용자에게 보이는 한두
+문장으로 쓰고, 수정을 반환할 때는 outcome을 "SUGGESTION"으로 쓰세요."""
 
 
 class Reply(BaseModel):
@@ -57,7 +61,9 @@ class DiscussionOutput(BaseModel):
 
 class RequestOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    suggestions: list[Suggestion] = Field(min_length=1, max_length=1)
+    # 수정 하나, 또는 고칠 곳이 없다는 답(NO_CHANGE + 이유). outcome 을 빼먹어도 수정 개수로 정한다.
+    outcome: Literal["SUGGESTION", "NO_CHANGE"] | None = None
+    suggestions: list[Suggestion] = Field(max_length=1)
     summary: str | None = None
 
 
@@ -88,6 +94,13 @@ def _validate_discussion(parsed: DiscussionOutput, body: DocumentReviewRequest) 
 
 
 def _validate_request(parsed: RequestOutput, body: DocumentReviewRequest) -> dict:
+    if not parsed.suggestions:
+        # 고칠 곳이 없다는 답은 이유(summary)가 있을 때만 받는다. 이유 없는 빈 답은 형식 위반이다.
+        if parsed.outcome == "SUGGESTION" or not parsed.summary:
+            raise ValueError("no-change answer needs a reason")
+        return {"outcome": "NO_CHANGE", "suggestions": []}
+    if parsed.outcome == "NO_CHANGE":
+        raise ValueError("no-change answer must not carry a suggestion")
     suggestion = parsed.suggestions[0]
     # BODY is always reviewed; the BE does not send its prior per-step results.
     # Thus other steps cannot safely be asserted COMPLETE by this endpoint.
@@ -112,7 +125,10 @@ def _validate_request(parsed: RequestOutput, body: DocumentReviewRequest) -> dic
     validate_patch_sequence(
         body.content, [(start, start + len(original), original, replacement)]
     )
-    return {"suggestions": [suggestion.model_dump(exclude_none=True)]}
+    return {
+        "outcome": "SUGGESTION",
+        "suggestions": [suggestion.model_dump(exclude_none=True)],
+    }
 
 
 async def analyze_mode(

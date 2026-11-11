@@ -4592,6 +4592,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `document_version_ids` | `ID[]` | Y | 분석된 원본 버전 |
+| `mode` | `WITH_ANSWERS\|DOCUMENT_ONLY` | N | 기본 `WITH_ANSWERS`(질문·답변 반영). `DOCUMENT_ONLY`는 문서만으로 후보를 다시 만든다(S15P31A108-389, 아래 "문서에서 뽑은 후보") |
 
 ```json
 {
@@ -4640,6 +4641,8 @@ HTTP `202`.
 | 409 | `analysis_not_completed` | 선행 분석 미완료 |
 | 409 | `baseline_exists` | 이미 기준 설계가 발행됨. 이후 변경은 변경 제안 |
 | 409 | `draft_in_progress` | 같은 문서 버전의 생성 작업이 아직 진행 중 |
+| 409 | `draft_already_generated` | (`DOCUMENT_ONLY`) 이 문서 버전의 문서 단독 생성이 이미 끝남. 문서를 고쳐 새 버전을 승인하면 새로 만든다 |
+| 409 | `draft_retry_limit_exceeded` | (`DOCUMENT_ONLY`) 이 문서 버전의 시도 횟수(기본 3회)를 다 씀 |
 | 409 | `idempotency_conflict` | 같은 `Idempotency-Key`로 다른 본문 |
 
 ```json
@@ -4667,14 +4670,16 @@ HTTP `202`.
 | 필드 | 설명 |
 | --- | --- |
 | `jobs[].id`, `document_version_id`, `status`(`PENDING\|RUNNING\|COMPLETED\|FAILED`), `error_code`·`retryable`(실패 시), `created_at`, `updated_at` | 작업 |
+| `jobs[].mode`(`WITH_ANSWERS\|DOCUMENT_ONLY`), `trigger`(`AUTO\|MANUAL`), `attempt_no` | 문서에서 뽑은 후보와 질문·답변으로 보완한 후보를 구분한다 |
+| `jobs[].max_attempts`, `parts{total, completed, failed, failed_error_codes[]}` | (`DOCUMENT_ONLY`) 시도 상한과 부분별 진행. 긴 문서는 부분으로 나눠 만든다 |
 | `jobs[].unresolved[]`, `unanswered_question_keys[]`, `untouched_existing_ids[]`, `omitted_items` | AI가 남긴 결과 전체 정보 |
-| `jobs[].candidates[]` | `id`, `candidate_key`, `change`(`CREATE\|UPDATE`), `kind`, `status`(`PENDING\|ADOPTED\|DISCARDED`), `base_design_item_version_id`·`base_status`·`before`(UPDATE), `after`, `changed_fields[]`, `conflicting_fields[]`, `sources[]`, `answer_refs[]`, `support`(`DOCUMENT\|ANSWER\|DOCUMENT_AND_ANSWER\|NONE`), `rationale`, `adopted_design_item_version_id` |
+| `jobs[].candidates[]` | `id`, `candidate_key`, `change`(`CREATE\|UPDATE`), `kind`, `status`(`PENDING\|ADOPTED\|DISCARDED`), `base_design_item_version_id`·`base_status`·`before`(UPDATE), `after`, `changed_fields[]`, `conflicting_fields[]`, `sources[]`, `answer_refs[]`, `support`(`DOCUMENT\|ANSWER\|DOCUMENT_AND_ANSWER\|NONE`), `rationale`, `overlap{kind(EXISTING_ITEM\|ADOPTED_CANDIDATE\|DISCARDED_CANDIDATE\|PENDING_CANDIDATE), ref_id}`(겹칠 때만), `adopted_design_item_version_id` |
 
 `before`는 후보를 만든 당시의 기준 본문 그대로이며 이후 바뀌지 않는다(DB 트리거로 후보 본문·근거 변경을 막는다).
 
 #### 후보 채택
 
-`POST /api/projects/{id}/design-draft-candidates/{candidate_id}/adopt` — `LEADER`(사람). 본문(선택): `{"confirm_no_evidence": boolean, "resolved_fields": string[]}`.
+`POST /api/projects/{id}/design-draft-candidates/{candidate_id}/adopt` — `LEADER`(사람). 본문(선택): `{"confirm_no_evidence": boolean, "resolved_fields": string[], "confirm_duplicate": boolean}`.
 
 - CREATE는 새 설계 항목과 v1 DRAFT(`origin=AI_PROPOSED`, `source_document_version_id`=요청 문서 버전, `source_locator`=첫 근거 위치)를 만든다. UPDATE는 대상 DRAFT의 본문을 후보의 `after`로 바꾼다(출처·`origin`은 그대로).
 - `support=NONE`은 `confirm_no_evidence=true`로 근거 없음을 확인해야 채택한다. `conflicting_fields`가 있으면 모두 `resolved_fields`에 담아 사용자가 확정해야 한다. 아니면 400 `validation_failed`.
@@ -4683,6 +4688,23 @@ HTTP `202`.
 - 다른 프로젝트의 후보는 404 `not_found`, 팀장이 아니면 403.
 
 `POST /api/projects/{id}/design-draft-candidates/{candidate_id}/discard` — `LEADER`(사람). 후보를 폐기한다. 설계 항목에는 영향이 없다. 이미 폐기한 후보는 같은 결과, 채택한 후보는 409 `candidate_adopted`.
+
+#### 문서에서 뽑은 후보 (S15P31A108-389)
+
+질문·답변 없이 **승인 문서만으로** 설계 항목 후보를 만든다. 질문·답변 단계(위 규칙)는 "문서에서 정하지 못한 모호한 부분 보완"으로 그대로 남는다.
+
+- **자동 접수**: 기준 v1이 없고 문서 4종(`PLAN`·`REQ_SPEC`·`ERD`·`API_SPEC`)이 모두 최신 승인본(작성 중 사본 없음)이며 각 버전의 분석과 색인이 끝나면, 서버가 팀장이 누르지 않아도 문서 버전마다 `mode=DOCUMENT_ONLY`, `trigger=AUTO` 작업을 접수한다(AI는 접수 때 부르지 않는다). 문서 버전마다 문서 단독 작업은 하나뿐이라, 팀장이 이미 손으로 만든 버전에는 자동 접수하지 않는다(자동 접수는 DB 유일 제약으로도 한 번뿐). 작업의 요청자는 프로젝트 팀장 계정이다. 설정 `beez.planning.auto-draft-enabled`(기본 꺼짐, 로컬 켜짐)로 켜고 끈다. **켜는 순간 기준 설계가 없고 4종이 승인·색인된 기존 프로젝트도 대상이 된다(소급).** 한꺼번에 호출이 나가지 않게 하려면 `beez.planning.auto-draft-approved-after`(ISO-8601 시각, 기본 비어 있음)를 두어, 4종이 모두 갖춰진 시점(최신 승인본 중 가장 늦은 승인 시각)이 그 뒤인 프로젝트만 대상으로 한다. 팀장이 없거나 분석이 안 끝난 프로젝트가 대상 앞자리를 막지 않게 프로젝트를 돌려 가며 본다. 자동으로 만들어지지 않은 문서는 팀장이 `POST /design-drafts`에 `mode=DOCUMENT_ONLY`로 직접 만든다(화면의 `문서에서 후보 만들기`).
+- **부분 나누기**: 접수 때 본문을 절(제목)·빈 줄 경계의 줄 범위 부분으로 나눠 `design_draft_job_part`에 둔다(부분 크기 `beez.planning.part-max-chars` 기본 6000자, 부분 수 상한 `max-parts` 기본 12 — 넘으면 부분 크기를 키운다). 부분마다 AI(`POST /v1/design-drafts`, `mode=DOCUMENT_ONLY`, `scope`, `max_items`=`part-max-items` 기본 15)를 한 번씩 부르고 후보를 부분 단위로 저장한다. 호출마다 새 요청 키로 `llm_usage`(`BEE_DRAFT`)를 기록한다. 비동기 작업이라 nginx 와 무관하며, 모델 시간(`DESIGN_DRAFTS_LLM_TIMEOUT_SECONDS`) < BE 읽기 시간(`beez.planning.draft-read-timeout`) < 작업 리스 사슬(S15P31A108-388 기본 150초 < 170초 < 300초)은 부분 호출마다 지킨다.
+- **부분 실패**: 출력 상한(`ai_output_too_long`)·형식 오류는 그 부분만 `FAILED`로 두고 다음 부분을 계속한다. 시간 초과(`ai_timeout`)·AI 장애(`ai_unavailable`)는 다음 부분도 실패하기 쉬워 거기서 멈춘다(남은 부분은 대기). 만들어진 부분의 후보는 작업이 `FAILED`여도 조회에 나온다. 모든 부분이 끝나야 `COMPLETED`.
+- **다시 시도**: `POST /design-drafts`에 `mode=DOCUMENT_ONLY`로 그 문서 버전만 보내면 실패한 부분(과 대기 중인 부분)만 다시 돈다. 시도(`attempt_no`)가 상한(`max-draft-attempts` 기본 3)에 닿으면 409 `draft_retry_limit_exceeded`, 이미 끝났으면 409 `draft_already_generated`. 상한 뒤에는 설계 항목을 직접 추가하거나(PLN-A07), 문서를 고쳐 새 버전을 승인하면 그 버전에서 자동 생성이 다시 한 번 돈다. 발행(PLN-A10)은 후보 생성 성공 여부와 무관하며 DRAFT 항목이 1개 이상 있으면 된다. 발행 뒤 빠진 항목은 변경 제안(CREATE)으로 추가한다.
+- **후보 겹침**: 후보를 저장할 때 종류별 지문(API는 메서드+경로, 데이터는 엔티티, 그 밖은 설명 문장)을 계산해 이미 있는 설계 항목(직접 추가한 것 포함)·이미 채택한 후보·이미 폐기한 후보·**다른 문서 작업에서 아직 결정하지 않은 후보**와 같으면 `overlap`(`PENDING_CANDIDATE`는 먼저 저장된 후보가 새 후보로 남고 뒤에 저장된 쪽이 표시됨)으로 표시한다(저장은 한다). 같은 작업 안의 같은 지문은 한 번만 남긴다. 화면은 겹침 후보를 따로 접어 보이고 일괄 선택에서 뺀다. 표시는 저장 시점에 정해지므로, **채택할 때 지금 있는 설계 항목과 지문을 다시 비교해** 같은 항목이 이미 생겼으면 409 `candidate_duplicate`로 거절한다(일괄 채택에서는 그 건만 `FAILED`). 지문이 같아도 내용이 다를 수 있으므로(예: 데이터 계약은 엔티티 이름만, 설명 기반 종류는 정규화한 앞 200자만 비교) 알고 채택하려면 `confirm_duplicate=true`를 보낸다(`confirm_no_evidence`와 같은 방식). 화면은 `PENDING_CANDIDATE`·`EXISTING_ITEM`·`ADOPTED_CANDIDATE` 겹침 후보를 채택할 때 이 확인을 받고, 이전에 폐기한 후보와 같은 것은 확인 없이 채택한다. 겹침 비교와 채택은 **같은 문서의 더 새 버전이 승인되어 대체된 버전의 작업은 제외**한다: 대체된 버전의 후보는 겹침 비교에 쓰지 않고, 채택하려 하면 409 `candidate_stale`로 막으며, 화면도 그 작업을 숨긴다(새 버전의 후보를 다시 만든다).
+- 문서 단독 후보는 `CREATE`만, `answer_refs`는 빈 배열, `support`는 `DOCUMENT`(인용이 모두 탈락하면 `NONE`)다. 채택은 기존 규칙 그대로다.
+
+#### 후보 일괄 채택·폐기 (S15P31A108-389)
+
+`POST /api/projects/{id}/design-draft-candidates/adopt` · `POST /api/projects/{id}/design-draft-candidates/discard` — `LEADER`(사람). 본문 `{"items": [{"candidate_id": "12", "confirm_no_evidence": false, "resolved_fields": [], "confirm_duplicate": false}]}`(1~50건, 중복 id 불가, `confirm_no_evidence`·`resolved_fields`·`confirm_duplicate`는 채택에서만 의미). 요청 자체가 잘못되면(빈 목록·51건 이상·잘못되거나 겹친 id) 400 `validation_failed`, 팀장이 아니면 403.
+
+응답 `200`: `{"results": [{"candidate_id", "result"(ADOPTED\|DISCARDED\|FAILED), "design_item_version_id"?, "error_code"?, "message"?}], "succeeded": n, "failed": m}`. **건마다 자기 트랜잭션**으로 단건 채택·폐기와 같은 규칙을 적용하므로(근거 없음 확인, 충돌 필드 확정, `candidate_stale`, `baseline_exists`, 다른 프로젝트 후보 `not_found` 등) 일부가 실패해도 나머지는 처리된다. 같은 요청을 다시 보내면 이미 채택한 후보는 같은 결과를 돌려주고 항목을 더 만들지 않는다. 채택하지 않은 후보는 설계 항목이 되지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7166,11 +7188,15 @@ HTTP `201`.
 
 #### Response
 
-HTTP `201`.
+HTTP `201`(새 제안이 붙음) 또는 `200`(비비가 고칠 곳이 없다고 답함, 아무것도 만들지 않음).
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `suggestion` | [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion) | Y | origin=DIRECT_REQUEST, decision=PENDING인 새 제안 |
+| `outcome` | `CREATED\|NO_CHANGE` | Y | 새 제안이 붙었는지(`CREATED`), 고칠 곳이 없다는 답인지(`NO_CHANGE`). 없으면 `CREATED`로 읽는다 |
+| `suggestion` | [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion) | `CREATED`일 때 Y | origin=DIRECT_REQUEST, decision=PENDING인 새 제안. `NO_CHANGE`면 없다 |
+| `reason` | `string` | `NO_CHANGE`일 때 Y | 비비가 고칠 곳이 없다고 한 이유(예: 이미 본문에 있는 위치). 사용자에게 그대로 보인다 |
+
+`NO_CHANGE` 예: `{"outcome": "NO_CHANGE", "reason": "초당 블록 수가 3.2절에 이미 있어요."}`
 
 ```json
 {
@@ -7217,6 +7243,7 @@ HTTP `201`.
 - (수정안 요청) replacement_text가 ""이면 original_text를 지운다. 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡아 순서만 바꾼 replacement_text로 낸다(AI-A10).
 - 등록자만, `expected_revision`이 지금 작성 리비전과 같고 `review_id`가 그 리비전의 최신 검토일 때만 쓸 수 있다(리비전이 다르면 409 `version_conflict`, 직접 수정 등으로 검토가 오래되면 409 `review_stale`, 검토 요청 중이면 409 `submission_locked`). 한 검토에서 직접 요청은 20번까지(초과 시 409 `review_request_limit`).
 - 새 제안은 같은 검토의 `suggestions`에 `origin=DIRECT_REQUEST`, `decision=PENDING`인 PATCH로 붙는다. 검토 결과(`summary`·`steps`·참고 해시)는 바꾸지 않고, 응답이 검증을 통과해야만 저장한다: 식별값 일치, 제안 정확히 1개, 검토 때 완료된 단계와 출처 규칙, `original_text`가 지금 본문에서 한 곳과만 일치하고 아직 처리하지 않은 다른 제안의 구간과 겹치지 않음(위반 시 502 `invalid_ai_output`). 호출 중에 본문이 바뀌었으면 409 `review_stale`.
+- 비비가 요청한 내용이 이미 본문에 있거나 안전하게 고칠 수 없다고 답하면(AI-A10 `outcome=NO_CHANGE`, 이유 필수) 제안을 만들지 않고 `200 NO_CHANGE`와 `reason`을 돌려준다. 오류가 아니므로 검토·제안 수와 직접 요청 횟수(20번)는 늘지 않고, 사용량은 정상 호출로 기록한다. 같은 `Idempotency-Key`로 다시 보내면 AI를 부르지 않고 같은 답을 돌려준다. 이유가 비었거나 `NO_CHANGE`에 제안이 섞이면 502 `invalid_ai_output`이다.
 - AI 호출·사용량·멱등은 DOC-A22와 같다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
