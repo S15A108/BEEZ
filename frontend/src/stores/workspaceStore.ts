@@ -22,6 +22,7 @@ type Placement = { lot: number; design: BuildingDesign }
 interface WorkspaceState {
   pane: WorkspacePane | null
   focusId: string | null
+  initialTaskTab: 'mine' | 'team'
   viewMode: 'first' | 'third'
   outdoor: boolean
   placements: Record<string, Placement>
@@ -31,6 +32,7 @@ interface WorkspaceState {
   officeTime: 'auto' | OfficeTime
   setOfficeTime: (officeTime: 'auto' | OfficeTime) => void
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
+  openTeamTasks: () => void
   /** 창 안에 열린 하위 화면(PaneSheet) 수. 열려 있으면 단축 바 숫자 키를 무시한다(D46). 저장하지 않는다. */
   sheets: number
   trackSheet: (open: boolean) => void
@@ -50,13 +52,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     (set) => ({
       pane: null,
       focusId: null,
+      initialTaskTab: 'mine',
       viewMode: 'third',
       outdoor: false,
       placements: {},
       lastVisited: {},
       officeTime: 'auto',
       setOfficeTime: (officeTime) => set({ officeTime }),
-      openPane: (pane, focusId = null) => set({ pane, focusId }),
+      openPane: (pane, focusId = null) =>
+        set({ pane, focusId, initialTaskTab: 'mine' }),
+      openTeamTasks: () =>
+        set({ pane: 'tasks', focusId: null, initialTaskTab: 'team' }),
       sheets: 0,
       trackSheet: (open) =>
         set((state) => ({ sheets: state.sheets + (open ? 1 : -1) })),

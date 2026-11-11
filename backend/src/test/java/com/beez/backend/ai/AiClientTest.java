@@ -54,7 +54,7 @@ class AiClientTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"/v1/document-reviews", "/v1/document-chunks", "/v1/embeddings", "/v1/impact",
-            "/v1/document-revision-blocks", "/v1/document-revisions", "/v1/bee/assignments"})
+            "/v1/document-revision-blocks", "/v1/document-revisions", "/v1/bee/assignments", "/v1/bee/task-breakdown"})
     void postsAuthenticatedJsonAndReadsEnvelope(String endpoint) {
         var input = Map.<String, Object>of("document_id", "194", "content", "검토할 문서");
         Map<String, Object> result = switch (endpoint) {
@@ -64,6 +64,7 @@ class AiClientTest {
             case "/v1/document-revision-blocks" -> client.revisionBlocks(input);
             case "/v1/document-revisions" -> client.documentRevision(input);
             case "/v1/bee/assignments" -> client.assignmentRecommendations(input);
+            case "/v1/bee/task-breakdown" -> client.taskBreakdown(input);
             default -> client.documentEmbeddings(input);
         };
         assertThat(path.get()).isEqualTo(endpoint);
@@ -75,8 +76,7 @@ class AiClientTest {
         assertThat(result).containsEntry("origin", "MODEL").containsKeys("result", "usage");
     }
 
-    /** 문서 검토는 공통 읽기 제한(여기서는 0.3초)보다 긴 전용 제한을 쓴다 (S15P31A108-382). */
-    @Test void documentReviewUsesItsOwnLongerReadTimeoutThanOtherCalls() throws Exception {
+    @Test void documentReviewAndTaskBreakdownUseTheirOwnReadTimeouts() throws Exception {
         server.removeContext("/");
         server.createContext("/", exchange -> {
             try { Thread.sleep(800); } catch (InterruptedException ignored) { }
@@ -88,9 +88,12 @@ class AiClientTest {
         var slow = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
                 "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
                 Duration.ofMillis(500), Duration.ofMillis(300)), null),
-                Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofSeconds(3));
+                Duration.ofMillis(300), Duration.ofSeconds(3), Duration.ofSeconds(3), Duration.ofMillis(300));
         var input = Map.<String, Object>of("document_id", "382");
         assertThat(slow.documentReview(input)).containsEntry("origin", "MODEL");
+        assertThat(slow.designDrafts(input)).containsEntry("origin", "MODEL");
+        assertThatThrownBy(() -> slow.taskBreakdown(input))
+                .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
         assertThatThrownBy(() -> slow.documentChunks(input))
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
     }

@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -61,11 +62,13 @@ public class ValidationAcceptService {
     private final ObjectMapper json;
     private final ValidationProperties properties;
     private final ValidationActivities activities;
+    private final ApplicationEventPublisher publisher;
 
     public ValidationAcceptService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
                                    TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                    ValidationRepository validations, ValidationRules rules, ValidationResponses responses,
-                                   ObjectMapper json, ValidationProperties properties, ValidationActivities activities) {
+                                   ObjectMapper json, ValidationProperties properties, ValidationActivities activities,
+                                   ApplicationEventPublisher publisher) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
@@ -77,6 +80,7 @@ public class ValidationAcceptService {
         this.json = json;
         this.properties = properties;
         this.activities = activities;
+        this.publisher = publisher;
     }
 
     @Transactional
@@ -212,11 +216,13 @@ public class ValidationAcceptService {
             validations.insertFinding(validationId, f);
         }
         ValidationRow row = validations.find(projectId, validationId).orElseThrow();
-        if (finished && finishedBySystem) {
-            activities.finishedBySystem(row, outcome.decidedStatus());
-        } else if (finished) {
-            // 요청 처리 안에서 규칙만으로 끝났다 — 행위자는 요청자 (계약 6.2 "검증 완료 정하기"). 워커가 끝내면 결과 반영이 남긴다
-            activities.finishedBy(caller, row, outcome.decidedStatus());
+        if (finished) {
+            if (finishedBySystem) {
+                activities.finishedBySystem(row, outcome.decidedStatus());
+            } else {
+                activities.finishedBy(caller, row, outcome.decidedStatus());
+            }
+            ValidationConflictMeetings.publish(publisher, row, outcome.findings());
         }
         return new AcceptResult(responses.toResponse(row), finished);
     }
