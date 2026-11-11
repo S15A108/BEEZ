@@ -117,7 +117,7 @@ it('팀장은 메시지를 보내고 비비 정리를 구조화한 카드로 받
   ).toBeEnabled()
 })
 
-// 회의 끝내기 버튼은 고칠 점 입력 폼 안에 있다. 눌러도 그 폼을 제출하지 않아야 한다.
+// 고칠 점이 입력돼 있어도 회의를 끝내면 수정 요청을 전송하지 않는다.
 it('고칠 점을 적은 채 회의 끝내기를 누르면 수정 요청을 보내지 않고 끝내기 확인만 연다', async () => {
   const user = userEvent.setup()
   renderPanel(true)
@@ -155,6 +155,38 @@ it('고칠 점으로 정리를 다시 요청하면 수정본이 최신 정리가
   ).toBeInTheDocument()
   expect(addEntry).not.toHaveBeenCalled()
   vi.restoreAllMocks()
+})
+
+it('팀장은 정리 뒤에도 합의를 대화로 남기고 그 기록까지 다시 정리할 수 있다', async () => {
+  const user = userEvent.setup()
+  const summarize = vi.spyOn(meetingsApi, 'summarize')
+  const revise = vi.spyOn(meetingsApi, 'reviseSummary')
+  renderPanel(true)
+  const log = await requestSummary(user)
+  const feedback = screen.getByRole('region', { name: '비비 정리 수정' })
+  expect(
+    within(feedback).getByRole('textbox', { name: '비비에게 고칠 점' }),
+  ).toBeInTheDocument()
+  const decision =
+    '만료된 초대는 14일 뒤 다시 요청하도록 안내하기로 결정했어요.'
+  await user.type(screen.getByRole('textbox', { name: '메시지' }), decision)
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  expect(await within(log).findByText(decision)).toBeInTheDocument()
+  expect(revise).not.toHaveBeenCalled()
+  const entries = await meetingsApi.entries('101', '901', {})
+  const entry = entries.items.find((item) => item.text === decision)
+  expect(entry?.kind).toBe('TEXT')
+  const staleMessage = /정리한 뒤에 새 대화가 있어요/
+  expect(await screen.findByText(staleMessage)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
+  await waitFor(() =>
+    expect(summarize).toHaveBeenLastCalledWith('101', '901', {
+      through_entry_id: entry!.id,
+    }),
+  )
+  await waitFor(() =>
+    expect(screen.queryByText(staleMessage)).not.toBeInTheDocument(),
+  )
 })
 
 // MTG-A13: 최신 정리로 회의를 끝내고 변경 제안을 만든다. 끝난 회의는 읽기만 하고 제안을 연다.

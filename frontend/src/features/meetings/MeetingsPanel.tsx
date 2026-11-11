@@ -933,22 +933,22 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             </div>
                           )}
                         </AsyncState>
-                        {/* 입력줄은 창 아래 끝에 붙여 둔다(창 전체가 스크롤해도 보이게). 창의 안쪽 여백만큼 내려 아래로 지나가는 대화를 가린다. */}
-                        <div className="sticky -bottom-5 z-10 -mb-5 bg-[#f3f1ea] pt-1 pb-5 sm:-bottom-8">
-                          {closedMeeting ? (
-                            <p className="rounded-[10px] border border-dashed border-[#d6d1c4] bg-white px-3 py-2.5 text-[13px] text-muted-foreground">
-                              끝난 회의라 메시지를 보낼 수 없어요.
-                            </p>
-                          ) : isLeader && !!participant && summary ? (
-                            <div className="grid gap-1.5">
-                              {talkedAfterSummary && (
-                                <p className="text-xs text-[#8a6a00]">
-                                  정리한 뒤에 새 대화가 있어요. 끝내기 전에
-                                  비비에게 정리를 다시 요청해 주세요.
-                                </p>
-                              )}
+                        {!closedMeeting &&
+                          isLeader &&
+                          participant?.status === 'JOINED' &&
+                          summary && (
+                            <section
+                              aria-label="비비 정리 수정"
+                              className="grid gap-1.5 rounded-lg border border-[#e4e0d4] bg-white p-2.5"
+                            >
+                              <p className="text-xs font-semibold">
+                                비비 정리 수정
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                새로 합의한 내용은 아래 메시지로 남겨 주세요.
+                              </p>
                               <InlineMessage
-                                key={`fix:${summary.id}`}
+                                key={summary.id}
                                 label="비비에게 고칠 점"
                                 placeholder="정리에서 고칠 점을 비비에게 말해 주세요"
                                 submitLabel="수정 요청"
@@ -969,28 +969,41 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   }, '비비가 다시 정리했어요.')
                                 }}
                               />
-                            </div>
+                            </section>
+                          )}
+                        {/* 입력줄은 창 아래 끝에 붙여 둔다(창 전체가 스크롤해도 보이게). 창의 안쪽 여백만큼 내려 아래로 지나가는 대화를 가린다. */}
+                        <div className="sticky -bottom-5 z-10 -mb-5 bg-[#f3f1ea] pt-1 pb-5 sm:-bottom-8">
+                          {closedMeeting ? (
+                            <p className="rounded-[10px] border border-dashed border-[#d6d1c4] bg-white px-3 py-2.5 text-[13px] text-muted-foreground">
+                              끝난 회의라 메시지를 보낼 수 없어요.
+                            </p>
                           ) : participant?.status === 'JOINED' ? (
-                            <InlineMessage
-                              key={meeting.id}
-                              label="메시지"
-                              placeholder="메시지 보내기"
-                              submitLabel="보내기"
-                              max={ENTRY_MAX}
-                              onSubmit={async (text) => {
-                                await runPlain(
-                                  () =>
-                                    meetingsApi.addEntry(
-                                      projectId,
-                                      meeting.id,
-                                      {
-                                        text,
-                                      },
-                                    ),
-                                  '메시지를 보냈어요.',
-                                )
-                              }}
-                            />
+                            <div className="grid gap-1.5">
+                              {isLeader && summary && talkedAfterSummary && (
+                                <p className="text-xs text-[#8a6a00]">
+                                  정리한 뒤에 새 대화가 있어요. 끝내기 전에
+                                  비비에게 정리를 다시 요청해 주세요.
+                                </p>
+                              )}
+                              <InlineMessage
+                                key={meeting.id}
+                                label="메시지"
+                                placeholder="메시지 보내기"
+                                submitLabel="보내기"
+                                max={ENTRY_MAX}
+                                onSubmit={async (text) => {
+                                  await runPlain(
+                                    () =>
+                                      meetingsApi.addEntry(
+                                        projectId,
+                                        meeting.id,
+                                        { text },
+                                      ),
+                                    '메시지를 보냈어요.',
+                                  )
+                                }}
+                              />
+                            </div>
                           ) : (
                             <p className="text-sm text-muted-foreground">
                               비비가 부른 사람만 메시지를 보낼 수 있어요.
@@ -1270,8 +1283,7 @@ function Bubble({
   )
 }
 
-// 창 아래에 고정한 한 줄 입력(캔버스 '메시지 보내기 · 보내기', '정리에서 고칠 점… · 수정 요청 · 회의 끝내기').
-// 서버 한도(기록 본문·고칠 점 모두 4,000자, MTG-A06·A12)에 맞춘다.
+// 회의 대화와 정리 수정 요청에 쓰는 한 줄 입력. 서버 한도(4,000자, MTG-A06·A12)에 맞춘다.
 const ENTRY_MAX = 4000
 const messageSchema = (max: number) =>
   z.object({
