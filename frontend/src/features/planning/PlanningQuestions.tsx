@@ -78,8 +78,10 @@ export function PlanningQuestions({
   published: boolean
   onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
 }) {
-  // 답하는 중인 질문의 id. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 id 만 바꿔 넘긴다.
-  const [answeringId, setAnsweringId] = useState<string | null>(null)
+  // 답하는 중인 질문. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 질문을 바꿔 넘긴다.
+  // 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠져도 창을 닫지 않고 연 때의 질문을 보인다 — 쓰던 답이 사라지지 않고,
+  // 저장하면 서버가 409(question_superseded 등)로 이유를 알려 준다(S15P31A108-396).
+  const [opened, setOpened] = useState<PlanningQuestion | null>(null)
   const failed = generations.filter((item) => item.status === 'FAILED')
   const activeIds = generations
     .filter((item) => item.status !== 'FAILED')
@@ -127,7 +129,9 @@ export function PlanningQuestions({
         : false,
   })
   const allQuestions = questions.data?.pages.flatMap((page) => page.items) ?? []
-  const answering = allQuestions.find((item) => item.id === answeringId)
+  const answering = opened
+    ? (allQuestions.find((item) => item.id === opened.id) ?? opened)
+    : undefined
   return (
     <Card>
       <CardHeader>
@@ -218,7 +222,7 @@ export function PlanningQuestions({
                         busy={busy}
                         answerable={answerable}
                         published={published}
-                        onAnswer={() => setAnsweringId(question.id)}
+                        onAnswer={() => setOpened(question)}
                       />
                     ))}
                   </>
@@ -245,8 +249,10 @@ export function PlanningQuestions({
           siblings={allQuestions.filter(
             (item) => item.id === answering.id || !isLocked(item),
           )}
-          onNavigate={setAnsweringId}
-          onClose={() => setAnsweringId(null)}
+          onNavigate={(id) =>
+            setOpened(allQuestions.find((item) => item.id === id) ?? null)
+          }
+          onClose={() => setOpened(null)}
           onSubmit={(input) => onAnswer(answering.id, input)}
         />
       )}

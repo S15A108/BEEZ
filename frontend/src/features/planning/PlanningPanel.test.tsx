@@ -506,6 +506,56 @@ it('갱신 중인 질문이 있으면 목록을 다시 읽어 갱신이 끝난 �
   expect(cardOf('다시 만드는 질문')).toHaveAttribute('role', 'button')
 })
 
+// 답하는 동안 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠지면 창이 안내 없이 닫히고 쓰던 답이 사라졌다.
+it('답하던 질문이 목록에서 빠져도 답변 창과 쓰던 답을 그대로 둔다', async () => {
+  let gone = false
+  const essay = {
+    id: '1',
+    number: 1,
+    question: '답하던 질문',
+    status: 'OPEN' as const,
+    freshness: 'CURRENT' as const,
+    question_type: 'ESSAY' as const,
+    answer_format: { type: 'ESSAY' as const, max_length: 2000 },
+  }
+  // 답한 질문이 '갱신 중'이면 목록을 계속 다시 읽는다.
+  const refreshing = {
+    id: '2',
+    number: 2,
+    question: '갱신 중인 답한 질문',
+    status: 'ANSWERED' as const,
+    answer: '답',
+    freshness: 'REFRESHING' as const,
+  }
+  const questions = vi
+    .spyOn(planningApi, 'questions')
+    .mockImplementation(async () => ({
+      items: gone ? [refreshing] : [essay, refreshing],
+      has_more: false,
+      total_count: gone ? 1 : 2,
+    }))
+  const user = renderPanel()
+  await screen.findByText('답하던 질문')
+  await user.click(cardOf('답하던 질문'))
+  const dialog = await screen.findByRole('dialog')
+  await user.type(
+    within(dialog).getByRole('textbox', { name: '답변' }),
+    '쓰던 답',
+  )
+  gone = true
+  const calls = questions.mock.calls.length
+  await waitFor(() =>
+    expect(questions.mock.calls.length).toBeGreaterThan(calls + 1),
+  )
+  expect(
+    screen.queryByText('답하던 질문', { selector: 'article *' }),
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('dialog')).getByRole('textbox', { name: '답변' }),
+  ).toHaveValue('쓰던 답')
+})
+
 it('기준 설계가 발행된 프로젝트에서는 질문 카드를 눌러 답할 수 없다', async () => {
   renderPanel(true, '101')
   const question = await screen.findByText(

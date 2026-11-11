@@ -205,20 +205,20 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null))).containsEntry("status", "ANSWERED");
     }
 
-    // 반려 뒤 다시 낸 새 버전이 생기면 이전 버전 질문도 새 버전의 갱신 상태를 따르고, 새 버전 질문이 만들어지면 미답변은
-    // 조회할 때 대체로 판정돼 목록·개수에서 빠진다. 행은 바꾸지 않으므로 새 버전이 반려되면 이전 버전 질문이 다시 보인다.
-    @Test void olderVersionQuestionsFollowTheCurrentVersionAndComeBackWhenItIsRejected() {
-        long first = version;
+    // 질문의 기준 버전은 승인본 우선, 없으면 최신 초안이다(QuestionBasisVersion — 기획 분석 화면·설계 초안과 같은 규칙).
+    // 반려 뒤 다시 낸 초안은 그대로 기준이 되어, 이전 버전 질문은 그 초안의 갱신 상태를 따르고 새 질문이 만들어지면
+    // 미답변은 조회할 때 대체로 판정돼 목록·개수·번호에서 빠진다(행은 바꾸지 않는다).
+    @Test void afterARejectedDraftIsResubmittedTheNewDraftBecomesTheBasis() {
         generator.runOnce();
         long[] id = ids();
         questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
-        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=?,approved_at=now() WHERE id=?", leader, first);
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
         version = documentVersion(document, 2, CONTENT);
 
         assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
         fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
 
-        assertThat(generator.runOnce()).as("새 버전 질문 생성").isTrue();
+        assertThat(generator.runOnce()).as("새 초안 질문 생성").isTrue();
         var page = questions.list(leaderCaller, project, null, null, null);
         assertThat(items(page)).extracting(i -> i.get("id")).as("이전 버전은 답한 질문만 남는다")
                 .contains("" + id[0]).doesNotContain("" + id[1], "" + id[2]);
@@ -226,11 +226,27 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(page.get("total_count")).isEqualTo(4L);
         assertThat(items(page)).extracting(i -> i.get("number")).containsExactly(1L, 2L, 3L, 4L);
         fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+    }
 
-        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
-        assertThat(items(questions.list(leaderCaller, project, first, null, null))).extracting(i -> i.get("id"))
-                .as("새 버전이 반려되면 승인된 이전 버전의 질문이 다시 보인다").containsExactly("" + id[0], "" + id[1], "" + id[2]);
-        assertThat(questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null))).containsEntry("status", "ANSWERED");
+    // 승인본 뒤에 다시 낸 초안이 검토 중이면 기준은 계속 승인본이다 — 설계 초안이 쓰는 승인본의 질문에 계속 답할 수 있고,
+    // 검토 중인 초안의 질문은 만들지 않는다. 그 초안이 승인돼 기준이 되면 그때 질문을 만들고 이전 승인본 질문이 따라간다.
+    @Test void aResubmittedDraftBehindTheApprovedVersionBecomesTheBasisOnlyWhenApproved() {
+        long first = version;
+        generator.runOnce();
+        long[] id = ids();
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=?,approved_at=now() WHERE id=?", leader, first);
+        version = documentVersion(document, 2, CONTENT);
+
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(generator.runOnce()).as("검토 중인 초안의 질문은 만들지 않는다").isFalse();
+        assertThat(questions.answer(leaderCaller, project, id[0], new AnswerRequest("승인본에 답", null, null))).containsEntry("status", "ANSWERED");
+
+        jdbc.update("UPDATE document_version SET status='SUPERSEDED' WHERE id=?", first);
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=?,approved_at=now() WHERE id=?", leader, version);
+        assertThat(items(questions.list(leaderCaller, project, first, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+        assertThat(generator.runOnce()).as("새 승인본 질문 생성").isTrue();
+        assertThat(items(questions.list(leaderCaller, project, first, null, null))).extracting(i -> i.get("id")).containsExactly("" + id[0]);
     }
 
     // 자동 재시도를 기다리는 사이 기준이 발행되면 워커가 잡지 않으므로 그 실패가 마지막이다 — '만드는 중'으로 남기지 않는다(S15P31A108-359).

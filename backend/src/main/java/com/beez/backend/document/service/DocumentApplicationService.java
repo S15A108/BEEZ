@@ -381,7 +381,7 @@ public class DocumentApplicationService {
         var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
         var run = one("SELECT * FROM document_processing WHERE document_version_id=:id FOR UPDATE", Map.of("id", version));
         if (List.of("PENDING", "RUNNING").contains(run.get("status"))) throw conflict("analysis_running");
-        // 서버 워커(PlanningQuestionRepository.nextRunnable)는 기준 설계가 있거나 버전이 DRAFT·APPROVED 가 아니면 질문을 만들지 않는다.
+        // 서버 워커(PlanningQuestionRepository.nextRunnable)는 기준 설계가 있거나 버전이 문서의 질문 기준 버전(QuestionBasisVersion)이 아니면 질문을 만들지 않는다.
         // 그런 버전의 실패한 실행을 PENDING 으로 되돌리면 아무도 집지 않아 화면이 '만드는 중'으로 영원히 남으므로 되돌리지 않는다.
         if ("COMPLETED".equals(run.get("status")) && !questionGenerationAvailable(version)
                 && jdbc.sql("SELECT EXISTS(SELECT 1 FROM planning_question_run WHERE document_version_id=:id AND (status='FAILED' OR (status='PENDING' AND error_code IS NOT NULL)))")
@@ -398,11 +398,12 @@ public class DocumentApplicationService {
     }
 
     /** 워커가 이 문서 버전의 보완 질문을 만들 수 있는지. nextRunnable 의 대상 조건(기준 설계 없음, 버전 DRAFT·APPROVED, 보관 안 됨)과 같다. */
+    /** 질문 생성 워커(PlanningQuestionRepository.nextRunnable)가 이 버전의 질문을 만드는지 — 같은 기준 버전 정의를 쓴다. */
     private boolean questionGenerationAvailable(long version) {
         return jdbc.sql("""
                 SELECT EXISTS(SELECT 1 FROM document_version v JOIN document d ON d.id=v.document_id JOIN project p ON p.id=d.project_id
-                               WHERE v.id=:id AND v.status IN ('DRAFT','APPROVED') AND p.archived_at IS NULL AND p.current_baseline_id IS NULL)
-                """).param("id", version).query(Boolean.class).single();
+                               WHERE v.id=:id AND v.id=%s AND p.archived_at IS NULL AND p.current_baseline_id IS NULL)
+                """.formatted(QuestionBasisVersion.idOf("d.id"))).param("id", version).query(Boolean.class).single();
     }
 
     public Map<String, Object> search(CallerContext caller, long project, String query, String mode, String domain,
