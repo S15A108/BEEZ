@@ -182,13 +182,55 @@ class DevelopmentContextMcpIntegrationTests extends IntegrationTestSupport {
         assertThat(body.get("task_design_refs")).extracting(n -> n.get("design_item_version_id").asString())
                 .containsExactly(String.valueOf(api.currentVersionId("API-01")));
         assertThat(packet.get("task_id").asString()).isEqualTo(taskId);
-        String status = created.get("status").asString();
-        if ("DRAFT".equals(status)) {
-            assertThat(packet.get("related_tasks")).isEmpty();
-        } else {
-            assertThat(packet.get("related_tasks").get(0).get("plan_revision_id").asString())
-                    .isEqualTo(created.get("current_plan_revision").get("id").asString());
-        }
+        // 계획을 가진 작업은 READY 다(Task.applyNewPlanRevision). 관련 작업으로 현재 리비전·상태가 남는다
+        assertThat(created.get("status").asString()).isEqualTo("READY");
+        JsonNode related = packet.get("related_tasks").get(0);
+        assertThat(related.get("task_id").asString()).isEqualTo(taskId);
+        assertThat(related.get("plan_revision_id").asString())
+                .isEqualTo(created.get("current_plan_revision").get("id").asString());
+        assertThat(related.get("status").asString()).isEqualTo("READY");
+    }
+
+    /**
+     * 깨지면: 검색 도중 발행된 새 기준과 옛 기준 설계가 섞인 스냅샷을 AI 에 보내거나, 기준 변경을 "잠시 뒤 재시도"(503)로 알린다
+     * (MCP-01 오류표 409 baseline_conflict).
+     */
+    @Test
+    void baselinePublishedDuringSearch_is409_withoutSelectionCall() {
+        when(ai.documentEmbeddings(anyMap())).thenAnswer(invocation -> {
+            // 질의 임베딩을 받는 사이에 팀장이 새 기준을 발행한다
+            api.publish(2, Map.of("API-01", api.currentVersionId("API-01"), "API-02", api.currentVersionId("API-02")));
+            return queryVector();
+        });
+
+        assertThat(error(call("get_development_context", Map.of("request", "로그인 화면 구현"))))
+                .containsEntry("code", "baseline_conflict");
+        verify(ai, never()).developmentContextSelection(any());
+        assertThat(count("select count(*) from dev_context_packet")).isZero();
+    }
+
+    /**
+     * 깨지면: AI 가 받지 못할 큰 스냅샷으로 유료 질의 임베딩부터 부르거나, AI 의 413·400 을 받고서야 실패한다
+     * (AI-A14 BE 매핑 "입력 상한 초과 503, AI 미호출", 상한 200 은 AI MAX_CANDIDATES_PER_KIND).
+     */
+    @Test
+    void snapshotOverAiLimit_is503_beforeAnyPaidCall() {
+        api.jdbc.sql("""
+                with items as (
+                  insert into design_item(project_id,key,kind)
+                  select :p, 'REQ-' || g, 'REQUIREMENT' from generate_series(1, 200) g returning id),
+                versions as (
+                  insert into design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,approved_at)
+                  select id, 1, 'APPROVED', 'r', 1, '{"description":"r"}', 'h-' || id, 'HUMAN', now() from items
+                  returning id, design_item_id)
+                insert into baseline_item(baseline_id,project_id,design_item_id,design_item_version_id)
+                select :b, :p, design_item_id, id from versions
+                """).params(Map.of("p", projectId, "b", baselineId)).update();
+
+        assertThat(error(call("get_development_context", Map.of("request", "로그인 화면 구현"))))
+                .containsEntry("code", "context_not_ready");
+        verify(ai, never()).documentEmbeddings(anyMap());
+        verify(ai, never()).developmentContextSelection(any());
     }
 
     /**

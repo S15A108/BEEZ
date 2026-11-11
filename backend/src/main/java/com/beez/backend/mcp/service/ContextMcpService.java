@@ -85,10 +85,9 @@ public class ContextMcpService {
             lookup.requireTaskInProject(projectId, taskId);
         }
         // 기준이 없으면 AI 를 부르지 않는다. save 도 같은 404 를 주지만 그 전에 비용이 드는 호출을 막는다
-        if (lookup.currentBaselineId(projectId).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음");
-        }
-        SavePacketArgs composed = composer.compose(projectId, taskId, args.request());
+        Long baselineId = lookup.currentBaselineId(projectId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음"));
+        SavePacketArgs composed = composer.compose(projectId, baselineId, taskId, args.request());
         return packets.save(caller, projectId, composed);
     }
 

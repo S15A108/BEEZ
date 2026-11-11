@@ -278,12 +278,22 @@ public class DocumentIndexWorker {
             var hit = new LinkedHashMap<String, Object>(Map.<String, Object>of("type", "DOCUMENT_CHUNK", "id", row.get("id").toString(), "title", row.get("title"),
                     "snippet", row.get("text"), "score", row.get("score"), "source", Map.of("document_id", row.get("document_id").toString(),
                     "document_version_id", row.get("document_version_id").toString(), "version_no", row.get("version_no"),
-                    "location", locator.get("start_line") + "~" + locator.get("end_line") + "행")));
+                    "location", chunkLocation(locator))));
             ChunkRetrievalMetadata.addToHit(hit, row);
             return hit;
         }).toList();
         var result = page(results, more, more ? Base64.getUrlEncoder().withoutPadding().encodeToString((signature + "|" + nextOffset).getBytes(StandardCharsets.UTF_8)) : null);
         result.put("elapsed_ms", (System.nanoTime() - start) / 1_000_000); return result;
+    }
+
+    /**
+     * 청크 위치 표기 "시작~끝행". 문서 검색 결과와 MCP-01 패킷 근거(sources.location)가 같은 표기를 쓴다(S15P31A108-399).
+     * 줄 범위가 없는 locator 는 "원문"(키워드 검색의 문서 단위 결과와 같은 표기)이다.
+     */
+    public static String chunkLocation(Map<String, Object> locator) {
+        Object start = locator.get("start_line");
+        Object end = locator.get("end_line");
+        return start != null && end != null ? start + "~" + end + "행" : "원문";
     }
 
     /** 비비 질문(BEE-A01)용 근거 청크 한 건. 모두 현재 baseline 의 문서 버전에서 나온다 */

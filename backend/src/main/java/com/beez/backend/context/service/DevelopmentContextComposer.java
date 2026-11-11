@@ -70,10 +70,11 @@ public class DevelopmentContextComposer {
         this.json = json;
     }
 
-    /** 구성 결과를 저장 입력으로 돌려준다. projectId·taskId 는 부르는 쪽이 이미 확인했다 */
-    public SavePacketArgs compose(long projectId, Long taskId, String request) {
-        DocumentIndexWorker.Retrieval retrieval = retrieve(projectId, request);
-        long baselineId = retrieval.baselineId();
+    /**
+     * 구성 결과를 저장 입력으로 돌려준다. projectId·taskId·baselineId(지금 기준)는 부르는 쪽이 이미 확인했다.
+     * 비용이 드는 질의 임베딩 전에 DB 만으로 알 수 있는 상한부터 본다.
+     */
+    public SavePacketArgs compose(long projectId, long baselineId, Long taskId, String request) {
         String project = Ids.str(projectId);
         String baseline = Ids.str(baselineId);
 
@@ -106,6 +107,23 @@ public class DevelopmentContextComposer {
             itemMeta.add(meta);
         }
 
+        List<Map<String, Object>> relations = relations(projectId, versionByItem);
+        TaskSnapshot task = taskId == null ? null : task(taskId, versionByItem);
+        if (items.size() > MAX_CANDIDATES_PER_KIND || relations.size() > MAX_RELATIONS) {
+            log.warn("MCP-01 snapshot over AI limit project={} items={} relations={}", projectId, items.size(), relations.size());
+            throw tooLarge();
+        }
+
+        DocumentIndexWorker.Retrieval retrieval = retrieve(projectId, request);
+        if (retrieval.baselineId() != baselineId) {
+            // 설계를 읽은 뒤 검색 전에 새 기준이 발행됐다. 섞인 스냅샷을 보내지 않는다
+            throw baselineConflict();
+        }
+        if (retrieval.documentVersionIds().size() > MAX_DOCUMENT_VERSIONS) {
+            log.warn("MCP-01 snapshot over AI limit project={} documents={}", projectId, retrieval.documentVersionIds().size());
+            throw tooLarge();
+        }
+
         List<Map<String, Object>> evidence = new ArrayList<>();
         List<Map<String, Object>> evidenceMeta = new ArrayList<>();
         for (DocumentIndexWorker.ChunkEvidence chunk : retrieval.evidence()) {
@@ -128,16 +146,6 @@ public class DevelopmentContextComposer {
             meta.put("version_no", chunk.versionNo());
             meta.put("location", location(chunk.locator()));
             evidenceMeta.add(meta);
-        }
-
-        List<Map<String, Object>> relations = relations(projectId, versionByItem);
-        TaskSnapshot task = taskId == null ? null : task(taskId, versionByItem);
-
-        if (items.size() > MAX_CANDIDATES_PER_KIND || relations.size() > MAX_RELATIONS
-                || retrieval.documentVersionIds().size() > MAX_DOCUMENT_VERSIONS) {
-            log.warn("MCP-01 snapshot over AI limit project={} items={} relations={} documents={}", projectId,
-                    items.size(), relations.size(), retrieval.documentVersionIds().size());
-            throw tooLarge();
         }
 
         String requestKey = "dev-context-" + UUID.randomUUID();
@@ -178,13 +186,12 @@ public class DevelopmentContextComposer {
         } catch (ApiException e) {
             if ("baseline_changed".equals(e.getCode())) {
                 // 검색 도중 새 기준이 발행됐다. 저장 때의 기준 충돌과 같은 뜻이다 (MCP-01 409)
-                throw new ApiException(HttpStatus.CONFLICT, "baseline_conflict",
-                        "기준 설계가 변경되었습니다. 최신 기준으로 다시 조회해 주세요.");
+                throw baselineConflict();
             }
             log.warn("MCP-01 evidence search not ready project={} code={}", projectId, e.getCode());
             if ("index_not_ready".equals(e.getCode())) {
-                throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, NOT_READY,
-                        "승인 문서 색인이 아직 준비되지 않았습니다. 색인이 끝난 뒤 다시 조회해 주세요.");
+                // 재시도 여부는 도구 설명(GetDevelopmentContextTool)이 정한다. 메시지는 상태만 적는다
+                throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, NOT_READY, "승인 문서 색인이 아직 준비되지 않았습니다.");
             }
             throw unavailable();
         } catch (RestClientException e) {
@@ -209,10 +216,13 @@ public class DevelopmentContextComposer {
                 .param("b", baselineId).param("p", projectId).query().listOfRows();
     }
 
-    /** 의미 비교에 쓰는 후보 텍스트: 키·제목과 승인 본문 JSON */
-    private static String candidateText(Map<String, Object> row) {
+    /** 의미 비교에 쓰는 후보 텍스트: 키·제목과 승인 본문 JSON. AI 상한은 코드 포인트라 서로게이트 쌍을 끊지 않게 자른다 */
+    static String candidateText(Map<String, Object> row) {
         String text = row.get("key") + " " + Objects.toString(row.get("title"), "") + "\n" + row.get("content");
-        return text.length() > MAX_CANDIDATE_TEXT ? text.substring(0, MAX_CANDIDATE_TEXT) : text;
+        if (text.codePointCount(0, text.length()) <= MAX_CANDIDATE_TEXT) {
+            return text;
+        }
+        return text.substring(0, text.offsetByCodePoints(0, MAX_CANDIDATE_TEXT));
     }
 
     /** content.description. POLICY·CONSTRAINT 는 이 값이 패킷 constraints 가 된다(-132 3절). 설계 저장 검증이 공백을 막는다 */
@@ -221,10 +231,9 @@ public class DevelopmentContextComposer {
         return value instanceof String s && !s.isBlank() ? s : null;
     }
 
+    /** 근거 위치. 문서 검색 결과와 같은 표기(DocumentIndexWorker.chunkLocation)를 쓴다 */
     private static String location(Map<String, Object> locator) {
-        Object start = locator.get("start_line");
-        Object end = locator.get("end_line");
-        String text = start != null && end != null ? start + "~" + end + "행" : "원문";
+        String text = DocumentIndexWorker.chunkLocation(locator);
         return text.length() > MAX_LOCATION ? text.substring(0, MAX_LOCATION) : text;
     }
 
@@ -232,6 +241,8 @@ public class DevelopmentContextComposer {
      * 팀장이 정한 명시 의존(EXPLICIT)의 현재 상태. 쌍마다 한 줄(PK)이다. 버전은 마지막 확정(CONFIRM·KEEP) 이력의 버전이고,
      * AI 는 그 버전이 지금 기준 버전과 다르면 의존을 펼치지 않고 DEPENDENCY_UNVERIFIED 로 표시한다.
      * 이력 버전이 없으면 두 항목의 현재 기준 버전을 쓰고, 그것도 없으면(기준 밖 항목) 보내지 않는다.
+     * 시작 항목이 지금 기준에 없는 관계는 보내지 않는다 — AI 는 기준 항목에서만 의존을 펼치므로 쓰이지 않고, 상한(1,000)만 채운다.
+     * 대상 항목이 기준 밖인 관계는 보낸다(AI 가 DEPENDENCY_UNVERIFIED 로 알린다).
      */
     private List<Map<String, Object>> relations(long projectId, Map<String, String> versionByItem) {
         List<Map<String, Object>> rows = jdbc.sql("""
@@ -250,6 +261,9 @@ public class DevelopmentContextComposer {
         for (Map<String, Object> row : rows) {
             String from = row.get("from_item_id").toString();
             String to = row.get("to_item_id").toString();
+            if (!versionByItem.containsKey(from)) {
+                continue;
+            }
             String fromVersion = row.get("from_version_id") != null ? row.get("from_version_id").toString() : versionByItem.get(from);
             String toVersion = row.get("to_version_id") != null ? row.get("to_version_id").toString() : versionByItem.get(to);
             if (fromVersion == null || toVersion == null) {
@@ -311,8 +325,14 @@ public class DevelopmentContextComposer {
         } catch (RestClientResponseException e) {
             Map<String, Object> error = errorBody(e);
             recordUsage(projectId, taskId, requestKey, error, start);
-            log.warn("MCP-01 context selection failed project={} status={} code={}", projectId, e.getStatusCode().value(),
-                    errorCode(error));
+            if (e.getStatusCode().is4xxClientError()) {
+                // 401 내부 토큰 불일치·400 스냅샷 계약 위반 등은 기다려도 풀리지 않는 설정·코드 결함이다. 일시 장애와 구분해 남긴다
+                log.error("MCP-01 context selection rejected the request project={} status={} code={}", projectId,
+                        e.getStatusCode().value(), errorCode(error));
+            } else {
+                log.warn("MCP-01 context selection failed project={} status={} code={}", projectId, e.getStatusCode().value(),
+                        errorCode(error));
+            }
             throw unavailable();
         } catch (RestClientException e) {
             // 시간 초과·연결 끊김·응답 해석 실패: 모델 호출이 났는지(비용) 알 수 없어 "미확인" 한 줄을 남긴다
@@ -407,8 +427,11 @@ public class DevelopmentContextComposer {
     }
 
     private static ApiException unavailable() {
-        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, NOT_READY,
-                "개발 컨텍스트를 지금 구성할 수 없습니다. 잠시 뒤 다시 조회해 주세요.");
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, NOT_READY, "개발 컨텍스트 구성 AI 를 지금 쓸 수 없습니다.");
+    }
+
+    private static ApiException baselineConflict() {
+        return new ApiException(HttpStatus.CONFLICT, "baseline_conflict", "기준 설계가 변경되었습니다. 최신 기준으로 다시 조회해 주세요.");
     }
 
     private static ApiException tooLarge() {
