@@ -1,8 +1,12 @@
 """Review candidates and supplement questions for one fixed document version (#133)."""
 
 from .proposer import (
+    DEFAULT_OUTPUT_TOKEN_LIMIT,
+    DEFAULT_TIMEOUT_SECONDS,
     MAX_MODEL_CANDIDATES,
+    MAX_OUTPUT_TOKEN_LIMIT,
     MAX_PAYLOAD_BYTES,
+    MAX_TIMEOUT_SECONDS,
     CandidateProposal,
     CandidateProposer,
     LLMCandidateProposer,
@@ -25,8 +29,12 @@ from .service import (
 )
 
 __all__ = [
+    "DEFAULT_OUTPUT_TOKEN_LIMIT",
+    "DEFAULT_TIMEOUT_SECONDS",
     "MAX_MODEL_CANDIDATES",
+    "MAX_OUTPUT_TOKEN_LIMIT",
     "MAX_PAYLOAD_BYTES",
+    "MAX_TIMEOUT_SECONDS",
     "CandidateProposal",
     "CandidateProposer",
     "LLMCandidateProposer",

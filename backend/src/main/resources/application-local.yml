@@ -2,10 +2,6 @@
 beez:
   mail:
     log-body: true   # 로컬은 메일을 보내지 않으므로 가입 인증 코드를 로그로 받는다. 다른 프로필에서는 켜지 않는다
-  planning:
-    # 기획 보완 질문 생성: AI 모델 제한(PLANNING_QUESTIONS_LLM_TIMEOUT_SECONDS, 로컬 60초)보다 길게 둔다.
-    # 기본 40초면 출력이 긴 문서에서 백엔드가 먼저 끊는다
-    question-read-timeout: ${BEEZ_PLANNING_QUESTION_READ_TIMEOUT:70s}
   document:
     # 로컬 색인용. 비우면 기본값 unconfigured 로 색인이 embedding_profile_not_configured 로 멈춘다.
     # ai 의 GMS_EMBEDDING_MODEL·GMS_EMBEDDING_DIMENSION(기본 1024)과 같아야 한다 (프로필 = gms-small-{차원}-v1)

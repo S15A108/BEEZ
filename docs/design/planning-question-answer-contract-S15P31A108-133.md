@@ -161,7 +161,7 @@ SupplementQuestion:
 | 413 / 415 | `request_too_large` / `unsupported_media_type` | 본문 2 MiB 초과(설정값) / 미디어 타입 |
 | 422 | `invalid_ai_input` | 파서 거부(`source_hash_mismatch`, `unsupported_construct` 등), 모델 입력 256 KiB 초과 |
 | 502 | `model_unavailable` | 모델 호출 실패, 출력 구조 위반, `GMS_KEY` 없음 |
-| 504 | `model_timeout` | 모델 시간 예산 초과(`PLANNING_QUESTIONS_LLM_TIMEOUT_SECONDS`, 기본 30초) |
+| 504 | `model_timeout` | 모델 시간 예산 초과(`PLANNING_QUESTIONS_LLM_TIMEOUT_SECONDS`, 기본 90초, 0 초과 240 이하. 출력 상한 `PLANNING_QUESTIONS_LLM_OUTPUT_TOKEN_LIMIT` 기본 8192, 1~16384, 추론 토큰 포함 — S15P31A108-388 실측) |
 | 502 | `planning_questions_failed` | 그 밖의 AI 내부 오류 |
 
 ## 10. 담당자 확인 필요·미완료

@@ -774,18 +774,30 @@ export function taskRoutes(
         approved_version ? [{ title, version: approved_version }] : [],
       )
       const first = found[0]
+      const { origin, text, sources, unresolved } = templateGeneration(
+        first
+          ? `${first.title}의 승인 원문을 확인해 주세요. ${first.version.content?.slice(0, 250) ?? ''}`
+          : '현재 승인된 문서가 없어요. 공용 문서를 검토하고 기준 설계를 발행해 주세요.',
+        found.slice(0, 1).map(({ title, version }) => ({
+          document_id: version.document_id,
+          document_version_id: version.id,
+          version_no: version.version_no,
+          location: title,
+        })),
+      )
       return {
-        data: templateGeneration(
-          first
-            ? `${first.title}의 승인 원문을 확인해 주세요. ${first.version.content?.slice(0, 250) ?? ''}`
-            : '현재 승인된 문서가 없어요. 공용 문서를 검토하고 기준 설계를 발행해 주세요.',
-          found.slice(0, 1).map(({ title, version }) => ({
-            document_id: version.document_id,
-            document_version_id: version.id,
-            version_no: version.version_no,
-            location: title,
-          })),
-        ),
+        data: {
+          origin,
+          text,
+          sources,
+          unresolved,
+          answer_id: nextId(database),
+          citations: [],
+          grounded: false,
+          mode: 'APPROVED',
+          baseline_id: project.project.current_baseline.id,
+          document_version_ids: found.map(({ version }) => version.id),
+        },
       }
     }
     case 'BEE-A02':
@@ -816,7 +828,7 @@ export function taskRoutes(
                     .slice(0, 1)
                     .map((member) => ({
                       member_id: member.id,
-                      reason: '예시 대안입니다. 담당 영역을 확인해 주세요.',
+                      reason: '예시 대안입니다. 담당 도메인을 확인해 주세요.',
                     })),
                 },
               ]
