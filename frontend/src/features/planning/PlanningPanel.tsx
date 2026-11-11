@@ -207,6 +207,16 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         }),
       DRAFT_ACCEPTED,
     )
+  // 자동으로 만들어지지 않은 문서(자동 생성이 꺼져 있거나 이 프로젝트가 대상이 아닐 때)는 팀장이 직접 처음 만든다.
+  const createDocumentDrafts = (versionIds: string[]) =>
+    perform(
+      () =>
+        planningApi.generateDrafts(projectId, {
+          document_version_ids: versionIds,
+          mode: 'DOCUMENT_ONLY',
+        }),
+      '문서에서 후보를 만들도록 접수했어요. 끝나면 여기에 나와요.',
+    )
   // 문서에서 뽑은 후보 중 실패한 문서 하나의 실패한 부분만 다시 만든다(서버가 실패한 부분만 되돌려 돌린다).
   const retryDocumentDrafts = (versionId: string) =>
     perform(
@@ -390,6 +400,21 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                     isLeader={isLeader}
                     busy={action.busy}
                     onRetry={retryDocumentDrafts}
+                    creatableVersionIds={
+                      analysesReady
+                        ? versions
+                            .filter(
+                              (version) =>
+                                !data.jobs.some(
+                                  (job) =>
+                                    job.mode === 'DOCUMENT_ONLY' &&
+                                    job.document_version_id === version.id,
+                                ),
+                            )
+                            .map((version) => version.id)
+                        : []
+                    }
+                    onCreate={createDocumentDrafts}
                     onAdopt={async (input) =>
                       (await action.run(
                         () => planningApi.adoptCandidates(projectId, input),

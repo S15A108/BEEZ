@@ -126,9 +126,14 @@ export const draftFieldChangeSchema = z.object({
 })
 export type DraftFieldChange = z.infer<typeof draftFieldChangeSchema>
 
-// 이미 있는 항목·이미 채택한 후보·이미 폐기한 후보와 같은 후보는 겹침으로 구분해 보여 준다.
+// 이미 있는 항목·이미 채택한 후보·이미 폐기한 후보·다른 문서에서 아직 결정하지 않은 후보와 같은 후보는 겹침으로 구분해 보여 준다.
 export const draftCandidateOverlapSchema = z.object({
-  kind: z.enum(['EXISTING_ITEM', 'ADOPTED_CANDIDATE', 'DISCARDED_CANDIDATE']),
+  kind: z.enum([
+    'EXISTING_ITEM',
+    'ADOPTED_CANDIDATE',
+    'DISCARDED_CANDIDATE',
+    'PENDING_CANDIDATE',
+  ]),
   ref_id: common.idSchema,
 })
 export type DraftCandidateOverlap = z.infer<typeof draftCandidateOverlapSchema>

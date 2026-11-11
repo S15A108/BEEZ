@@ -298,3 +298,55 @@ it('시작 전 요약은 채택하지 않은 후보·만드는 중·실패한 �
     ]).open,
   ).toBe(false)
 })
+
+it('자동으로 만들어지지 않은 문서는 팀장이 직접 후보를 만들 수 있다', async () => {
+  const user = userEvent.setup()
+  const onCreate = vi.fn()
+  show([], { creatableVersionIds: ['11', '12'], onCreate })
+  expect(
+    screen.getByText('자동으로 만들어지지 않았다면 직접 만들 수 있어요.'),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '문서에서 후보 만들기' }))
+  expect(onCreate).toHaveBeenCalledWith(['11', '12'])
+})
+
+it('팀원에게는 직접 만들기 버튼이 없고, 만드는 중에는 막는다', () => {
+  show([], { creatableVersionIds: ['11'], onCreate: vi.fn(), isLeader: false })
+  expect(
+    screen.queryByRole('button', { name: '문서에서 후보 만들기' }),
+  ).toBeNull()
+})
+
+it('만드는 작업이 도는 동안에는 직접 만들기를 막는다', () => {
+  show([job('1', '11', { status: 'RUNNING' })], {
+    creatableVersionIds: ['12'],
+    onCreate: vi.fn(),
+  })
+  expect(
+    screen.getByRole('button', { name: '문서에서 후보 만들기' }),
+  ).toBeDisabled()
+})
+
+it('다른 문서에서 뽑은 후보와 같은 후보는 그렇게 표시하고 전체 선택에서 뺀다', async () => {
+  const user = userEvent.setup()
+  const onAdopt = vi
+    .fn()
+    .mockResolvedValue({ succeeded: 1, failed: 0, results: [] })
+  show(
+    [
+      job('2', '12', {
+        candidates: [
+          candidate('21', '새 후보'),
+          candidate('22', '겹치는 후보', {
+            overlap: { kind: 'PENDING_CANDIDATE', ref_id: '21' },
+          }),
+        ],
+      }),
+    ],
+    { onAdopt },
+  )
+  expect(screen.getByText(/비슷한 후보 1개/)).toBeInTheDocument()
+  await user.click(screen.getByRole('checkbox', { name: '전체 선택' }))
+  await user.click(screen.getByRole('button', { name: '선택한 항목 채택' }))
+  expect(onAdopt).toHaveBeenCalledWith({ items: [{ candidate_id: '21' }] })
+})

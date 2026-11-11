@@ -40,6 +40,7 @@ const overlapLabel = {
   EXISTING_ITEM: '이미 있는 설계 항목과 같아요',
   ADOPTED_CANDIDATE: '이미 채택한 후보와 같아요',
   DISCARDED_CANDIDATE: '이전에 폐기한 후보와 같아요',
+  PENDING_CANDIDATE: '다른 문서에서 뽑은 후보와 같아요',
 } as const
 
 function JobStatus({
@@ -196,6 +197,8 @@ export function DocumentCandidates({
   isLeader,
   busy,
   onRetry,
+  creatableVersionIds = [],
+  onCreate,
   onAdopt,
   onDiscard,
 }: {
@@ -206,6 +209,9 @@ export function DocumentCandidates({
   busy: boolean
   /** 실패한 문서 하나의 실패한 부분만 다시 만든다 */
   onRetry: (versionId: string) => void
+  /** 아직 문서에서 후보를 만든 적 없는 문서 버전(자동 생성이 꺼져 있거나 이 프로젝트가 자동 생성 대상이 아닐 때 팀장이 직접 만든다) */
+  creatableVersionIds?: string[]
+  onCreate?: (versionIds: string[]) => void
   onAdopt: (input: BatchCandidatesInput) => Promise<BatchCandidatesResponse>
   onDiscard: (input: BatchCandidatesInput) => Promise<BatchCandidatesResponse>
 }) {
@@ -293,6 +299,23 @@ export function DocumentCandidates({
           <EmptyState>
             문서 4종이 모두 승인되고 색인이 끝나면 후보가 여기에 나와요.
           </EmptyState>
+        )}
+        {isLeader && onCreate && creatableVersionIds.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3">
+            <span className="text-sm text-muted-foreground">
+              {latest.length === 0
+                ? '자동으로 만들어지지 않았다면 직접 만들 수 있어요.'
+                : `후보를 아직 만들지 않은 문서가 ${creatableVersionIds.length}개 있어요.`}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || working || latest.some(isActiveJob)}
+              onClick={() => onCreate(creatableVersionIds)}
+            >
+              문서에서 후보 만들기
+            </Button>
+          </div>
         )}
         {latest.map((job) => (
           <JobStatus
