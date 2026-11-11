@@ -19,17 +19,33 @@ export type CreateInput = z.infer<typeof createInputSchema>
 
 export const createResponseSchema = common.taskDetailSchema
 
-export const breakdownResponseSchema = z.object({
+const breakdownJob = {
+  id: common.idSchema,
   baseline_id: common.idSchema,
-  tasks: z.array(
-    z.object({
-      id: common.idSchema,
-      key: z.string(),
-      title: z.string(),
-      assignee_member_id: common.idSchema.nullish(),
-    }),
-  ),
-})
+}
+export const breakdownJobSchema = z.discriminatedUnion('status', [
+  z.object({ ...breakdownJob, status: z.enum(['PENDING', 'RUNNING']) }),
+  z.object({
+    ...breakdownJob,
+    status: z.literal('COMPLETED'),
+    tasks: z.array(
+      z.object({
+        id: common.idSchema,
+        key: z.string(),
+        title: z.string(),
+        assignee_member_id: common.idSchema.nullish(),
+      }),
+    ),
+  }),
+  z.object({
+    ...breakdownJob,
+    status: z.literal('FAILED'),
+    error_code: z.string().optional(),
+    retryable: z.boolean().optional(),
+  }),
+])
+export const breakdownStatusResponseSchema = breakdownJobSchema.nullable()
+export type BreakdownJob = z.infer<typeof breakdownJobSchema>
 export type CreateResponse = z.infer<typeof createResponseSchema>
 
 // TSK-A02(11-04 사용자 결정): status는 여러 값을 받고(같은 이름 반복), unassigned=true면 담당자 없는 작업만.
