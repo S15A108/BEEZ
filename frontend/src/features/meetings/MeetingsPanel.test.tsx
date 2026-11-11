@@ -2,10 +2,11 @@
 import { webcrypto } from 'node:crypto'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
+import { meetingSchema } from '@/api/contracts/common'
 import { MISSING_API_MESSAGE } from '@/api/error'
 import { authApi, meetingsApi } from '@/api/services'
 import {
@@ -32,6 +33,7 @@ beforeEach(async () => {
 })
 afterEach(() => {
   client.clear()
+  vi.restoreAllMocks()
   restore()
 })
 
@@ -178,6 +180,38 @@ it('회의를 끝내면 변경 제안이 만들어지고 끝난 회의로 옮겨
   await user.click(screen.getByRole('button', { name: '변경 제안 보기' }))
   expect(useWorkspaceStore.getState().pane).toBe('changes')
   expect(useWorkspaceStore.getState().focusId).toBeTruthy()
+})
+
+it('바꿀 문서가 없는 정리로 회의를 닫을 때 변경 제안을 예고하지 않는다', async () => {
+  const summarize = meetingsApi.summarize
+  const latestSummary = meetingsApi.latestSummary
+  vi.spyOn(meetingsApi, 'summarize').mockImplementation(async (...args) => ({
+    ...(await summarize(...args)),
+    document_changes: [],
+  }))
+  vi.spyOn(meetingsApi, 'latestSummary').mockImplementation(
+    async (...args) => ({
+      ...(await latestSummary(...args)),
+      document_changes: [],
+    }),
+  )
+  const user = userEvent.setup()
+  renderPanel(true)
+  const log = await requestSummary(user)
+  await within(log).findByText(/바뀔 문서가 없어요/)
+  await user.click(screen.getByRole('button', { name: '회의 끝내기' }))
+  expect(
+    screen.getByText('확인한 정리를 기록에 남기고 회의를 닫아요.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '회의 끝내고 변경 제안 만들기' }),
+  ).not.toBeInTheDocument()
+  expect(
+    within(screen.getByRole('list', { name: '회의 단계' })).queryByText(
+      '변경 제안 승인',
+    ),
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '회의 끝내기' })).toBeEnabled()
 })
 
 // 정리 뒤에 새 대화가 있으면 서버가 409 summary_outdated 로 막는다. 회의는 열린 채 정리를 다시 요청하게 한다.
@@ -641,6 +675,11 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     await within(agenda).findByRole('button', { name: /TASK-001/ }),
   ).toBeInTheDocument()
+  const guidance = within(agenda).getByRole('region', {
+    name: '비비의 충돌 안내',
+  })
+  expect(guidance).toHaveTextContent('회의에서 정할 내용')
+  expect(within(guidance).queryByRole('table')).not.toBeInTheDocument()
   const steps = screen.getByRole('list', { name: '회의 단계' })
   expect(within(steps).getByText('대화').closest('li')).toHaveAttribute(
     'aria-current',
@@ -659,6 +698,91 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     screen.queryByRole('button', { name: '비비에게 정리 요청' }),
   ).not.toBeInTheDocument()
+})
+
+it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근거 버전과 작업을 바로 연다', async () => {
+  const get = meetingsApi.get
+  vi.spyOn(meetingsApi, 'get').mockImplementation(async (...args) =>
+    meetingSchema.parse({
+      ...(await get(...args)),
+      conflict_guidance: {
+        validation_id: '700',
+        tasks: [
+          { task_id: '502', title: '화면 담당', revision_no: 2 },
+          { task_id: '501', title: 'API 담당', revision_no: 3 },
+        ],
+        conflicts: [
+          {
+            message: '두 작업이 같은 API 계약을 변경하려고 해요.',
+            design_item: {
+              id: '115',
+              version_id: '126',
+              key: 'API-01',
+              title: 'GET /users',
+              document_id: '203',
+              document_version_id: '213',
+              location: '5행',
+            },
+            differences: [
+              {
+                path: 'response.status',
+                first_value: 'string',
+                second_value: 'integer',
+              },
+              { path: 'response.message', first_value: 'string' },
+            ],
+          },
+        ],
+      },
+    }),
+  )
+  const user = userEvent.setup()
+  renderPanel(true)
+  const guidance = await screen.findByRole('region', {
+    name: '비비의 충돌 안내',
+  })
+  expect(guidance).toHaveTextContent('API-01 · GET /users')
+  expect(guidance).toHaveTextContent(
+    '두 작업이 같은 API 계약을 변경하려고 해요.',
+  )
+  expect(guidance).toHaveTextContent(
+    '누가 설계 변경을 맡을지와 표에 나온 항목의 최종 규격',
+  )
+  expect(guidance).toHaveTextContent('작업 범위를 나누고 회의 대화에 남겨요.')
+  expect(guidance).toHaveTextContent('승인·발행하면 공용 문서에 반영돼요.')
+  const table = within(guidance).getByRole('table')
+  expect(
+    within(table).getByRole('columnheader', { name: /화면 담당 · 계획 r2/ }),
+  ).toBeInTheDocument()
+  expect(
+    within(table).getByRole('columnheader', { name: /API 담당 · 계획 r3/ }),
+  ).toBeInTheDocument()
+  const status = within(table).getByRole('row', { name: /response\.status/ })
+  expect(
+    within(status)
+      .getAllByRole('cell')
+      .map((cell) => cell.textContent),
+  ).toEqual(['string', 'integer'])
+  expect(
+    within(table).getByRole('row', { name: /response\.message/ }),
+  ).toHaveTextContent('제안 값 없음')
+  const agenda = screen.getByRole('region', { name: '안건' })
+  await user.click(
+    await within(agenda).findByRole('button', { name: /TASK-002/ }),
+  )
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'tasks',
+    focusId: '502',
+  })
+  act(() => useWorkspaceStore.getState().openPane('meetings'))
+  const documentLink = await screen.findByRole('button', {
+    name: /근거 문서.*5행/,
+  })
+  await user.click(documentLink)
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'documents',
+    focusId: 'version:203:213',
+  })
 })
 
 // 캔버스 PNL-06-v2: 참여자 수는 비비를 포함하고, 칩마다 이 회의에서 맡은 작업을 보인다.

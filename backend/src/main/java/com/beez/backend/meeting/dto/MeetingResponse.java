@@ -16,6 +16,7 @@ public record MeetingResponse(
         Instant closedAt,
         String closedBy,
         List<ParticipantResponse> participants,
-        Instant createdAt
+        Instant createdAt,
+        MeetingConflictGuidance conflictGuidance
 ) {
 }

@@ -42,6 +42,7 @@ import { latestSummaryKey, rememberSummary } from './summaryCache'
 import { SummaryCard } from './SummaryCard'
 import { useMeetingList } from './useMeetingList'
 import { MeetingRevisionDraft } from './MeetingRevisionDraft'
+import { MeetingConflictGuidance } from './MeetingConflictGuidance'
 
 interface Props {
   projectId: string
@@ -164,6 +165,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     review && summaryQuery.data?.entry.id === review.id
       ? summaryQuery.data
       : undefined
+  const hasDocumentChanges = !!summary?.document_changes.length
   // 정리에 쓴 마지막 기록(through_entry_id) 뒤에 사람이 쓴 기록이 있으면 그 정리로는 끝낼 수 없다(서버가 409
   // summary_outdated 로 막는다). 결과 기록의 ID 가 아니라 이 값과 비교해야 비비가 정리하는 동안 올라온 대화도 잡는다.
   const summaryThroughId = review?.through_entry_id ?? summary?.through_entry_id
@@ -408,10 +410,14 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               회의를 끝낼까요?
                             </h3>
                             <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-                              비비 정리로 변경 제안을 만들고 회의를 닫아요. 대화
-                              기록은 그대로 남아요.
+                              {hasDocumentChanges
+                                ? '비비 정리로 변경 제안을 만들고 회의를 닫아요.'
+                                : '확인한 정리를 기록에 남기고 회의를 닫아요.'}
                             </p>
-                            <MeetingSteps current={2} />
+                            <MeetingSteps
+                              current={2}
+                              hasProposalStep={hasDocumentChanges}
+                            />
                           </div>
                           <div className="grid flex-1 content-start gap-3">
                             <article
@@ -422,9 +428,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             >
                               <h4 className="mb-2.5 flex items-center justify-between gap-2 text-sm font-bold">
                                 비비 정리
-                                <span className="rounded-full bg-[#fdf0c8] px-2 py-0.5 text-xs font-semibold text-[#6e5200]">
-                                  변경 제안에 담길 내용
-                                </span>
+                                {hasDocumentChanges && (
+                                  <span className="rounded-full bg-[#fdf0c8] px-2 py-0.5 text-xs font-semibold text-[#6e5200]">
+                                    변경 제안에 담길 내용
+                                  </span>
+                                )}
                               </h4>
                               <SummaryCard
                                 summary={summary}
@@ -437,16 +445,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               />
                             </article>
                             <ul className="list-disc pl-[18px] text-[13px] leading-[21px] text-[#57534e]">
-                              {summary.document_changes.length > 0 ? (
-                                notify.length > 0 && (
-                                  <li>
-                                    {notify.join(', ')}에게 변경 제안을 알려요.
-                                  </li>
-                                )
-                              ) : (
+                              {hasDocumentChanges && notify.length > 0 && (
                                 <li>
-                                  바뀔 문서가 없어 변경 제안은 만들어지지
-                                  않아요.
+                                  {notify.join(', ')}에게 변경 제안을 알려요.
                                 </li>
                               )}
                               <li>끝난 회의에는 더 쓸 수 없어요.</li>
@@ -466,8 +467,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               </p>
                             ) : (
                               <p className="text-xs text-muted-foreground">
-                                팀장만 끝낼 수 있어요. 기준은 변경 제안에서
-                                승인·발행해야 바뀌어요.
+                                팀장만 끝낼 수 있어요.
+                                {hasDocumentChanges &&
+                                  ' 공용 문서는 변경 제안을 승인·발행하면 바뀌어요.'}
                               </p>
                             )}
                             <div className="flex flex-wrap gap-2">
@@ -527,7 +529,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   }, '').catch(() => undefined)
                                 }
                               >
-                                회의 끝내고 변경 제안 만들기
+                                {hasDocumentChanges
+                                  ? '회의 끝내고 변경 제안 만들기'
+                                  : '회의 끝내기'}
                               </Button>
                             </div>
                           </div>
@@ -566,39 +570,129 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   {closeResult.notified.length
                                     ? `${closeResult.notified.join(', ')}에게 알렸어요. `
                                     : ''}
-                                  기준은 변경 제안을 승인·발행해야 바뀌어요.
+                                  공용 문서는 변경 제안을 승인·발행하면
+                                  바뀌어요.
                                 </span>
                               )}
                             </span>
                           </section>
                         )}
-                        <div className="flex flex-wrap items-start justify-between gap-4">
-                          <div className="grid gap-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-lg font-bold">
-                                {meeting.title}
-                              </h3>
-                              <MeetingChip
-                                status={meeting.status}
-                                origin={meeting.origin}
-                              />
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {[
-                                formatDate(meeting.created_at),
-                                closedMeeting
-                                  ? `${nameOfAccount(meeting.closed_by)}이 끝냄`
-                                  : meeting.origin === 'BEE_CONFLICT' &&
-                                    '비비가 열었어요',
-                                '기록은 원문 그대로 남아요',
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </p>
-                            <MeetingSteps
-                              current={closedMeeting ? 3 : review ? 1 : 0}
+                        <div className="grid gap-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-lg font-bold">
+                              {meeting.title}
+                            </h3>
+                            <MeetingChip
+                              status={meeting.status}
+                              origin={meeting.origin}
                             />
                           </div>
+                          <p className="text-xs text-muted-foreground">
+                            {[
+                              formatDate(meeting.created_at),
+                              closedMeeting
+                                ? `${nameOfAccount(meeting.closed_by)}이 끝냄`
+                                : meeting.origin === 'BEE_CONFLICT' &&
+                                  '비비가 열었어요',
+                              '기록은 원문 그대로 남아요',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        </div>
+                        {(meeting.conflict_summary ||
+                          meeting.conflict_guidance) &&
+                          (review && !agendaOpen ? (
+                            <section
+                              aria-label="안건"
+                              className={cn(
+                                'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-3.5 py-2.5 text-[13px]',
+                                line,
+                              )}
+                            >
+                              <span>
+                                <strong className="mr-2">안건</strong>
+                                {meeting.conflict_summary}
+                                {meeting.task_ids?.length
+                                  ? ` · 관련 작업 ${meeting.task_ids.map((id) => taskOf(id)?.key ?? '작업').join(' · ')}`
+                                  : ''}
+                              </span>
+                              <button
+                                type="button"
+                                className="text-xs font-semibold text-[#8a6a00]"
+                                onClick={() => setAgendaOpen(true)}
+                              >
+                                펼치기
+                              </button>
+                            </section>
+                          ) : (
+                            <section
+                              aria-label="안건"
+                              className="grid gap-2.5 rounded-2xl border border-[#f3e2a6] bg-[#fff8e0] px-3.5 py-3 text-sm"
+                            >
+                              {!meeting.conflict_guidance && (
+                                <p className="flex flex-wrap items-baseline justify-between gap-2">
+                                  <strong>{meeting.conflict_summary}</strong>
+                                  <span className="text-xs text-muted-foreground">
+                                    비비가 찾은 충돌 ·{' '}
+                                    {formatTime(meeting.created_at)}
+                                  </span>
+                                </p>
+                              )}
+                              {(meeting.origin === 'BEE_CONFLICT' ||
+                                meeting.conflict_guidance) && (
+                                <MeetingConflictGuidance
+                                  guidance={meeting.conflict_guidance}
+                                  brief={
+                                    notes.find(
+                                      (entry) =>
+                                        entry.kind === 'CONFLICT_BRIEF',
+                                    )?.text
+                                  }
+                                  closed={closedMeeting}
+                                  taskKeyOf={(id) => taskOf(id)?.key}
+                                  documentTitleOf={documentTitleOf}
+                                />
+                              )}
+                              <ul className="grid gap-2 sm:grid-cols-2">
+                                {(meeting.task_ids ?? []).map((id) => {
+                                  const task = taskOf(id)
+                                  return (
+                                    <li key={id}>
+                                      <button
+                                        type="button"
+                                        className={cn(
+                                          'w-full rounded-xl border bg-white px-3 py-2 text-left text-xs text-muted-foreground hover:bg-[#fbfaf6]',
+                                          line,
+                                        )}
+                                        onClick={() => openPane('tasks', id)}
+                                      >
+                                        <strong className="text-foreground">
+                                          {task?.key ?? '작업'}
+                                        </strong>{' '}
+                                        {task?.current_plan_revision.plan
+                                          .title ??
+                                          meeting.conflict_guidance?.tasks.find(
+                                            (item) => item.task_id === id,
+                                          )?.title}
+                                        {task &&
+                                          ` · ${task.assignee_member_id ? nameOfMember(task.assignee_member_id) : '담당자 없음'}`}
+                                      </button>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            </section>
+                          ))}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <MeetingSteps
+                            current={closedMeeting ? 3 : review ? 1 : 0}
+                            hasProposalStep={
+                              closedMeeting
+                                ? !!meeting.change_proposal_id
+                                : !summary || hasDocumentChanges
+                            }
+                          />
                           {closedMeeting ? (
                             meeting.change_proposal_id && (
                               <Button
@@ -755,69 +849,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               다시 요청하면 새로 받아요.
                             </p>
                           )}
-                        {meeting.conflict_summary &&
-                          (review && !agendaOpen ? (
-                            <section
-                              aria-label="안건"
-                              className={cn(
-                                'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-3.5 py-2.5 text-[13px]',
-                                line,
-                              )}
-                            >
-                              <span>
-                                <strong className="mr-2">안건</strong>
-                                {meeting.conflict_summary}
-                                {meeting.task_ids?.length
-                                  ? ` · ${meeting.task_ids.map((id) => taskOf(id)?.key ?? '작업').join('과 ')}가 달라요`
-                                  : ''}
-                              </span>
-                              <button
-                                type="button"
-                                className="text-xs font-semibold text-[#8a6a00]"
-                                onClick={() => setAgendaOpen(true)}
-                              >
-                                펼치기
-                              </button>
-                            </section>
-                          ) : (
-                            <section
-                              aria-label="안건"
-                              className="grid gap-2.5 rounded-2xl border border-[#f3e2a6] bg-[#fff8e0] px-3.5 py-3 text-sm"
-                            >
-                              <p className="flex flex-wrap items-baseline justify-between gap-2">
-                                <strong>{meeting.conflict_summary}</strong>
-                                <span className="text-xs text-muted-foreground">
-                                  비비가 찾은 충돌 ·{' '}
-                                  {formatTime(meeting.created_at)}
-                                </span>
-                              </p>
-                              {/* API 없음: 작업마다 어떻게 다른지와 기준 문단(REQ-005 보기)은 충돌 상세 필드가 생기면 카드에 붙인다. 지금은 비비 첫 말풍선에 있다. */}
-                              <ul className="grid gap-2 sm:grid-cols-2">
-                                {(meeting.task_ids ?? []).map((id) => {
-                                  const task = taskOf(id)
-                                  return (
-                                    <li key={id}>
-                                      <button
-                                        type="button"
-                                        className={cn(
-                                          'w-full rounded-xl border bg-white px-3 py-2 text-left text-xs text-muted-foreground hover:bg-[#fbfaf6]',
-                                          line,
-                                        )}
-                                        onClick={() => openPane('tasks', id)}
-                                      >
-                                        <strong className="text-foreground">
-                                          {task?.key ?? '작업'}
-                                        </strong>{' '}
-                                        {task?.current_plan_revision.plan.title}
-                                        {task &&
-                                          ` · ${task.assignee_member_id ? nameOfMember(task.assignee_member_id) : '담당자 없음'}`}
-                                      </button>
-                                    </li>
-                                  )
-                                })}
-                              </ul>
-                            </section>
-                          ))}
                         {isLeader &&
                           participant?.status === 'JOINED' &&
                           !closedMeeting && (
@@ -1021,13 +1052,20 @@ function MeetingChip({
 }
 
 // 회의 단계: 대화 → 비비 정리 → 회의 끝내기 → 변경 제안 승인
-function MeetingSteps({ current }: { current: number }) {
+function MeetingSteps({
+  current,
+  hasProposalStep,
+}: {
+  current: number
+  hasProposalStep: boolean
+}) {
+  const steps = hasProposalStep ? meetingSteps : meetingSteps.slice(0, -1)
   return (
     <ol
       aria-label="회의 단계"
       className="mt-1.5 flex flex-wrap items-center gap-0.5 text-xs"
     >
-      {meetingSteps.map((step, index) => (
+      {steps.map((step, index) => (
         <li
           key={step}
           aria-current={index === current ? 'step' : undefined}
@@ -1044,7 +1082,7 @@ function MeetingSteps({ current }: { current: number }) {
             <span aria-hidden="true">{index < current ? '✓' : index + 1}</span>
             {step}
           </span>
-          {index < meetingSteps.length - 1 && <span aria-hidden="true">›</span>}
+          {index < steps.length - 1 && <span aria-hidden="true">›</span>}
         </li>
       ))}
     </ol>
