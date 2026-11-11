@@ -798,7 +798,16 @@ const uploadSchema = z.object({
     })
     .refine((file) => file.size <= MAX_FILE_BYTES, {
       error: '파일이 너무 커요. 1 MiB 이하 Markdown 파일만 올릴 수 있어요.',
-    }),
+    })
+    // 서버는 0바이트이거나 공백(BOM 포함)뿐인 파일을 400으로 거절한다. 너무 큰 파일은 읽지 않는다.
+    .refine(
+      async (file) =>
+        file.size > MAX_FILE_BYTES || (await file.text()).trim() !== '',
+      {
+        error:
+          '빈 파일은 올릴 수 없어요. 내용이 있는 Markdown(.md) 파일을 골라 주세요.',
+      },
+    ),
   title: z.string().trim().min(1, '문서 제목을 입력해 주세요.'),
   domain: z.string(),
 })

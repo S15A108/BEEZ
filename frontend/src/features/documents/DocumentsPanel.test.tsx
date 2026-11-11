@@ -477,6 +477,35 @@ it('시작 전에는 문서 등록 버튼이 없고, 형식이 다르면 파일 
   expect(documentsApi.upload).not.toHaveBeenCalled()
 })
 
+// 서버는 0바이트나 공백뿐인 파일을 400 validation_failed로 거절한다(S15P31A108-395).
+it.each([
+  ['0바이트', ''],
+  ['공백뿐인', '\uFEFF \n\t\n'],
+])(
+  '%s 파일을 고르면 파일 줄에 빈 파일이라고 알리고 등록 버튼을 끈다',
+  async (_, content) => {
+    const user = userEvent.setup()
+    mount()
+    await user.click(
+      await screen.findByRole('button', { name: '기획안 올리기' }),
+    )
+    await user.upload(
+      screen.getByLabelText(/원본 파일/),
+      new File([content], 'empty.md', { type: 'text/markdown' }),
+    )
+    expect(
+      await screen.findByText(
+        '빈 파일은 올릴 수 없어요. 내용이 있는 Markdown(.md) 파일을 골라 주세요.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('선택됨')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '등록하고 비비 검토 받기' }),
+    ).toBeDisabled()
+    expect(documentsApi.upload).not.toHaveBeenCalled()
+  },
+)
+
 it('서버가 거절하면 원인별로 알리고 입력값을 남긴다', async () => {
   const user = userEvent.setup()
   const rejectWith = (status: number, code: string) =>
