@@ -8,11 +8,17 @@ import static org.mockito.Mockito.when;
 
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.task.service.TaskBreakdownService;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +34,7 @@ import tools.jackson.databind.node.ObjectNode;
 class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
     @Autowired DataSource dataSource;
     @Autowired ObjectMapper json;
+    @Autowired TaskBreakdownService breakdown;
     @MockitoBean AiClient ai;
 
     TaskApiSupport api;
@@ -62,9 +69,18 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
             return reply(frontend, backend, unassigned);
         });
 
-        var created = generate(leader);
-        assertThat(created.statusCode()).as(created.body()).isEqualTo(200);
-        var result = json.readTree(created.body());
+        assertThat(api.get(breakdownPath(), leader).body()).isEqualTo("null");
+        var accepted = body(accept(leader), 202);
+        assertThat(accepted.path("status").asString()).isEqualTo("PENDING");
+        assertThat(accepted.path("tasks").isMissingNode()).isTrue();
+        assertThat(body(accept(leader), 202)).isEqualTo(accepted);
+        assertThat(count("task_breakdown_job")).isEqualTo(1);
+        assertThat(count("task")).isZero();
+        verifyNoInteractions(ai);
+        assertThat(breakdown.runNext()).isTrue();
+        var result = body(api.get(breakdownPath(), leader), 200);
+        assertThat(result.path("status").asString()).isEqualTo("COMPLETED");
+        assertThat(result.path("id").asString()).isEqualTo(accepted.path("id").asString());
         assertThat(result.path("baseline_id").asString()).isEqualTo(Long.toString(baselineId));
         assertThat(result.path("tasks").size()).isEqualTo(3);
         var first = result.path("tasks").get(0);
@@ -85,7 +101,7 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
         assertThat(ref.path("design_item_version_id").asLong()).isEqualTo(api.currentVersionId("API-01"));
 
         api.publish(2, Map.of("API-01", api.currentVersionId("API-01"), "API-02", api.currentVersionId("API-02")));
-        var replay = generate(leader);
+        var replay = accept(leader);
         assertThat(replay.statusCode()).isEqualTo(200);
         assertThat(json.readTree(replay.body())).isEqualTo(result);
         assertThat(count("task")).isEqualTo(3);
@@ -97,7 +113,7 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
         when(ai.taskBreakdown(anyMap())).thenReturn(reply(
                 draft("api", "API-01", "backend", List.of()),
                 draft("ui", "API-01", "Frontend", List.of())));
-        var tasks = body(generate(leader), 200).path("tasks");
+        var tasks = runGeneration().path("tasks");
         JsonNode backend = reviseForContractChange(tasks.get(0), leader);
         JsonNode frontend = reviseForContractChange(tasks.get(1), member);
         long pass = api.passValidation(backend.path("id").asLong());
@@ -117,7 +133,8 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
 
     @Test
     void requiresHumanLeaderBeforeCallingAi() {
-        assertThat(generate(member).statusCode()).isEqualTo(403);
+        assertThat(accept(member).statusCode()).isEqualTo(403);
+        assertThat(api.get(breakdownPath(), member).statusCode()).isEqualTo(403);
         verifyNoInteractions(ai);
     }
 
@@ -128,9 +145,7 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
                 "design_item_version_id", "999999", "relation", "IMPLEMENTS")));
         when(ai.taskBreakdown(anyMap())).thenReturn(reply(badTask));
 
-        var response = generate(leader);
-        assertThat(response.statusCode()).as(response.body()).isEqualTo(502);
-        assertThat(response.body()).contains("ai_invalid_output");
+        assertFailed(runGeneration(), "ai_invalid_output");
         assertThat(count("task")).isZero();
         assertThat(count("task_breakdown_batch")).isZero();
     }
@@ -143,9 +158,7 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
         when(ai.taskBreakdown(anyMap())).thenThrow(HttpServerErrorException.create(
                 HttpStatus.BAD_GATEWAY, "Bad Gateway", HttpHeaders.EMPTY, error, StandardCharsets.UTF_8));
 
-        var response = body(generate(leader), 502);
-
-        assertThat(response.path("error").path("code").asString()).isEqualTo("ai_invalid_output");
+        assertFailed(runGeneration(), "ai_invalid_output");
         assertThat(count("task_breakdown_batch")).isZero();
     }
 
@@ -160,7 +173,7 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
         var frontend = draft("ui", "API-02", "Frontend", List.of("api"));
         when(ai.taskBreakdown(anyMap())).thenReturn(reply(indirectlyBlocked, frontend, invalid, blocked, backend));
 
-        var tasks = body(generate(leader), 200).path("tasks");
+        var tasks = runGeneration().path("tasks");
 
         assertThat(tasks.size()).isEqualTo(2);
         assertThat(tasks.get(0).path("title").asString()).isEqualTo("api");
@@ -181,14 +194,108 @@ class TaskBreakdownIntegrationTests extends IntegrationTestSupport {
             return reply(backend, frontend);
         });
 
-        var response = generate(leader);
-        assertThat(response.statusCode()).as(response.body()).isEqualTo(400);
+        var response = runGeneration();
+        assertThat(response.path("status").asString()).isEqualTo("FAILED");
         assertThat(count("task")).isZero();
         assertThat(count("task_breakdown_batch")).isZero();
     }
 
-    private HttpResponse<String> generate(long caller) {
-        return api.post("/api/projects/" + projectId + "/task-breakdown", "{}", caller);
+    @Test
+    void rejectsAStaleSnapshotAfterTheModelReturnsAndAcceptsAFreshRetry() {
+        var backend = draft("api", "API-01", "backend", List.of());
+        when(ai.taskBreakdown(anyMap())).thenAnswer(call -> {
+            api.publish(2, Map.of("API-01", api.currentVersionId("API-01"), "API-02", api.currentVersionId("API-02")));
+            return reply(backend);
+        });
+
+        var failed = runGeneration();
+        assertFailed(failed, "task_breakdown_stale");
+        assertThat(count("task")).isZero();
+
+        var retried = body(accept(leader), 202);
+        assertThat(retried.path("id").asString()).isNotEqualTo(failed.path("id").asString());
+        assertThat(retried.path("baseline_id").asString()).isNotEqualTo(failed.path("baseline_id").asString());
+    }
+
+    @Test
+    void anExpiredWorkerCannotOverwriteTheResultSavedByItsReplacement() throws Exception {
+        var firstDraft = draft("first", "API-01", "backend", List.of());
+        var secondDraft = draft("second", "API-01", "backend", List.of());
+        var calls = new AtomicInteger();
+        var requestKeys = new ConcurrentLinkedQueue<String>();
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        when(ai.taskBreakdown(anyMap())).thenAnswer(call -> {
+            Map<String, Object> input = call.getArgument(0);
+            requestKeys.add(input.get("request_key").toString());
+            if (calls.incrementAndGet() == 1) {
+                started.countDown();
+                if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("First worker was not released");
+                return reply(firstDraft);
+            }
+            return reply(secondDraft);
+        });
+
+        var pending = body(accept(leader), 202);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var oldWorker = executor.submit(breakdown::runNext);
+            try {
+                assertThat(started.await(15, TimeUnit.SECONDS)).isTrue();
+                var running = body(accept(leader), 202);
+                assertThat(running.path("status").asString()).isEqualTo("RUNNING");
+                assertThat(running.path("id").asString()).isEqualTo(pending.path("id").asString());
+                assertThat(count("task")).isZero();
+                api.jdbc.sql("update task_breakdown_job set lease_until = now() - interval '1 second' where project_id = :p")
+                        .param("p", projectId).update();
+                assertThat(breakdown.runNext()).isTrue();
+            } finally {
+                release.countDown();
+            }
+            assertThat(oldWorker.get(15, TimeUnit.SECONDS)).isTrue();
+        }
+
+        var finished = body(api.get(breakdownPath(), leader), 200);
+        assertThat(finished.path("status").asString()).isEqualTo("COMPLETED");
+        assertThat(finished.path("id").asString()).isEqualTo(pending.path("id").asString());
+        assertThat(finished.path("tasks").get(0).path("title").asString()).isEqualTo("second");
+        assertThat(requestKeys).hasSize(2).doesNotHaveDuplicates();
+        assertThat(count("task")).isEqualTo(1);
+    }
+
+    @Test
+    void anExhaustedLeaseBecomesRetryableWithoutCallingTheModelAgain() {
+        body(accept(leader), 202);
+        api.jdbc.sql("""
+                update task_breakdown_job
+                   set status = 'RUNNING', attempts = 2, lease_token = gen_random_uuid(),
+                       lease_until = now() - interval '1 second'
+                 where project_id = :p
+                """).param("p", projectId).update();
+
+        assertThat(breakdown.runNext()).isFalse();
+        assertFailed(body(api.get(breakdownPath(), leader), 200), "ai_timeout");
+        verifyNoInteractions(ai);
+    }
+
+    private JsonNode runGeneration() {
+        body(accept(leader), 202);
+        assertThat(breakdown.runNext()).isTrue();
+        return body(api.get(breakdownPath(), leader), 200);
+    }
+
+    private static void assertFailed(JsonNode job, String code) {
+        assertThat(job.path("status").asString()).isEqualTo("FAILED");
+        assertThat(job.path("error_code").asString()).isEqualTo(code);
+        assertThat(job.path("retryable").asBoolean()).isTrue();
+        assertThat(job.path("tasks").isMissingNode()).isTrue();
+    }
+
+    private String breakdownPath() {
+        return "/api/projects/" + projectId + "/task-breakdown";
+    }
+
+    private HttpResponse<String> accept(long caller) {
+        return api.post(breakdownPath(), "{}", caller);
     }
 
     private JsonNode reviseForContractChange(JsonNode generated, long caller) {

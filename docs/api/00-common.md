@@ -378,7 +378,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [VAL-A03 작업 검증 이력](01-backend-rest.md#val-a03) | GET `/api/projects/{id}/tasks/{task_id}/validations` | MEMBER | 변준성 | 양지훈 | 박민용 |
 | [VAL-A04 검증 실행 재시도](01-backend-rest.md#val-a04) | POST `/api/projects/{id}/validations/{validation_id}/retry` | MEMBER + TASK_OWNER | 변준성 | 양지훈 | 박민용 |
 | [TSK-A07 작업 상태 보고](01-backend-rest.md#tsk-a07) | POST `/api/projects/{id}/tasks/{task_id}/state-events` | MEMBER + TASK_OWNER | 변준성 | — | 박민용 |
-| [TSK-A09 승인 설계로 작업 생성·배정](01-backend-rest.md#tsk-a09) | POST `/api/projects/{id}/task-breakdown` | LEADER (사람 세션) | 일괄 저장·배정 (S15P31A108-390) | 작업 분해 | 기획·작업 화면 |
+| [TSK-A09 승인 설계로 작업 생성·배정](01-backend-rest.md#tsk-a09) | POST·GET `/api/projects/{id}/task-breakdown` | LEADER (사람 세션) | 생성 접수·조회와 일괄 배정 (S15P31A108-390·397) | 작업 분해 | 기획·작업 화면 |
 | [CTX-A01 개발 컨텍스트 패킷 조회](01-backend-rest.md#ctx-a01) | GET `/api/projects/{id}/context-packets/{packet_id}` | MEMBER | 변준성 | — | 박민용 |
 | [CTX-A02 공유 작업 기록 검색](01-backend-rest.md#ctx-a02) | GET `/api/projects/{id}/context-records` | MEMBER | 변준성 | — | 박민용 |
 | [CTX-A03 작업 기록 상세](01-backend-rest.md#ctx-a03) | GET `/api/projects/{id}/context-records/{record_id}` | MEMBER / RECORD_AUTHOR | 변준성 | — | 박민용 |

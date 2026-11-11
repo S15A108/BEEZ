@@ -44,7 +44,7 @@ public class AiClient {
      * (110초, 설정 상한 120초)보다 길어야 정상 검토를 먼저 끊지 않는다. 대화(DISCUSS·REQUEST)는 동기라 위 55초를 그대로 쓴다.
      */
     static final Duration DEFAULT_REVIEW_WORKER_READ_TIMEOUT = Duration.ofSeconds(120);
-    static final Duration DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT = Duration.ofSeconds(55);
+    static final Duration DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT = Duration.ofSeconds(105);
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -72,7 +72,7 @@ public class AiClient {
                     @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
                     @Value("${beez.planning.draft-read-timeout:170s}") Duration draftReadTimeout,
                     @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout,
-                    @Value("${beez.task-breakdown.read-timeout:55s}") Duration taskBreakdownReadTimeout,
+                    @Value("${beez.task-breakdown.read-timeout:105s}") Duration taskBreakdownReadTimeout,
                     @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
@@ -83,7 +83,7 @@ public class AiClient {
         this.meetingRevisionRest = client(ai, max(ai.readTimeout(), MEETING_REVISION_READ_TIMEOUT));
         this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
         this.reviewWorkerRest = client(ai, max(ai.readTimeout(), reviewWorkerReadTimeout));
-        // 작업 분해는 화면이 응답을 기다리므로 비동기 설계 초안의 대기 시간을 공유하지 않는다.
+        // 작업 분해 워커는 모델 제한(90초)보다 긴 전용 읽기 제한을 쓴다.
         if (taskBreakdownReadTimeout.isZero() || taskBreakdownReadTimeout.isNegative()) {
             throw new IllegalArgumentException("beez.task-breakdown.read-timeout must be positive");
         }

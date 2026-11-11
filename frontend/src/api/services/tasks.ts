@@ -5,9 +5,18 @@ import { callEndpoint, type RequestOptions } from './request'
 export const tasksApi = {
   generateBreakdown: (projectId: string, options?: RequestOptions) =>
     callEndpoint(
-      schemas.breakdownResponseSchema,
+      schemas.breakdownJobSchema,
       {
         method: 'POST',
+        url: `/projects/${encodeURIComponent(idSchema.parse(projectId))}/task-breakdown`,
+      },
+      options,
+    ),
+  breakdownStatus: (projectId: string, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.breakdownStatusResponseSchema,
+      {
+        method: 'GET',
         url: `/projects/${encodeURIComponent(idSchema.parse(projectId))}/task-breakdown`,
       },
       options,
