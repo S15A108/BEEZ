@@ -29,6 +29,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * ③ 사용량 기록 → ④ 결과 검증 → ⑤ 짧은 트랜잭션에서 프로젝트 잠금 뒤 실행이 아직 유효한지(분석이 그대로이고 기준 설계가 없는지) 확인하고 저장.
  *
  * <p><b>실패해도 문서 분석 상태는 바꾸지 않는다.</b> 실패는 {@code planning_question_run} 에만 남고, 분석 재시도(PLN-A02)가 되돌려 다시 시도한다.
+ * 재시도 가능한 실패는 FAILED 전에 자동으로 한 번 더 돈다. 모델이 답한 형식이 우연히 거절된 경우가 다시 돌리면 성공했고,
+ * 그사이 이전 본문으로 만든 질문이 그대로 보였다(S15P31A108-396).
  * 같은 버전을 다시 분석하면 답변된·닫힌 질문은 그대로 두고 새 질문만 넣으며, 새 결과에 없는 미답변 질문은 SUPERSEDED 로 숨긴다(133 §8).
  */
 @Service
@@ -66,6 +68,7 @@ public class PlanningQuestionGenerator {
         if (job == null) return false;
         long version = num(job, "document_version_id"), project = num(job, "project_id");
         String runKey = (String) job.get("run_key"), textHash = (String) job.get("text_hash");
+        boolean autoRetry = Boolean.TRUE.equals(job.get("auto_retry"));
 
         long started = System.nanoTime();
         Map<String, Object> response;
@@ -73,12 +76,12 @@ public class PlanningQuestionGenerator {
             response = gateway.generate(payload(job, runKey));
         } catch (AiFailure e) {
             recordFailedCall(project, runKey, e, elapsed(started));
-            fail(version, runKey, e.getCode(), e.retryable());
+            fail(version, runKey, e.getCode(), e.retryable(), autoRetry);
             return true;
         } catch (RuntimeException e) {
             log.error("planning-questions call failed unexpectedly: {}", e.toString(), e);
             usage.recordFailure(FEATURE, project, null, runKey, elapsed(started));
-            fail(version, runKey, "ai_unavailable", true);
+            fail(version, runKey, "ai_unavailable", true, autoRetry);
             return true;
         }
         int recorded = response == null ? 0 : record(project, runKey, response, elapsed(started));
@@ -88,15 +91,18 @@ public class PlanningQuestionGenerator {
         } catch (IllegalArgumentException e) {
             log.warn("planning-questions output unusable for version {}: {}", version, e.getMessage());
             if (recorded == 0) usage.recordFailure(FEATURE, project, null, runKey, elapsed(started));
-            fail(version, runKey, "invalid_ai_output", true);
+            fail(version, runKey, "invalid_ai_output", true, autoRetry);
             return true;
         }
         tx.executeWithoutResult(status -> save(project, version, runKey, textHash, parsed));
         return true;
     }
 
-    private void fail(long version, String runKey, String code, boolean retryable) {
-        tx.executeWithoutResult(status -> questions.finishRun(version, runKey, "FAILED", code, retryable));
+    /** 재시도 가능한 첫 실패는 PENDING 으로 남겨 한 번 더 돌리고, 자동 재시도도 실패했거나 재시도할 수 없으면 FAILED 로 끝낸다. */
+    private void fail(long version, String runKey, String code, boolean retryable, boolean autoRetry) {
+        boolean again = retryable && !autoRetry;
+        if (again) log.warn("planning-questions failed for version {} ({}); retrying once", version, code);
+        tx.executeWithoutResult(status -> questions.finishRun(version, runKey, again ? "PENDING" : "FAILED", code, retryable));
     }
 
     private void save(long project, long version, String runKey, String textHash, List<Map<String, Object>> parsed) {

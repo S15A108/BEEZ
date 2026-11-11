@@ -61,6 +61,10 @@ import {
 } from '@/components/ui/card'
 import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { PaneSheet, SheetSubmit } from '@/components/PaneSheet'
+import { DocumentDraftButton, DocumentDraftPanel } from './PlanFromDocuments'
+import { useDocumentDraft } from './useDocumentDraft'
+import { isDraftCriterion, isDraftText } from './planDraft'
+import type { PlanDraft, PlanDraftInput } from './schemas'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1616,6 +1620,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           dependencies={entries}
           moreItems={approved.hasNextPage}
           onMoreItems={() => void approved.fetchNextPage()}
+          requestDraft={(input) => tasksApi.draftPlan(projectId, input)}
+          onOpenDocument={(documentId) => openPane('documents', documentId)}
           onClose={() => setEditing(null)}
           onSubmit={async (plan) => {
             await runAction(async () => {
@@ -1951,6 +1957,8 @@ function PlanDialog({
   dependencies,
   moreItems,
   onMoreItems,
+  requestDraft,
+  onOpenDocument,
   onClose,
   onSubmit,
   missing = [],
@@ -1962,6 +1970,10 @@ function PlanDialog({
   missing?: DetailField[]
   moreItems: boolean
   onMoreItems: () => void
+  /** 승인 문서로 계획 초안을 받는다(TSK-A08). 새 작업을 등록할 때만 쓴다. */
+  requestDraft?: (input: PlanDraftInput) => Promise<PlanDraft>
+  /** 근거 문서를 문서함에서 연다 */
+  onOpenDocument?: (documentId: string) => void
   onClose: () => void
   onSubmit: (plan: TaskPlanInput) => Promise<void>
 }) {
@@ -1997,6 +2009,7 @@ function PlanDialog({
     register,
     control,
     setValue,
+    getValues,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<Editor>({
@@ -2031,6 +2044,52 @@ function PlanDialog({
   const unlinkedRows = useFieldArray({ control, name: 'unlinked' })
   const criteriaRows = useFieldArray({ control, name: 'completion_criteria' })
   const dependencyIds = useWatch({ control, name: 'dependency_task_ids' })
+  // 문서 초안(TSK-A08): 제목과 이미 적은 목표로 승인 문서에서 빈 칸을 채운다. 저장하지 않는다.
+  const [titleValue, goalValue, includedValue, excludedValue, approachValue] =
+    useWatch({
+      control,
+      name: ['title', 'goal', 'included_scope', 'excluded_scope', 'approach'],
+    })
+  const criteriaValues = useWatch({ control, name: 'completion_criteria' })
+  const documentDraft = useDocumentDraft({
+    request: task ? undefined : requestDraft,
+    title: titleValue,
+    memo: goalValue,
+    getSnapshot: () => {
+      const values = getValues()
+      return {
+        goal: values.goal,
+        included_scope: values.included_scope,
+        excluded_scope: values.excluded_scope,
+        approach: values.approach,
+        completion_criteria: values.completion_criteria,
+      }
+    },
+    apply: (patch) => {
+      const options = { shouldDirty: true, shouldValidate: false }
+      if (patch.goal !== undefined) setValue('goal', patch.goal, options)
+      if (patch.included_scope !== undefined) {
+        setValue('included_scope', patch.included_scope, options)
+        setDetailsOpen(true)
+      }
+      if (patch.excluded_scope !== undefined) {
+        setValue('excluded_scope', patch.excluded_scope, options)
+        setDetailsOpen(true)
+      }
+      if (patch.approach !== undefined)
+        setValue('approach', patch.approach, options)
+      if (patch.completion_criteria !== undefined)
+        criteriaRows.replace(patch.completion_criteria)
+    },
+  })
+  // 초안 그대로인 칸만 노란 배경으로 보인다. 사용자가 고치면 거둔다.
+  const draftValues = {
+    goal: goalValue,
+    included_scope: includedValue,
+    excluded_scope: excludedValue,
+    approach: approachValue,
+  }
+  const draftTint = 'border-primary/40 bg-primary/10'
   const selectedRefs = new Set(
     refs.map((reference) => reference.design_item_id),
   )
@@ -2055,12 +2114,24 @@ function PlanDialog({
           id={`plan-${name}`}
           rows={3}
           disabled={isSubmitting}
+          className={
+            name !== 'title' &&
+            isDraftText(name, documentDraft.fill, draftValues[name])
+              ? draftTint
+              : undefined
+          }
           {...register(name)}
         />
       ) : (
         <Input
           id={`plan-${name}`}
           disabled={isSubmitting}
+          className={
+            name !== 'title' &&
+            isDraftText(name, documentDraft.fill, draftValues[name])
+              ? draftTint
+              : undefined
+          }
           {...register(name)}
         />
       )}
@@ -2084,6 +2155,16 @@ function PlanDialog({
         task
           ? `r${task.current_plan_revision.revision_no}은 그대로 남고, 등록하면 r${task.current_plan_revision.revision_no + 1}로 계획 검증을 다시 해요.`
           : '제목, 목표, 관련 설계, 완료 기준, 접근 방법만 적으면 등록돼요. 등록하면 바로 계획 검증을 할 수 있어요.'
+      }
+      actions={
+        documentDraft.enabled ? (
+          <DocumentDraftButton
+            canRequest={documentDraft.canRequest}
+            sameInput={documentDraft.sameInput}
+            disabled={isSubmitting}
+            onClick={() => void documentDraft.requestDraft()}
+          />
+        ) : undefined
       }
       busy={isSubmitting}
       onClose={onClose}
@@ -2169,6 +2250,51 @@ function PlanDialog({
           }
         })}
       >
+        <DocumentDraftPanel
+          draft={documentDraft.draft}
+          fill={documentDraft.fill}
+          error={documentDraft.error}
+          note={documentDraft.undoNote}
+          linkedIds={selectedRefs}
+          hasRefs={refs.length > 0}
+          unlinkedTexts={
+            new Set(unlinkedValues.map((entry) => entry.description.trim()))
+          }
+          disabled={isSubmitting}
+          onRetry={() => void documentDraft.requestDraft()}
+          onUndo={documentDraft.undo}
+          onToggleLink={(candidate, checked) =>
+            setValue(
+              'refs',
+              checked
+                ? [
+                    ...refs,
+                    {
+                      design_item_id: candidate.design_item_id,
+                      design_item_version_id: candidate.design_item_version_id,
+                      relation: 'IMPLEMENTS',
+                      // 직접 고르는 길과 같게 승인 항목의 내용을 채운다. '계약 변경'으로 바꿔도 제목이 아니라
+                      // 항목 내용이 '바꿀 계약 문장'에 보인다. 아직 불러오지 않은 항목일 때만 제목을 쓴다.
+                      proposed_content: describeContent(
+                        items.find(
+                          (item) =>
+                            item.design_item_id === candidate.design_item_id,
+                        )?.content ?? candidate.title,
+                      ),
+                    },
+                  ]
+                : refs.filter(
+                    (reference) =>
+                      reference.design_item_id !== candidate.design_item_id,
+                  ),
+            )
+          }
+          onAddUnlinked={(text) => {
+            unlinkedRows.append({ description: text })
+            setDetailsOpen(true)
+          }}
+          onOpenDocument={(documentId) => onOpenDocument?.(documentId)}
+        />
         {field('title', '작업 제목', false)}
         {field('goal', '이번 작업의 목표', false)}
         <fieldset className="space-y-3 rounded-lg border p-4">
@@ -2369,6 +2495,14 @@ function PlanDialog({
             <div key={row.id} className="flex items-center gap-1.5">
               <Input
                 aria-label={`완료 기준 ${index + 1}`}
+                className={
+                  isDraftCriterion(
+                    documentDraft.fill,
+                    criteriaValues[index]?.text ?? '',
+                  )
+                    ? draftTint
+                    : undefined
+                }
                 placeholder={
                   index === 0
                     ? '예: 로그인하면 프로젝트 목록이 보인다'

@@ -212,7 +212,9 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
   await expect(dialog.getByText('질문 2 / ', { exact: false })).toBeVisible()
   await dialog.getByRole('button', { name: '취소', exact: true }).click()
   await expect(dialog.getByText('답변을 저장했어요.')).toBeVisible()
-  await dialog.getByRole('button', { name: '답변으로 초안 만들기' }).click()
+  await dialog
+    .getByRole('button', { name: '답변으로 보완 초안 만들기' })
+    .click()
   const candidate = dialog
     .locator('article')
     .filter({ hasText: '새 항목' })

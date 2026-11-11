@@ -37,6 +37,45 @@ public class ProjectDesignLookup {
         return row.isPresent();
     }
 
+    /** 현재 baseline 의 승인 설계 항목 한 건(폐기된 항목 제외). 작업 계획 문서 초안이 연결 후보로 AI 에 넘긴다. */
+    public record ApprovedItem(long id, long versionId, String key, String kind, String title, String description) {
+    }
+
+    /** 지정한 baseline 의 승인 설계 항목. 키 순서, 최대 {@code limit} 건. 폐기된 항목은 없는 것으로 본다. */
+    public List<ApprovedItem> approvedItems(Long projectId, Long baselineId, int limit) {
+        return jdbc.sql("""
+                        select di.id, v.id as version_id, di.key, di.kind, v.title,
+                               coalesce(v.content ->> 'description', '') as description
+                          from baseline_item bi
+                          join design_item di on di.id = bi.design_item_id and di.project_id = :projectId
+                          join design_item_version v on v.id = bi.design_item_version_id and v.design_item_id = di.id
+                         where bi.baseline_id = :baselineId
+                           and di.retired_at is null
+                         order by di.key
+                         limit :limit
+                        """)
+                .param("projectId", projectId).param("baselineId", baselineId).param("limit", limit)
+                .query((rs, row) -> new ApprovedItem(rs.getLong("id"), rs.getLong("version_id"), rs.getString("key"),
+                        rs.getString("kind"), rs.getString("title"), rs.getString("description")))
+                .list();
+    }
+
+    /** Rank against the complete approved set; the model's input cap must not limit duplicate checking. */
+    public List<ApprovedItem> allApprovedItems(Long projectId, Long baselineId) {
+        return approvedItems(projectId, baselineId, Integer.MAX_VALUE);
+    }
+
+    /** One-hop confirmed explicit dependencies. Targets are still checked against the approved snapshot by the caller. */
+    public List<Long> confirmedDependencyTargets(Long projectId, List<Long> fromIds) {
+        if (fromIds.isEmpty()) return List.of();
+        return jdbc.sql("""
+                select distinct to_item_id from design_item_dependency
+                 where project_id = :project and from_item_id in (:ids)
+                   and origin = 'EXPLICIT' and status = 'CONFIRMED'
+                 order by to_item_id
+                """).param("project", projectId).param("ids", fromIds).query(Long.class).list();
+    }
+
     /** 현재 baseline id. 잠그지 않는 읽기 */
     public Optional<Long> currentBaselineId(Long projectId) {
         return jdbc.sql("select current_baseline_id from project where id = :id")

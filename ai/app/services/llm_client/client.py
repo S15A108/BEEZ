@@ -2,7 +2,9 @@
 
 import asyncio
 import copy
+import hashlib
 import json
+import logging
 import math
 import re
 import time
@@ -42,6 +44,7 @@ _PROVIDER_CODES = frozenset(
 _MAX_DB_INT = 2_147_483_647
 _MAX_DB_COST = Decimal("999999.999999")
 _COST_QUANTUM = Decimal("0.000001")
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(Protocol):
@@ -184,6 +187,11 @@ def _validate(request: LLMRequest) -> None:
             or not _currency(pricing.currency)
         ):
             raise LLMError("invalid_input")
+    if request.diagnostics is not None and not (
+        isinstance(request.diagnostics, str)
+        and re.fullmatch(r"[a-z][a-z_]{0,31}", request.diagnostics)
+    ):
+        raise LLMError("invalid_input")
     options = request.model_options
     if options is not None and (
         not isinstance(options, dict)
@@ -226,6 +234,32 @@ def _usage(
     )
     if not tokens_known:
         input_tokens = output_tokens = None
+    if request.diagnostics:
+        reasoning = getattr(provider_data, "reasoning_tokens", None)
+        if not (
+            type(reasoning) is int and tokens_known and 0 <= reasoning <= output_tokens
+        ):
+            reasoning = None
+        finish = getattr(provider_data, "finish_reason", None)
+        if not isinstance(finish, str) or finish not in {
+            "stop",
+            "length",
+            "content_filter",
+            "tool_calls",
+        }:
+            finish = None
+        logger.info(
+            "%s_completion call_hash=%s failed=%s input_tokens=%s output_tokens=%s reasoning_tokens=%s "
+            "finish_reason=%s latency_ms=%s",
+            request.diagnostics,
+            hashlib.sha256(call_key.encode()).hexdigest()[:16],
+            failed,
+            input_tokens,
+            output_tokens,
+            reasoning,
+            finish,
+            max(0, int((time.monotonic() - started) * 1000)),
+        )
 
     amount, currency = _cost_pair(
         getattr(provider_data, "estimated_cost_amount", None),

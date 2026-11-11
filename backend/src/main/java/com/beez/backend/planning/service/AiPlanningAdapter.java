@@ -42,7 +42,8 @@ public class AiPlanningAdapter implements PlanningQuestionGateway, DesignDraftGa
     @Override
     public Map<String, Object> draft(Map<String, Object> input) { return call("design-drafts", ai::designDrafts, input); }
 
-    private static Map<String, Object> call(String label, Function<Map<String, Object>, Map<String, Object>> route, Map<String, Object> input) {
+    /** AI 호출 실패 분류. 작업 계획 문서 초안(S15P31A108-385)도 같은 규칙을 쓰므로 공개한다. */
+    public static Map<String, Object> call(String label, Function<Map<String, Object>, Map<String, Object>> route, Map<String, Object> input) {
         try {
             return route.apply(input);
         } catch (HttpServerErrorException.GatewayTimeout e) {

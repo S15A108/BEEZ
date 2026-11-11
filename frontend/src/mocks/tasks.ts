@@ -3,6 +3,10 @@ import {
   taskPlanInputSchema,
   taskStateInputSchema,
 } from '../api/contracts/common'
+import {
+  planDraftInputSchema,
+  planDraftResponseSchema,
+} from '../features/tasks/schemas'
 import type {
   ContextRecord,
   Finding,
@@ -534,6 +538,74 @@ export function taskRoutes(
             }
           }),
         },
+      }
+    }
+    case 'TSK-A08': {
+      // 서버는 승인 문서 발췌로 초안을 만들고 저장하지 않는다. mock 은 제목으로 정한 초안과 현재 승인 항목 하나를 연결 후보로 준다.
+      const input = planDraftInputSchema.parse(body)
+      const item = project.items[0]
+      const baseline = project.baselines.at(-1)
+      if (!baseline)
+        fail(409, 'baseline_missing', '먼저 첫 기준 설계를 만들어 주세요.')
+      return {
+        data: planDraftResponseSchema.parse({
+          status: 'DRAFTED',
+          plan: {
+            goal: `${input.title}을(를) 완료해 승인된 요구를 충족한다.`,
+            included_scope: [`${input.title} 구현`],
+            excluded_scope: ['문서에 없는 범위'],
+            approach: '승인된 문서의 요구를 순서대로 구현한다.',
+            completion_criteria: [
+              `${input.title}이(가) 문서의 요구대로 동작한다`,
+            ],
+          },
+          evidence: [
+            {
+              field: 'goal',
+              document_id: '201',
+              document_type: 'REQUIREMENTS',
+              document_version_id: '211',
+              version_no: 1,
+              location: '요구사항 명세서 · 12~14행',
+              quote: '승인된 요구를 충족한다',
+            },
+          ],
+          unsupported_fields: ['approach', 'completion_criteria'],
+          design_ref_candidates: item
+            ? [
+                {
+                  design_item_id: item.design_item_id,
+                  design_item_version_id: item.id,
+                  key: item.key,
+                  kind: item.kind,
+                  title:
+                    typeof item.content.description === 'string'
+                      ? item.content.description
+                      : item.key,
+                  reason: '문서의 같은 요구를 다루는 항목이라서',
+                },
+              ]
+            : [],
+          new_design_item_candidates: [
+            {
+              kind: 'POLICY',
+              content: { description: '문서에는 있으나 설계에 아직 없는 규칙' },
+              rationale: '요구사항 명세서에 적혀 있어요.',
+              evidence: [
+                {
+                  document_id: '201',
+                  document_type: 'REQUIREMENTS',
+                  document_version_id: '211',
+                  version_no: 1,
+                  location: '요구사항 명세서 · 20~21행',
+                  quote: '문서에 적힌 규칙',
+                },
+              ],
+            },
+          ],
+          unlinked: [{ text: '문서에는 있으나 설계에 아직 없는 규칙' }],
+          baseline_id: baseline!.id,
+        }),
       }
     }
     case 'TSK-A02': {
