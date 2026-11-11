@@ -101,3 +101,15 @@ it('무효가 된 검토나 팀장 검토 중인 건은 실패보다 그 상태�
     ),
   ).toMatchObject({ label: '팀장 승인 대기', failed: false })
 })
+
+it('반려 뒤 다시 받던 검토가 실패해도 반려됨을 지키고 실패를 함께 알린다', () => {
+  expect(
+    reviewStage(
+      copy({
+        status: 'REJECTED',
+        latest_review: undefined,
+        bee_review_request: failure,
+      }),
+    ),
+  ).toMatchObject({ step: 1, label: '반려됨', failed: true })
+})

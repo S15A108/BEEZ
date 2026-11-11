@@ -63,6 +63,18 @@ const stamp = (value: string) =>
     timeZone: 'Asia/Seoul',
   }).format(new Date(value))
 
+// 시작 준비 카드: 마지막 비비 검토가 실패한 문서의 다음 할 일. 실패를 '비비가 검토하고 있어요'로 보여
+// 끝없이 기다리게 했다(S15P31A108-383). 다시 검토는 올린 사람만, 등록 취소는 올린 사람과 팀장이 한다(DOC-A25).
+function failedReviewHint(rejected: boolean, owner: boolean, leader: boolean) {
+  const what = rejected
+    ? '반려 뒤 비비 검토를 마치지 못했어요.'
+    : '비비 검토를 마치지 못했어요.'
+  if (owner) return `${what} 열어서 다시 검토해 주세요`
+  if (leader)
+    return `${what} 올린 사람이 다시 검토하거나, 열어서 등록을 취소할 수 있어요`
+  return `${what} 올린 사람이 다시 검토해요`
+}
+
 function KindTile({ kind }: { kind: string }) {
   const [Icon, color] = kindIcon[kind as Kind] ?? kindIcon.PLAN
   return (
@@ -379,11 +391,12 @@ export function DocumentsPanel({
                     ? '현재 문서로 들어갔어요'
                     : stage?.stale
                       ? '참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'
-                      : stage?.failed
-                        ? // 실패한 검토를 '비비가 검토하고 있어요'로 보여 끝없이 기다리게 했다(S15P31A108-383).
-                          copy?.owner_account_id === session.data?.id
-                          ? '비비 검토를 마치지 못했어요. 열어서 다시 검토해 주세요'
-                          : '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토해요'
+                      : stage?.failed && copy
+                        ? failedReviewHint(
+                            copy.status === 'REJECTED',
+                            copy.owner_account_id === session.data?.id,
+                            isLeader,
+                          )
                         : stage?.label === '팀장 승인 대기'
                           ? isLeader
                             ? '승인 검토하기'

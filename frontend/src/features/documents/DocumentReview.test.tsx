@@ -20,7 +20,11 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { REVIEW_POLL_MS, SLOW_POLL_MS } from '@/lib/pollIntervals'
+import {
+  FAILED_REVIEW_FOLLOW_MS,
+  REVIEW_POLL_MS,
+  SLOW_POLL_MS,
+} from '@/lib/pollIntervals'
 import { DocumentReview } from './DocumentReview'
 
 let restore: () => void
@@ -285,20 +289,21 @@ it('올린 사람이 아니어도 비비 검토가 끝나면 창을 다시 열�
 })
 
 // S15P31A108-383: -382는 실패한 검토를 기다리지 않도록 팀원 창의 다시 읽기를 멈췄다. 그런데 올린 사람이
-// 다시 검토해 성공해도 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다. 실패 중에는 가끔만 다시 읽는다.
-it('마지막 검토가 실패한 문서를 보는 팀원 창은 느린 주기로 다시 읽어 성공을 따라간다', async () => {
+// 다시 검토해 성공해도 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다. 실패 뒤 10분 동안은 가끔 다시 읽고,
+// 그보다 오래된 실패는 열어 둔 창이 끝없이 부르지 않게 멈춘다.
+async function watchFailedReview(failedAt: string) {
   const before = await documentsApi.workingCopy('102', '221')
   await documentsApi.requestBeeReview('102', '221', {
     expected_revision: before.revision,
   })
   await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-  let retried = false
+  const state = { retried: false }
   const original = documentsApi.workingCopy.bind(documentsApi)
   const read = vi
     .spyOn(documentsApi, 'workingCopy')
     .mockImplementation(async (...args) => {
       const copy = await original(...args)
-      return retried
+      return state.retried
         ? copy
         : {
             ...copy,
@@ -306,11 +311,16 @@ it('마지막 검토가 실패한 문서를 보는 팀원 창은 느린 주기�
             bee_review_request: {
               status: 'FAILED' as const,
               error_code: 'review_timeout',
-              updated_at: '2026-11-10T08:16:05Z',
+              updated_at: failedAt,
             },
           }
     })
+  return { read, state }
+}
+
+it('검토가 방금 실패한 문서를 보는 팀원 창은 느린 주기로 다시 읽어 성공을 따라간다', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { read, state } = await watchFailedReview(new Date().toISOString())
   try {
     mount(false)
     expect(
@@ -319,11 +329,29 @@ it('마지막 검토가 실패한 문서를 보는 팀원 창은 느린 주기�
     const reads = read.mock.calls.length
     await vi.advanceTimersByTimeAsync(REVIEW_POLL_MS * 2)
     expect(read).toHaveBeenCalledTimes(reads)
-    retried = true
+    state.retried = true
     await vi.advanceTimersByTimeAsync(SLOW_POLL_MS)
     expect(
       await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
     ).toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+    read.mockRestore()
+  }
+})
+
+it('10분 넘게 지난 검토 실패는 팀원 창이 다시 읽지 않는다', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const old = new Date(Date.now() - FAILED_REVIEW_FOLLOW_MS - 60_000)
+  const { read } = await watchFailedReview(old.toISOString())
+  try {
+    mount(false)
+    expect(
+      await screen.findByText(/올린 사람이 다시 검토하거나 문서를 고쳐야 해요/),
+    ).toBeInTheDocument()
+    const reads = read.mock.calls.length
+    await vi.advanceTimersByTimeAsync(SLOW_POLL_MS * 2)
+    expect(read).toHaveBeenCalledTimes(reads)
   } finally {
     vi.useRealTimers()
     read.mockRestore()

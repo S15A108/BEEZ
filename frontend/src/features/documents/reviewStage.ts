@@ -25,8 +25,11 @@ export function reviewStage(copy: DocumentWorkingCopy) {
   if (copy.status === 'SUBMITTED') return stage(3, '팀장 승인 대기')
   if (review && copy.review_stale)
     return stage(1, '다시 검토 필요', { stale: true })
+  // 반려 뒤 다시 받던 검토가 실패해도 반려됐다는 사실은 그대로 보인다(실패 표시만 더한다).
   if (!review && copy.bee_review_request?.status === 'FAILED')
-    return stage(1, '검토 실패', { failed: true })
+    return stage(1, copy.status === 'REJECTED' ? '반려됨' : '검토 실패', {
+      failed: true,
+    })
   if (!review)
     // 올리거나 고치면 비비 검토가 자동으로 시작된다(DOC-A16).
     return stage(1, copy.status === 'REJECTED' ? '반려됨' : '비비 검토 중')

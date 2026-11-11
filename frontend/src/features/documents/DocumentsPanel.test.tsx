@@ -62,13 +62,13 @@ beforeEach(() => {
   vi.mocked(documentsApi.workingCopy).mockRejectedValue(new Error('404'))
 })
 
-function mount() {
+function mount(isLeader = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={client}>
-      <DocumentsPanel projectId="10" isLeader />
+      <DocumentsPanel projectId="10" isLeader={isLeader} />
     </QueryClientProvider>,
   )
 }
@@ -756,31 +756,69 @@ it('시작 준비 카드는 서버가 검토를 쓸 수 없다고 알린 문서�
 
 // S15P31A108-383: -382가 작업본에 검토 실패(bee_review_request)를 실었지만 시작 준비 카드는 그대로
 // '비비 검토 중 · 비비가 검토하고 있어요'를 보여, 팀원은 끝나지 않을 검토를 기다렸다.
-it('시작 준비 카드는 마지막 검토가 실패한 문서를 검토 실패로 보이고 누가 다시 검토할지 알린다', async () => {
-  vi.spyOn(authApi, 'me').mockResolvedValue({
-    id: '12',
-    email: 'member@beez.local',
-    name: '팀원',
-    created_at: '2026-10-23T00:00:00Z',
-  })
-  vi.mocked(documentsApi.workingCopy).mockResolvedValue({
-    document_id: '1',
-    owner_account_id: '11',
-    revision: 1,
-    status: 'EDITING',
-    content: '',
-    file_name: 'requirements.md',
-    submissions: [],
-    bee_review_request: {
-      status: 'FAILED',
-      error_code: 'review_timeout',
-      updated_at: '2026-11-10T08:16:05Z',
-    },
-  })
-  mount()
-  expect(await screen.findByText('검토 실패')).toBeInTheDocument()
+// 다시 검토는 올린 사람만, 등록 취소는 올린 사람과 팀장이 하므로 보는 사람마다 할 일을 다르게 알린다.
+const failedCopy = (status: 'EDITING' | 'REJECTED' = 'EDITING') => ({
+  document_id: '1',
+  owner_account_id: '11',
+  revision: 1,
+  status,
+  content: '',
+  file_name: 'requirements.md',
+  submissions: [],
+  bee_review_request: {
+    status: 'FAILED' as const,
+    error_code: 'review_timeout',
+    updated_at: '2026-11-10T08:16:05Z',
+  },
+})
+
+it.each([
+  [
+    '11',
+    false,
+    '검토 실패',
+    '비비 검토를 마치지 못했어요. 열어서 다시 검토해 주세요',
+  ],
+  [
+    '12',
+    false,
+    '검토 실패',
+    '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토해요',
+  ],
+  [
+    '12',
+    true,
+    '검토 실패',
+    '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토하거나, 열어서 등록을 취소할 수 있어요',
+  ],
+])(
+  '시작 준비 카드는 검토가 실패한 문서를 보는 사람(%s, 팀장 %s)에게 할 일을 알린다',
+  async (viewer, isLeader, label, hint) => {
+    const me = vi.spyOn(authApi, 'me').mockResolvedValue({
+      id: viewer,
+      email: 'viewer@beez.local',
+      name: '보는 사람',
+      created_at: '2026-10-23T00:00:00Z',
+    })
+    try {
+      vi.mocked(documentsApi.workingCopy).mockResolvedValue(failedCopy())
+      mount(isLeader)
+      expect(await screen.findByText(label)).toBeInTheDocument()
+      expect(screen.getByText(hint)).toBeInTheDocument()
+      expect(
+        screen.queryByText('비비가 검토하고 있어요'),
+      ).not.toBeInTheDocument()
+    } finally {
+      me.mockRestore()
+    }
+  },
+)
+
+it('반려 뒤 다시 받던 검토가 실패해도 시작 준비 카드는 반려됨을 지킨다', async () => {
+  vi.mocked(documentsApi.workingCopy).mockResolvedValue(failedCopy('REJECTED'))
+  mount(false)
+  expect(await screen.findByText('반려됨')).toBeInTheDocument()
   expect(
-    screen.getByText('비비 검토를 마치지 못했어요. 올린 사람이 다시 검토해요'),
+    screen.getByText(/^반려 뒤 비비 검토를 마치지 못했어요\./),
   ).toBeInTheDocument()
-  expect(screen.queryByText('비비가 검토하고 있어요')).not.toBeInTheDocument()
 })
