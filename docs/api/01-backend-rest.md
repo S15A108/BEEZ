@@ -4236,7 +4236,7 @@ HTTP `200`.
 
 2026-11-10 (S15P31A108-359): 분석이 COMPLETED이고 질문 생성만 FAILED여도 기준 설계가 이미 발행됐거나 문서 버전이 DRAFT·APPROVED가 아니면(BE 워커가 질문을 만들지 않는 버전) 409 `question_generation_unavailable`을 돌려주고 실행을 PENDING으로 되돌리지 않는다. 되돌리면 아무도 집지 않아 화면이 `만드는 중`으로 영원히 남는다.
 
-2026-11-11 (S15P31A108-396): 재시도 가능한(`retryable`) 질문 생성 실패는 FAILED로 끝내기 전에 BE가 자동으로 한 번 더 돌린다. 기다리는 동안 `question_generation`은 오류 필드 없이 `PENDING`이고, 자동 재시도도 실패해야 FAILED가 된다. PLN-A02로 되돌린 실행도 같은 규칙을 따른다.
+2026-11-11 (S15P31A108-396): 재시도 가능한(`retryable`) 질문 생성 실패는 FAILED로 끝내기 전에 BE가 자동으로 한 번 더 돌린다. 기다리는 동안 `question_generation`은 오류 필드 없이 `PENDING`이고, 자동 재시도도 실패해야 FAILED가 된다. PLN-A02로 되돌린 실행도 같은 규칙을 따른다. 기다리는 사이 기준이 발행됐거나 버전이 대상에서 빠지면 워커가 잡지 않으므로 그 실패를 `FAILED`(오류 필드 포함)로 보이고 PLN-A02는 409 `question_generation_unavailable`이다. 기다리는 사이 문서가 다시 분석되면 새 본문의 첫 실행으로 보고 자동 재시도를 새로 한 번 받는다.
 
 lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
 

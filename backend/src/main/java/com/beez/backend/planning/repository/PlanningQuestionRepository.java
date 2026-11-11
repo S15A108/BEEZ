@@ -23,12 +23,14 @@ public class PlanningQuestionRepository {
      * 질문을 만들 차례인 문서 버전 하나. 분석이 끝났고(COMPLETED) 기준 설계가 아직 없으며, 아직 생성하지 않았거나 분석이
      * 다시 돌았거나(attempt·text_hash 가 달라짐) 멈춘 실행(lease 만료)이다. FAILED 실행은 PLN-A02 가 PENDING 으로 되돌릴 때만 다시 잡는다.
      * error_code 가 남은 PENDING 은 재시도 가능한 실패 뒤 자동으로 한 번 더 도는 실행이다(auto_retry, S15P31A108-396).
+     * 그사이 문서가 다시 분석됐으면(attempt·text_hash 가 달라짐) 새 본문의 첫 실행이므로 자동 재시도로 보지 않는다.
      */
     public Optional<Map<String, Object>> nextRunnable() {
         return jdbc.sql("""
                 SELECT dp.document_version_id,dp.attempt,dp.text_hash,v.content_text,v.content_hash,v.storage_key,v.version_no,
                        d.id AS document_id,d.project_id,d.type,
-                       (r.status='PENDING' AND r.error_code IS NOT NULL) AS auto_retry
+                       (r.status='PENDING' AND r.error_code IS NOT NULL
+                        AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) AS auto_retry
                   FROM document_processing dp
                   JOIN document_version v ON v.id=dp.document_version_id
                   JOIN document d ON d.id=v.document_id
@@ -124,22 +126,40 @@ public class PlanningQuestionRepository {
     }
 
     /**
-     * 질문이 지금 본문으로 만든 것인지(S15P31A108-396). 질문 생성 실행이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT,
-     * 분석이나 질문 생성이 지금 본문으로 다시 도는 중이면 REFRESHING, 그러다 실패했으면 REFRESH_FAILED 다. 기준 설계가 발행됐거나
-     * 워커가 질문을 만들지 않는 버전(DRAFT·APPROVED 밖), 실행 기록이 없는 옛 질문은 다시 만들 일이 없으므로 CURRENT 로 둔다.
-     * 갱신이 끝나면 미답변 질문은 새 결과로 바뀌거나 SUPERSEDED 되므로 CURRENT 가 아닌 상태는 그 사이에만 보인다.
+     * 새 버전의 질문이 만들어지면 같은 문서의 이전 버전에서 만든 미답변 질문은 대체한다. 반려 뒤 다시 낸 버전·새로 승인한 버전이
+     * 생겨도 이전 버전 질문이 목록에 남아 답할 수 있었다(S15P31A108-396). 답한·닫은 질문은 이력이라 그대로 둔다.
+     */
+    public void supersedeOlderVersions(long version) {
+        jdbc.sql("""
+                UPDATE planning_question q SET status='SUPERSEDED',updated_at=now()
+                  FROM document_version cur, document_version old
+                 WHERE cur.id=:version AND old.document_id=cur.document_id AND old.version_no<cur.version_no
+                   AND q.document_version_id=old.id AND q.status='OPEN'
+                """).param("version", version).update();
+    }
+
+    /**
+     * 질문이 지금 본문으로 만든 것인지(S15P31A108-396). 판정은 질문이 붙은 버전이 아니라 그 문서의 <b>현재 버전</b>(워커가 질문을
+     * 만드는 최신 DRAFT·APPROVED)으로 한다. 반려·재승인으로 새 버전이 생기면 이전 버전 질문도 그 버전의 갱신 상태를 따른다.
+     * 현재 버전의 질문 생성이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT, 분석이나 질문 생성이 도는 중이면 REFRESHING,
+     * 그러다 실패했으면 REFRESH_FAILED 다. 워커({@link #nextRunnable})가 다시 만들 일이 없는 경우 — 현재 버전 없음·기준 설계 발행·
+     * 보관된 프로젝트·본문 없음·분석 기록 없음 — 와 실행 기록이 없는 같은 버전의 옛 질문은 CURRENT 로 둬 '갱신 중'이 영원히 남지 않게 한다.
      */
     private static final String FRESHNESS = """
-            CASE WHEN r.document_version_id IS NULL OR p.current_baseline_id IS NOT NULL OR v.status NOT IN ('DRAFT','APPROVED') THEN 'CURRENT'
+            CASE WHEN cur.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL OR NOT cur.has_text
+                   OR dp.document_version_id IS NULL
+                   OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'
                  WHEN dp.status='FAILED'
                    OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'
                  WHEN dp.status='COMPLETED' AND r.status='COMPLETED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash THEN 'CURRENT'
                  ELSE 'REFRESHING' END AS freshness""";
 
-    /** 앞뒤 공백을 넣어 이어 붙인다(텍스트 블록은 앞 공백을 지운다). */
+    /** 질문 버전 {@code v} 를 조인한 뒤 붙인다. 앞뒤 공백을 넣어 이어 붙인다(텍스트 블록은 앞 공백을 지운다). */
     private static final String FRESHNESS_JOINS = " LEFT JOIN project p ON p.id=q.project_id"
-            + " LEFT JOIN document_processing dp ON dp.document_version_id=q.document_version_id"
-            + " LEFT JOIN planning_question_run r ON r.document_version_id=q.document_version_id ";
+            + " LEFT JOIN LATERAL (SELECT cv.id, cv.content_text IS NOT NULL AS has_text FROM document_version cv"
+            + "   WHERE cv.document_id=v.document_id AND cv.status IN ('DRAFT','APPROVED') ORDER BY cv.version_no DESC LIMIT 1) cur ON true"
+            + " LEFT JOIN document_processing dp ON dp.document_version_id=cur.id"
+            + " LEFT JOIN planning_question_run r ON r.document_version_id=cur.id ";
 
     /**
      * 목록 정렬 키는 id 하나다. id 는 만든 뒤 바뀌지 않고 새 질문은 항상 더 큰 id 를 받으므로, 쪽 사이에 어느 문서에서든

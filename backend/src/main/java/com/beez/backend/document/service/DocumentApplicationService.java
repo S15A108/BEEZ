@@ -360,9 +360,12 @@ public class DocumentApplicationService {
         jdbc.sql("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=:id").param("id", version)
                 .query().listOfRows().stream().findFirst().ifPresent(q -> {
                     var questionRun = new LinkedHashMap<String, Object>();
-                    questionRun.put("status", q.get("status"));
                     // 자동 재시도를 기다리는 PENDING 에도 error_code 가 남지만(S15P31A108-396) 오류는 FAILED 일 때만 보인다.
-                    if ("FAILED".equals(q.get("status")) && q.get("error_code") != null) { questionRun.put("error_code", q.get("error_code")); questionRun.put("retryable", q.get("retryable")); }
+                    // 기다리는 사이 기준이 발행됐거나 버전이 대상에서 빠져 워커가 잡지 않으면 그 실패가 마지막이므로 FAILED 로 보인다.
+                    boolean stranded = "PENDING".equals(q.get("status")) && q.get("error_code") != null && !questionGenerationAvailable(version);
+                    String status = stranded ? "FAILED" : q.get("status").toString();
+                    questionRun.put("status", status);
+                    if ("FAILED".equals(status) && q.get("error_code") != null) { questionRun.put("error_code", q.get("error_code")); questionRun.put("retryable", q.get("retryable")); }
                     response.put("question_generation", questionRun);
                 });
         response.put("message", switch (run.get("status").toString()) {
@@ -381,7 +384,7 @@ public class DocumentApplicationService {
         // 서버 워커(PlanningQuestionRepository.nextRunnable)는 기준 설계가 있거나 버전이 DRAFT·APPROVED 가 아니면 질문을 만들지 않는다.
         // 그런 버전의 실패한 실행을 PENDING 으로 되돌리면 아무도 집지 않아 화면이 '만드는 중'으로 영원히 남으므로 되돌리지 않는다.
         if ("COMPLETED".equals(run.get("status")) && !questionGenerationAvailable(version)
-                && jdbc.sql("SELECT EXISTS(SELECT 1 FROM planning_question_run WHERE document_version_id=:id AND status='FAILED')")
+                && jdbc.sql("SELECT EXISTS(SELECT 1 FROM planning_question_run WHERE document_version_id=:id AND (status='FAILED' OR (status='PENDING' AND error_code IS NOT NULL)))")
                         .param("id", version).query(Boolean.class).single()) throw conflict("question_generation_unavailable");
         // 분석은 끝났는데 질문 생성만 실패했다면 질문 생성만 다시 대기시킨다.
         if ("COMPLETED".equals(run.get("status")) && jdbc.sql("UPDATE planning_question_run SET status='PENDING',error_code=null,retryable=false,lease_until=null,updated_at=now() WHERE document_version_id=:id AND status='FAILED'")

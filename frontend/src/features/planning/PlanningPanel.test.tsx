@@ -456,6 +456,35 @@ it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변
   expect(current).toHaveAttribute('role', 'button')
 })
 
+// 질문 생성이 시작되기 전 문서 재분석 단계에는 진행 안내가 없어 목록을 다시 읽지 않았다. '갱신 중' 질문이 있으면 끝날 때까지 따라간다.
+it('갱신 중인 질문이 있으면 목록을 다시 읽어 갱신이 끝난 것을 보인다', async () => {
+  let refreshed = false
+  vi.spyOn(planningApi, 'questions').mockImplementation(async () => ({
+    items: [
+      {
+        id: '1',
+        number: 1,
+        question: '다시 만드는 질문',
+        status: 'OPEN',
+        freshness: refreshed ? 'CURRENT' : 'REFRESHING',
+      },
+    ],
+    has_more: false,
+    total_count: 1,
+  }))
+  renderPanel()
+  expect(
+    await screen.findByText('이전 본문 기준 · 갱신 중'),
+  ).toBeInTheDocument()
+  refreshed = true
+  await waitFor(() =>
+    expect(
+      screen.queryByText('이전 본문 기준 · 갱신 중'),
+    ).not.toBeInTheDocument(),
+  )
+  expect(cardOf('다시 만드는 질문')).toHaveAttribute('role', 'button')
+})
+
 it('기준 설계가 발행된 프로젝트에서는 질문 카드를 눌러 답할 수 없다', async () => {
   renderPanel(true, '101')
   const question = await screen.findByText(

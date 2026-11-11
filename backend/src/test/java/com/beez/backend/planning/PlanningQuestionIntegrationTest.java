@@ -205,6 +205,47 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null))).containsEntry("status", "ANSWERED");
     }
 
+    // 반려 뒤 다시 낸 새 버전이 생기면 이전 버전 질문도 새 버전의 갱신 상태를 따르고, 새 버전 질문이 만들어지면 미답변은 대체된다.
+    @Test void olderVersionQuestionsFollowTheCurrentVersionAndAreSupersededOnceItsQuestionsExist() {
+        generator.runOnce();
+        long[] id = ids();
+        questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
+        version = documentVersion(document, 2, CONTENT);
+
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+
+        assertThat(generator.runOnce()).as("새 버전 질문 생성").isTrue();
+        assertThat(jdbc.queryForList("SELECT status FROM planning_question WHERE id IN (?,?,?) ORDER BY id", String.class, id[0], id[1], id[2]))
+                .containsExactly("ANSWERED", "SUPERSEDED", "SUPERSEDED");
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+    }
+
+    // 자동 재시도를 기다리는 사이 기준이 발행되면 워커가 잡지 않으므로 그 실패가 마지막이다 — '만드는 중'으로 남기지 않는다(S15P31A108-359).
+    @Test void autoRetryWaitingWhenTheBaselineIsPublishedShowsAsFailed() {
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        generator.runOnce();
+        publishBaseline();
+
+        assertThat(documents.analysis(leaderCaller, project, document, version).get("question_generation"))
+                .isEqualTo(Map.of("status", "FAILED", "error_code", "ai_timeout", "retryable", true));
+        fails(HttpStatus.CONFLICT, "question_generation_unavailable", () -> documents.retry(leaderCaller, project, document, version, "retry-after-baseline-396"));
+    }
+
+    // 자동 재시도를 기다리는 사이 문서가 다시 분석되면 새 본문의 첫 실행이므로 자동 재시도 한 번을 새로 받는다.
+    @Test void reanalysisWhileAutoRetryIsWaitingGivesTheNewTextItsOwnRetry() {
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        generator.runOnce();
+        jdbc.update("UPDATE document_processing SET attempt=2 WHERE document_version_id=?", version);
+
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("PENDING");
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
+    }
+
     @Test void answeredQuestionTextIsNotOverwrittenByReanalysis() {
         generator.runOnce();
         long a1 = ids()[0];
