@@ -88,7 +88,8 @@ class AiClientTest {
         var slow = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
                 "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
                 Duration.ofMillis(500), Duration.ofMillis(300)), null),
-                Duration.ofMillis(300), Duration.ofSeconds(3), Duration.ofSeconds(3), Duration.ofMillis(300));
+                // 질문 300ms·초안 3초·문서 검토 대화 300ms·작업 분해 300ms. 첫 검토는 워커 기본 제한(120초)을 쓴다(S15P31A108-391).
+                Duration.ofMillis(300), Duration.ofSeconds(3), Duration.ofMillis(300), Duration.ofMillis(300));
         var input = Map.<String, Object>of("document_id", "382");
         // 검토 워커는 긴 전용 제한(기본 120초)을 쓰고, 대화는 nginx 안의 짧은 제한을 쓴다(S15P31A108-391).
         assertThat(slow.documentReview(input)).containsEntry("origin", "MODEL");
