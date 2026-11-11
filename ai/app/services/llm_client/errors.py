@@ -35,6 +35,8 @@ class ProviderError(Exception):
         model: str | None = None,
         estimated_cost_amount: Decimal | None = None,
         currency: str | None = None,
+        reasoning_tokens: int | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         super().__init__("The LLM provider request failed.")
         self.code = code
@@ -45,6 +47,8 @@ class ProviderError(Exception):
         self.model = model
         self.estimated_cost_amount = estimated_cost_amount
         self.currency = currency
+        self.reasoning_tokens = reasoning_tokens
+        self.finish_reason = finish_reason
 
 
 class LLMError(Exception):
