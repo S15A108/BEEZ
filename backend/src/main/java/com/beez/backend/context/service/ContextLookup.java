@@ -218,7 +218,7 @@ public class ContextLookup {
 
     /**
      * 패킷 관련 작업(RelatedTask) 확인: 작업이 이 프로젝트 것이고(아니면 404), 넘어온 계획 리비전·상태가 그 작업의
-     * <b>지금</b> 계획 리비전·상태와 같아야 한다(아니면 400). 지난 계획이나 바뀐 상태가 현재 관련 작업처럼 저장되지 않게 한다.
+     * <b>지금</b> 계획 리비전·상태와 같아야 한다(아니면 409 revision_conflict). 지난 계획이나 바뀐 상태가 현재 관련 작업처럼 저장되지 않게 한다.
      * 작업 행을 공유 잠금(FOR SHARE)으로 읽어, 패킷 저장이 끝날 때까지 그 작업의 상태·계획이 바뀌지 않게 한다.
      */
     public void requireRelatedTaskCurrent(Long projectId, Long taskId, Long planRevisionId, String status) {
@@ -233,8 +233,10 @@ public class ContextLookup {
         Object currentRevision = rows.get(0).get("current_plan_revision_id");
         boolean sameRevision = currentRevision != null && ((Number) currentRevision).longValue() == planRevisionId;
         if (!status.equals(currentStatus) || !sameRevision) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
-                    "related_tasks 의 계획 리비전·상태가 작업의 현재 값과 다릅니다: task " + taskId);
+            // 409: 관련 작업 값은 호출자 입력이 아니라 구성 시점의 스냅샷이다. AI 구성 동안 계획·상태가 바뀐 경합이므로
+            // 입력 오류(400)가 아니라 다시 조회하면 되는 충돌로 알린다 (S15P31A108-399)
+            throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
+                    "구성하는 동안 작업의 계획이나 상태가 바뀌었습니다. 다시 조회해 주세요: task " + taskId);
         }
     }
 

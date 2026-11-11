@@ -170,7 +170,17 @@ export class OfficeAimOutline {
         present.add(object)
         let proxy = this.proxies.get(object)
         if (!proxy) {
-          proxy = new THREE.Mesh(object.geometry, this.maskMaterial)
+          // 스킨 메쉬는 같은 뼈대로 그린다. 뼈대 없이 그리면 기본 자세로 그려져 실제 몸과 깊이가 어긋나고
+          // 몸 안쪽에 선이 여러 겹 생긴다(S15P31A108-380).
+          if (object instanceof THREE.SkinnedMesh) {
+            const skinned = new THREE.SkinnedMesh(
+              object.geometry,
+              this.maskMaterial,
+            )
+            skinned.bindMode = object.bindMode
+            skinned.bind(object.skeleton, object.bindMatrix)
+            proxy = skinned
+          } else proxy = new THREE.Mesh(object.geometry, this.maskMaterial)
           proxy.matrixAutoUpdate = false
           proxy.matrixWorldAutoUpdate = false
           this.proxies.set(object, proxy)

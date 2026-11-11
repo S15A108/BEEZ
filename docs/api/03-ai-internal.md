@@ -52,6 +52,7 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/design-reference-recommendations](#ai-a11)
 - [/v1/document-revisions](#ai-a12)
 - [/v1/document-revision-blocks](#ai-a13)
+- [/v1/development-context-selections](#ai-a14)
 
 ---
 
@@ -2018,10 +2019,10 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 | 응답 식별 | document_id/revision/**content_hash**/reference_hash/request_key echo 필수. BE가 저장 결과에 contract_version=2 부여 |
 | 단계 | steps에 BODY/API_SPEC/ERD/REQ_SPEC 각각 1개. `{step,status,reason,reference_ids}`. BODY=COMPLETE/REVIEWED/[]; 동일 종류 비교=SKIPPED/SAME_KIND/[]; 승인본 없는 나머지 비교=PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE/[]; 승인본 있는 비교=COMPLETE/REVIEWED/해당 종류의 입력 ID 전체 |
 | 전체 | 같은 종류 제외 후 자료 부족 단계가 하나라도 있으면 review_status=PARTIAL, 아니면 COMPLETE. references_used는 실제 비교 reference_ids 합집합. BE가 재계산·대조 |
-| 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증 |
-| PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. 원문 구간 간 겹침, 적용 후 빈 문서·제어 문자·크기 초과 또는 다른 제안의 원문이 중복되는 결과는 전체 거절 |
+| 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증. 해당 본문에 그대로 없는 quote는 AI가 떼고 출처·제안은 남긴다(뗀 개수·참고 ID만 로그, S15P31A108-396) |
+| PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. 원문이 없거나 여러 번 나오는 PATCH, 앞서 남긴 PATCH와 구간이 겹치는 PATCH, 남긴 PATCH와 함께 적용하면 빈 문서·제어 문자·크기 초과 또는 다른 제안의 원문 중복이 생기는 PATCH는 그 제안만 뺀다. 남은 PATCH는 어떤 순서·조합으로 적용해도 안전하다(S15P31A108-396, 예전에는 전체 거절) |
 | COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
-| 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
+| 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 제안 단위 위반(입력에 없는 출처는 그 출처만 떼고, 출처가 남지 않은 비교 제안·형식이 틀린 PATCH/COMMENT·재검토가 아닌 반려 보완은 그 제안만 뺌)은 검토를 살리고 뺀 개수·사유만 로그에 남긴다(원문 없음). 요약 없음·본문 미검토·대조 범위 불일치·스키마 위반, 그리고 제안이 있었는데 하나도 남지 않으면 지금처럼 전체 거절(S15P31A108-396). 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
 
 [정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. DISCUSS/REQUEST는 아래 BE 제안(S15P31A108-231)을 기준으로, RERUN은 아래 수정안 요청을 기준으로 AI 경로를 구현했다(S15P31A108-329). 계약 합의와 실제 배포 환경 연동의 완료를 뜻하지 않는다.
 
@@ -2272,5 +2273,115 @@ BE는 권한과 현재 baseline을 확인한 뒤 검색 결과와 명시적 관�
 | 502 | `search_failed` | BE 검색 호출 실패. AI 미호출 |
 
 공개 CTX-A05와 화면에서 위 코드·상태를 사용하는지는 BE·FE 확인이 필요하다.
+
+<a id="ai-a14"></a>
+## AI-A14. 개발 컨텍스트 선택·패킷 구성
+
+### POST `/v1/development-context-selections`
+
+상태: AI 구현(-131·-132), BE 운영 호출 연결(S15P31A108-399). MCP-01 `get_development_context` 만 부른다. 요청·응답 필드, 크기 상한, AI 오류 코드의 정본은 [#132 패킷 구성 계약](../design/development-context-packet-contract-S15P31A108-132.md)과 [#131 HTTP 초안](../experiments/context-selection-http-S15P31A108-131.md)이다. 이 절은 BE 호출 방식만 적는다.
+
+- **입력 수집(BE `DevelopmentContextComposer`)**: 현재 기준의 APPROVED 설계 전부(`text`=키·제목·API 메서드·경로 또는 데이터 계약 엔티티·설명, 2,500 코드 포인트 이하 — 본문 JSON 전문은 텍스트당 8,192토큰 임베딩 한도를 넘을 수 있어 넣지 않는다. `metadata.design_items[].description` 은 POLICY·CONSTRAINT 에만 넣고, 설명이 없는 그 종류 항목은 경고 로그를 남기고 뺀다), 질의 임베딩으로 고른 현재 기준 문서의 READY 색인 청크 상위 20개(`evidence`), `design_item_dependency` 의 EXPLICIT `CONFIRMED`·`NEEDS_RECHECK` 관계 가운데 시작 항목이 현재 기준에 있는 것(버전은 마지막 CONFIRM·KEEP 이력, 없으면 현재 기준 버전, 대상이 기준 밖이면 그 항목의 최신 버전 — 이력 없는 NEEDS_RECHECK 도 보낸다), `task_id` 가 있으면 현재 계획 참조 가운데 기준 버전과 같은 것과 작업 상태·계획 리비전(DRAFT·계획 없음은 생략). `search_status` 는 검색을 실제로 마쳤을 때만 보내므로 항상 `COMPLETE` 다.
+- **응답 사용**: `packet` 을 #132 4절 매핑으로 `SavePacketArgs` 로 옮겨 `ContextPacketService.save` 가 기준·버전·근거·관련 작업을 다시 확인하고 저장한다. 보낸 스냅샷 밖 버전·근거가 오면 저장하지 않는다.
+- **시간 제한**: 질의 임베딩은 `AI_READ_TIMEOUT`, 선택 호출은 `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT`(기본 40초). AI `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` 는 그보다 짧게 둔다([env](../infra/env.md)).
+- **사용량**: 응답·오류 본문의 `usage` 를 `llm_usage` 에 feature `EMBEDDING` 으로 남긴다(BE 요청 키 접두어 `dev-context-`). 응답을 받지 못한 시간 초과·연결 끊김은 "미확인" 한 줄(`failed`, `tokens_known=false`)을 남긴다.
+
+**BE 공개 오류 매핑 — AI 응답 코드가 아님 (MCP-01):**
+
+| 상황 | MCP-01 결과 |
+| --- | --- |
+| 기준 없음 | 404 `baseline_not_published`. AI 미호출 |
+| 임베딩 프로필 미설정·색인 미준비(`index_not_ready`)·질의 임베딩 실패 | 503 `context_not_ready`. 선택 AI 미호출, 저장 없음 |
+| 검색 중 기준 변경 | 409 `baseline_conflict` |
+| 스냅샷이 AI 입력 상한 초과(설계 200·관계 1,000·문서 버전 1,000·본문 262,144바이트) | 503 `context_not_ready`. 선택 AI 미호출, 저장 없음. 설계·관계 수는 질의 임베딩 전에 본다 |
+| 설계를 읽은 뒤 검색 사이에 기준 변경 | 409 `baseline_conflict`. 선택 AI 미호출 |
+| 구성하는 동안 `task_id` 작업의 계획·상태 변경 | 409 `revision_conflict`(저장 단계 재확인). 저장 없음 |
+| (에이전트 토큰, 프로젝트)마다 1분 6회 초과 | 429 `rate_limited`. 검색·AI 미호출 (`BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT`) |
+| AI 오류 전부(`selection_not_configured`·`embedding_timeout`·`search_failed`·`validation_failed` 등)·시간 초과·응답 모양 불일치 | 503 `context_not_ready`. 저장 없음, AI code 는 BE 로그에만 |
+| 검색을 마쳤는데 근거 0건 | 정상 패킷, `unresolved` 에 `NO_MATCH` |
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="ai-a14"></a>
+
+## AI-A14. 작업 계획 문서 초안
+
+### POST `/v1/task-plan-drafts`
+
+**상태: AI 내부 계약 구현(S15P31A108-385), 계약 합의 전 초안.** BE가 고른 승인 문서 발췌와 승인 설계 항목으로 작업 계획 칸 초안, 확인된 인용, 연결 후보, 신규 설계 항목 후보를 만든다. 아무것도 저장하거나 승인하지 않는다. 공개 API는 [TSK-A08](01-backend-rest.md#tsk-a08)이다.
+
+관련 요구사항: PLN-02·03·06, TSK 계획 작성
+담당: BE: 오서현 / AI: 확인 필요 / FE: —
+
+#### 인증
+
+`INTERNAL_SERVICE`. 내부 Bearer 토큰으로 인증한다. 외부 사용자 세션이나 에이전트 토큰은 허용하지 않는다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `request_key` | `string` | Y | 호출 추적 키. 사용량 `request_key`에 이 값이 포함된다 |
+| `task` | object | Y | `title`(1~200자), `memo`(선택, 최대 2000자) |
+| `excerpts` | object[] | Y | 1~12개. `excerpt_id`, `document_id`, `document_type`(`PLAN\|REQUIREMENTS\|API_SPEC\|ERD`), `document_version_id`, `version_no`, `location`, `text`(1~4000자, 원문 그대로) |
+| `design_items` | object[] | N | 최대 100개. 현재 baseline의 승인 항목 `design_item_id`, `kind`, `key`, `summary`(최대 300자) |
+
+본문은 알 수 없는 필드를 받지 않는다. 발췌와 항목의 ID는 각각 중복될 수 없다. 본문 최대 크기는 `TASK_PLAN_DRAFTS_MAX_BODY_BYTES`(기본 524,288)다.
+
+#### Response
+
+HTTP `200`. `{result, origin: "MODEL", model, usage[]}`. `result`는 [TSK-A08 응답](01-backend-rest.md#tsk-a08)과 같은 모양이다. 다만 `design_ref_candidates`는 `design_item_id`와 `reason`만 가지며 버전 ID·키·제목은 BE가 채운다.
+
+AI는 모델 출력을 입력에 비춰 확인한다.
+
+- `evidence`·신규 항목의 `evidence`: 발췌 `excerpt_id`가 입력에 있고 `quote`가 그 발췌 `text`에 그대로 들어 있어야 한다. 아니면 버린다. 문서 ID·버전·위치는 발췌에서 가져온다.
+- 계획 칸에 글은 있지만 확인된 인용이 없으면 `unsupported_fields`에 담는다. 글을 지우지는 않는다.
+- `design_ref_candidates`: 입력의 `design_items`에 있는 ID만, 중복 없이 남긴다.
+- `new_design_item_candidates`: `DesignItemContent` 검증(종류별 필수 필드 포함)을 통과하고 확인된 인용이 하나 이상 있어야 한다.
+- 계획 칸이 모두 비어 있으면 `status`는 `INSUFFICIENT`다.
+- 출력은 목표 400자, 접근 방법 600자, 목록 6개·항목당 200자, 인용 8개, 연결 후보 5개, 신규 후보 3개, `unlinked` 5개로 제한한다(입력 3~8천·출력 1천 토큰 목표).
+- **글자 수 예산은 모델에 주는 안내이고, 넘겨도 응답을 버리지 않는다.** 목표·접근 방법·목록 항목·인용·후보 이유가 설정한 글자 수 예산보다 길어도 이미 나간 출력이라 줄이거나 비우지 않고 그대로 돌려준다(글을 중간에서 자르지도 않는다). 인용은 길어도 원문 확인을 그대로 거친다. 다만 응답 계약의 상한(목표 400자, 접근 방법 600자, 목록 항목 200자, 인용 1000자, 후보 이유 200자)을 넘기면 `model_unavailable`로 거절한다. **개수 예산**(목록·근거·연결 후보·신규 후보·unlinked)을 넘기면 앞에서부터 예산만큼 남기고 나머지 항목을 통째로 버려 성공으로 돌려준다. 개수를 예산의 2배 넘게(예산 0·1은 2개 넘게) 어기면 지시를 따르지 않은 것으로 보고 고치지 않고 `model_unavailable`로 거절한다. 구조·타입·ID·인용 검증은 그대로 한다. 버린 개수는 진단 로그(`task_plan_trimmed`)에 항목 이름별로만 남기고 내용은 남기지 않는다.
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 413 | `request_too_large` | 본문 크기 초과 |
+| 415 | `unsupported_media_type` | JSON이 아님 |
+| 422 | `invalid_ai_input` | 발췌·항목 ID 중복 등 업무 구조 모순 |
+| 502 | `model_unavailable` | 모델 호출 실패 또는 출력 계약 위반(실제 사용량은 `failed`로 남김) |
+| 502 | `model_output_truncated` | 모델 답이 출력 토큰 상한에서 끊김(S15P31A108-382) |
+| 503 | `task_plan_drafts_not_configured` | 시간 제한·출력 상한 설정값이 범위를 벗어남 |
+| 504 | `model_timeout` | 모델 시간 초과 |
+
+설정(요청마다 범위를 확인한다): `TASK_PLAN_DRAFTS_LLM_TIMEOUT_SECONDS`(기본 30, 0 초과 120 이하), `TASK_PLAN_DRAFTS_LLM_OUTPUT_TOKEN_LIMIT`(기본 4096, 양의 정수, 공급자 모델 한도 적용), `TASK_PLAN_DRAFTS_LLM_OUTPUT_TOKEN_PARAMETER`(`max_completion_tokens` 또는 `max_tokens`), `TASK_PLAN_DRAFTS_LLM_REASONING_EFFORT`(기본 `low`, 빈 값이면 옵션 생략). 출력 토큰 예산은 내부 추론을 포함한다. 기존 GMS 연결을 사용하며 자동 증액·추가 재호출하지 않는다.
+
+운영 응답 예산은 아래 환경변수로 조정한다. 프롬프트와 응답 검증에 동일하게 적용한다. 상한을 넘긴 응답을 임의로 잘라 성공 처리하지 않는다. API 스키마의 최대 크기는 호환성을 위한 별도 계약으로 유지한다.
+
+| 환경변수 (`TASK_PLAN_DRAFTS_` 접두사) | 기본값 | 허용 범위 |
+| --- | --- | --- |
+| `GOAL_CHARS` | 160 | 1~400 |
+| `APPROACH_CHARS` | 240 | 1~600 |
+| `LIST_ITEMS` | 3 | 1~6 (범위·완료 기준 각각) |
+| `LIST_ENTRY_CHARS` | 100 | 1~200 |
+| `EVIDENCE_ITEMS` | 5 | 0~8 |
+| `QUOTE_CHARS` | 160 | 1~1000 (신규 항목 근거 포함) |
+| `LINK_CANDIDATES` | 3 | 0~5 |
+| `REASON_CHARS` | 100 | 1~200 |
+| `NEW_ITEMS` | 3 | 0~3 |
+| `UNLINKED_ITEMS` | 3 | 0~5 |
+
+BE 입력 예산도 환경변수로 관리한다: `TASK_PLAN_DRAFT_RETRIEVAL_LIMIT`(12, 1~12), `TASK_PLAN_DRAFT_MAX_EXCERPT_CHARS`(4000, 1~4000), `TASK_PLAN_DRAFT_TOTAL_EXCERPT_CHARS`(12000, 단일 발췌 예산 이상), `TASK_PLAN_DRAFT_MAX_DESIGN_ITEMS`(100, 0~100), `TASK_PLAN_DRAFT_DESIGN_SUMMARY_CHARS`(300, 1~300). 문서 발췌는 글자 예산이며 모델 토큰 수와 같지 않다. 계층형 색인 확장은 이번 범위에서 제외한다. 설정 변경 후 해당 서비스를 재시작한다. 로컬 AI는 `ai/.env`, Compose는 실행 시 읽는 환경변수/`--env-file`에서 설정한다.
+
+385 입력 최적화: BE는 검색 점수와 질의 단어 일치로 재정렬하고, 제목만 있는 청크·본문 중복을 제외한다. 단독 Markdown 표는 일치하는 행과 원래 헤더를 보낸다(문장 혼합·의미 검색만 일치하는 표는 유지). `TASK_PLAN_DRAFT_SELECTED_EXCERPTS`(6, 1~12), `TASK_PLAN_DRAFT_SIMILARITY_DROP`(0.15, 0~2: 최상위 유사도와 허용 차이), `TASK_PLAN_DRAFT_LEXICAL_WEIGHT`(0.2, 0~1)를 조정할 수 있다. 질의 단어가 있는 청크는 상대 점수 필터의 예외다. 이는 전체 DB 하이브리드 검색이나 검색 품질 보증이 아닌, 이미 검색된 후보의 로컬 재정렬이다.
+
+승인 설계는 현재 baseline 전체에서 질의 단어·원문에 명시된 키로 관련 항목을 선택하고 확정된 명시 의존을 1단계만 추가한다. 모델 입력 개수 제한과 신규 후보 중복 검사 범위를 분리한다. 원문 인용은 압축된 입력뿐 아니라 BE의 원래 청크에서도 실제 부분 문자열인지 대조한다. 유효한 인용이 사라진 필드는 `unsupported_fields`로 표시하고, 유효 근거 없는 신규 후보는 제외한다.
+
+AI의 `TASK_PLAN_DRAFTS_INPUT_TOKEN_LIMIT`(4096), `TASK_PLAN_DRAFTS_INPUT_RESERVE_TOKENS`(128)는 시스템 지시문·JSON·프레이밍 예비분을 포함한 **오프라인 cl100k 추정 예산**이다. 실제 gpt-6-luna/GMS 청구 토큰과 같음을 보장하지 않는다. 순위가 높은 발췌와 설계를 번갈아 넣고, 넘치는 항목은 통째로 제외한다. 발췌가 하나도 들어가지 않으면 유료 생성 호출 전 422로 종료한다. 원문·인증 정보를 로그에 쓰지 않으며, `task_plan_input`과 `task_plan_completion`의 `call_hash`로 추정 입력량·실제 입출력/추론 토큰·종료 사유·생성 시간을 대조한다. 추론 토큰이 공급자 응답에 없으면 0이 아닌 미확인(`None`)이다. usage API/DB 계약에는 진단 필드를 추가하지 않는다.
+
+사용량 `feature`는 `BEE_DRAFT`다. 문서 발췌는 신뢰할 수 없는 입력이라 모델에 지시가 아닌 데이터로 알린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)

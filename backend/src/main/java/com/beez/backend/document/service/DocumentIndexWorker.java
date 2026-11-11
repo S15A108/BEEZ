@@ -278,7 +278,7 @@ public class DocumentIndexWorker {
             var hit = new LinkedHashMap<String, Object>(Map.<String, Object>of("type", "DOCUMENT_CHUNK", "id", row.get("id").toString(), "title", row.get("title"),
                     "snippet", row.get("text"), "score", row.get("score"), "source", Map.of("document_id", row.get("document_id").toString(),
                     "document_version_id", row.get("document_version_id").toString(), "version_no", row.get("version_no"),
-                    "location", locator.get("start_line") + "~" + locator.get("end_line") + "행")));
+                    "location", ChunkRetrievalMetadata.location(locator))));
             ChunkRetrievalMetadata.addToHit(hit, row);
             return hit;
         }).toList();
@@ -288,7 +288,11 @@ public class DocumentIndexWorker {
 
     /** 비비 질문(BEE-A01)용 근거 청크 한 건. 모두 현재 baseline 의 문서 버전에서 나온다 */
     public record ChunkEvidence(long chunkId, long documentId, long documentVersionId, int versionNo, String chunkKey,
-                                String text, Map<String, Object> locator, String title) {
+                                String text, Map<String, Object> locator, String title, Double similarity) {
+        public ChunkEvidence(long chunkId, long documentId, long documentVersionId, int versionNo, String chunkKey,
+                             String text, Map<String, Object> locator, String title) {
+            this(chunkId, documentId, documentVersionId, versionNo, chunkKey, text, locator, title, null);
+        }
     }
 
     /** 허용 집합(현재 baseline 의 문서 버전)과 그 안에서 질문과 가까운 청크 */
@@ -328,7 +332,8 @@ public class DocumentIndexWorker {
                 JOIN document_index_manifest m ON m.document_version_id=v.id AND m.embedding_profile_id=:profile
                 JOIN document_chunk c ON c.document_version_id=v.id
                 WHERE b.baseline_id=:baseline AND c.chunk_key IS NOT NULL )
-                SELECT a.id,a.text,a.locator,a.chunk_key,a.title,a.document_id,a.document_version_id,a.version_no
+                SELECT a.id,a.text,a.locator,a.chunk_key,a.title,a.document_id,a.document_version_id,a.version_no,
+                       1-(a.embedding <=> cast(:vector AS vector)) AS similarity
                 FROM allowed_chunks a ORDER BY a.embedding <=> cast(:vector AS vector),a.id LIMIT :limit
                 """, Map.of("project", project, "baseline", baseline, "profile", properties.embeddingProfile(),
                 "vector", embeddings.get("query"), "limit", limit));
@@ -340,7 +345,8 @@ public class DocumentIndexWorker {
             locator.putIfAbsent("type", "text_lines");
             evidence.add(new ChunkEvidence(((Number) row.get("id")).longValue(), ((Number) row.get("document_id")).longValue(),
                     ((Number) row.get("document_version_id")).longValue(), ((Number) row.get("version_no")).intValue(),
-                    row.get("chunk_key").toString(), row.get("text").toString(), locator, Objects.toString(row.get("title"), "")));
+                    row.get("chunk_key").toString(), row.get("text").toString(), locator, Objects.toString(row.get("title"), ""),
+                    ((Number) row.get("similarity")).doubleValue()));
         }
         return new Retrieval(baseline, versions, evidence);
     }

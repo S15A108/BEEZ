@@ -129,6 +129,8 @@ const STATE: Record<string, { label: string; look: string; life: string }> = {
     life: 'meeting',
   },
 }
+/** 에이전트 상태의 이름표 문구와 모습. 책상 모니터의 상태 줄도 같은 문구다. 모르는 상태는 연결됨이다. */
+export const officeAgentStyle = (state: string) => STATE[state] ?? STATE.online
 
 /**
  * 고정 사무실(D36·D37)의 사람과 에이전트.

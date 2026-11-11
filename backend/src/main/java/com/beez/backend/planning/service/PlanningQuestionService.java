@@ -78,9 +78,19 @@ public class PlanningQuestionService {
         if (questions.hasBaseline(project)) {
             throw new ApiException(HttpStatus.CONFLICT, "design_already_published", "이미 발행된 초안입니다.");
         }
-        if ("SUPERSEDED".equals(row.get("status"))) {
+        // 현재 버전이 아닌 버전의 미답변 질문은 현재 버전 질문이 다 만들어지면 조회할 때 대체로 판정된다(S15P31A108-396).
+        if ("SUPERSEDED".equals(row.get("status")) || "SUPERSEDED".equals(row.get("freshness"))) {
             throw new ApiException(HttpStatus.CONFLICT, "question_superseded",
                     "문서가 다시 분석되어 이 질문은 더 이상 쓰이지 않아요. 목록을 새로 불러와 주세요.");
+        }
+        // 이전 본문으로 만든 미답변 질문은 새 본문으로 다시 만드는 중이거나 그러지 못한 상태다 — 답하거나 닫지 않는다.
+        // 이미 답한·닫은 질문은 이력이라 그대로 두고 다시 고칠 수도 있다(S15P31A108-396).
+        if ("OPEN".equals(row.get("status")) && !"CURRENT".equals(row.get("freshness"))) {
+            throw new ApiException(HttpStatus.CONFLICT, "question_outdated", switch (String.valueOf(row.get("freshness"))) {
+                case "REFRESH_FAILED" -> "이 질문은 이전 본문으로 만든 거라 답할 수 없어요. 질문을 다시 만든 뒤 답해 주세요.";
+                case "AWAITING_RESUBMISSION" -> "문서가 반려돼 이 질문은 답할 수 없어요. 문서를 다시 제출하면 새 본문으로 질문을 만들어요.";
+                default -> "문서가 바뀌어 질문을 새 본문으로 다시 만드는 중이에요. 잠시 뒤 목록을 새로 불러와 주세요.";
+            });
         }
         if ("DISMISSED".equals(input.status())) {
             if (input.answer() != null || input.answerPayload() != null) throw invalid("닫는 요청에는 답변을 함께 보낼 수 없습니다.");
@@ -112,6 +122,7 @@ public class PlanningQuestionService {
             view.put("answer_format", json(row.get("answer_format")));
         }
         view.put("status", row.get("status"));
+        if (row.get("freshness") != null) view.put("freshness", row.get("freshness"));
         if (row.get("evidence_status") != null) view.put("evidence_status", row.get("evidence_status"));
         if (row.get("summary") != null) view.put("summary", row.get("summary"));
         Map<String, Object> source = source(row);

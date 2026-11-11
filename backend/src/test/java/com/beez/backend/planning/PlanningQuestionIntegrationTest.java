@@ -86,12 +86,17 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
         assertThat(generator.runOnce()).isTrue();
 
+        // 재시도 가능한 첫 실패는 FAILED 전에 한 번 더 돈다. 기다리는 동안 화면에는 오류 없이 PENDING 이다 (S15P31A108-396).
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("PENDING");
+        assertThat(documents.analysis(leaderCaller, project, document, version).get("question_generation")).isEqualTo(Map.of("status", "PENDING"));
+        assertThat(generator.runOnce()).as("자동 재시도").isTrue();
+
         assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
                 .containsEntry("status", "FAILED").containsEntry("error_code", "ai_timeout").containsEntry("retryable", true);
         assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
         assertThat(count("SELECT count(*) FROM planning_question WHERE document_version_id=?", version)).isZero();
-        assertThat(count("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='DOCUMENT_PARSE' AND failed", project)).isEqualTo(1);
-        assertThat(generator.runOnce()).as("실패한 실행은 저절로 다시 돌지 않는다").isFalse();
+        assertThat(count("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='DOCUMENT_PARSE' AND failed", project)).isEqualTo(2);
+        assertThat(generator.runOnce()).as("자동 재시도는 한 번뿐이다").isFalse();
 
         var status = documents.analysis(leaderCaller, project, document, version);
         assertThat(status).containsEntry("status", "COMPLETED");
@@ -108,6 +113,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
     @Test void retryDoesNotRequeueFailedQuestionGenerationThatNoWorkerWillPick() {
         doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
         assertThat(generator.runOnce()).isTrue();
+        assertThat(generator.runOnce()).as("자동 재시도까지 실패").isTrue();
         publishBaseline();
 
         // 기준이 발행된 뒤에는 워커가 질문을 만들지 않는다. PENDING 으로 되돌리면 화면이 '만드는 중'으로 영원히 남는다 (S15P31A108-359).
@@ -122,6 +128,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "cut", org.springframework.http.HttpHeaders.EMPTY,
                 "{\"error\":{\"code\":\"model_output_truncated\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
         assertThat(generator.runOnce()).isTrue();
+        assertThat(generator.runOnce()).as("자동 재시도까지 실패").isTrue();
         assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
                 .containsEntry("status", "FAILED").containsEntry("error_code", "ai_output_too_long").containsEntry("retryable", true);
         // 형식 오류로 거절된 같은 502 는 그대로 일반 장애다.
@@ -147,6 +154,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
             return response;
         }).when(ai).planningQuestions(any());
         generator.runOnce();
+        generator.runOnce();
         assertThat(jdbc.queryForMap("SELECT status,error_code FROM planning_question_run WHERE document_version_id=?", version))
                 .containsEntry("status", "FAILED").containsEntry("error_code", "invalid_ai_output");
         assertThat(count("SELECT count(*) FROM planning_question WHERE document_version_id=?", version)).isZero();
@@ -167,6 +175,126 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(rows.get(0).get("answer")).isEqualTo("기존 답");
         fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, first[1], new AnswerRequest("답", null, null)));
         assertThat(items(questions.list(leaderCaller, project, version, null, null))).hasSize(3);
+    }
+
+    // S15P31A108-396: 본문이 바뀌어 질문을 다시 만드는 동안이나 그러지 못했을 때 이전 본문으로 만든 미답변 질문이
+    // 최신처럼 보이고 답할 수 있었다. 갱신 상태를 내려주고, 미답변만 막고 답한 이력은 그대로 둔다.
+    @Test void outdatedQuestionsAreMarkedAndOpenOnesCannotBeAnsweredUntilRegenerated() {
+        generator.runOnce();
+        long[] id = ids();
+        questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+
+        jdbc.update("UPDATE document_processing SET attempt=2 WHERE document_version_id=?", version);
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest(null, null, "DISMISSED")));
+        assertThat(questions.answer(leaderCaller, project, id[0], new AnswerRequest("고친 답", null, null))).as("답한 질문은 이력이라 고칠 수 있다")
+                .containsEntry("answer", "고친 답").containsEntry("freshness", "REFRESHING");
+
+        generator.runOnce();
+        generator.runOnce();
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESH_FAILED");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+
+        doAnswer(call -> questionsResponse("a1", "a2", "a3")).when(ai).planningQuestions(any());
+        documents.retry(leaderCaller, project, document, version, "retry-396");
+        generator.runOnce();
+        assertThat(items(questions.list(leaderCaller, project, version, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null))).containsEntry("status", "ANSWERED");
+    }
+
+    // 질문의 기준 버전은 승인본 우선, 없으면 최신 초안이다(QuestionBasisVersion — 기획 분석 화면·설계 초안과 같은 규칙).
+    // 반려 뒤 다시 낸 초안은 그대로 기준이 되어, 이전 버전 질문은 그 초안의 갱신 상태를 따르고 새 질문이 만들어지면
+    // 미답변은 조회할 때 대체로 판정돼 목록·개수·번호에서 빠진다(행은 바꾸지 않는다). 다시 내기 전, 기준 버전이 없는 동안은
+    // '다시 제출 대기'로 보이고 미답변 질문에는 답할 수 없다.
+    @Test void afterARejectedDraftIsResubmittedTheNewDraftBecomesTheBasis() {
+        generator.runOnce();
+        long[] id = ids();
+        questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness"))
+                .containsOnly("AWAITING_RESUBMISSION");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+        version = documentVersion(document, 2, CONTENT);
+
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+
+        assertThat(generator.runOnce()).as("새 초안 질문 생성").isTrue();
+        var page = questions.list(leaderCaller, project, null, null, null);
+        assertThat(items(page)).extracting(i -> i.get("id")).as("이전 버전은 답한 질문만 남는다")
+                .contains("" + id[0]).doesNotContain("" + id[1], "" + id[2]);
+        assertThat(items(page)).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(page.get("total_count")).isEqualTo(4L);
+        assertThat(items(page)).extracting(i -> i.get("number")).containsExactly(1L, 2L, 3L, 4L);
+        fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+
+        // #279 리뷰: 기준 설계가 발행돼도 숨겼던 이전 버전 미답변 질문이 다시 나오지 않는다.
+        publishBaseline();
+        var published = questions.list(leaderCaller, project, null, null, null);
+        assertThat(items(published)).extracting(i -> i.get("id")).doesNotContain("" + id[1], "" + id[2]);
+        assertThat(published.get("total_count")).isEqualTo(4L);
+    }
+
+    // 등록을 취소한 문서(DOC-A25)는 다시 제출할 수 없다 — '다시 제출 대기'가 아니라 미답변 질문을 대체로 판정해 목록에서 뺀다.
+    @Test void questionsOfADiscardedDocumentLeaveTheListExceptAnsweredHistory() {
+        generator.runOnce();
+        long[] id = ids();
+        questions.answer(leaderCaller, project, id[0], new AnswerRequest("기존 답", null, null));
+        jdbc.update("UPDATE document SET discarded_at=now() WHERE id=?", document);
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", version);
+
+        var page = questions.list(leaderCaller, project, null, null, null);
+        assertThat(items(page)).extracting(i -> i.get("id")).containsExactly("" + id[0]);
+        assertThat(items(page)).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(page.get("total_count")).isEqualTo(1L);
+        fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+    }
+
+    // 승인본 뒤에 다시 낸 초안이 검토 중이면 기준은 계속 승인본이다 — 설계 초안이 쓰는 승인본의 질문에 계속 답할 수 있고,
+    // 검토 중인 초안의 질문은 만들지 않는다. 그 초안이 승인돼 기준이 되면 그때 질문을 만들고 이전 승인본 질문이 따라간다.
+    @Test void aResubmittedDraftBehindTheApprovedVersionBecomesTheBasisOnlyWhenApproved() {
+        long first = version;
+        generator.runOnce();
+        long[] id = ids();
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=?,approved_at=now() WHERE id=?", leader, first);
+        version = documentVersion(document, 2, CONTENT);
+
+        assertThat(items(questions.list(leaderCaller, project, null, null, null))).extracting(i -> i.get("freshness")).containsOnly("CURRENT");
+        assertThat(generator.runOnce()).as("검토 중인 초안의 질문은 만들지 않는다").isFalse();
+        assertThat(questions.answer(leaderCaller, project, id[0], new AnswerRequest("승인본에 답", null, null))).containsEntry("status", "ANSWERED");
+
+        jdbc.update("UPDATE document_version SET status='SUPERSEDED' WHERE id=?", first);
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=?,approved_at=now() WHERE id=?", leader, version);
+        assertThat(items(questions.list(leaderCaller, project, first, null, null))).extracting(i -> i.get("freshness")).containsOnly("REFRESHING");
+        fails(HttpStatus.CONFLICT, "question_outdated", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+        assertThat(generator.runOnce()).as("새 승인본 질문 생성").isTrue();
+        assertThat(items(questions.list(leaderCaller, project, first, null, null))).extracting(i -> i.get("id")).containsExactly("" + id[0]);
+    }
+
+    // 자동 재시도를 기다리는 사이 기준이 발행되면 워커가 잡지 않으므로 그 실패가 마지막이다 — '만드는 중'으로 남기지 않는다(S15P31A108-359).
+    @Test void autoRetryWaitingWhenTheBaselineIsPublishedShowsAsFailed() {
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        generator.runOnce();
+        publishBaseline();
+
+        assertThat(documents.analysis(leaderCaller, project, document, version).get("question_generation"))
+                .isEqualTo(Map.of("status", "FAILED", "error_code", "ai_timeout", "retryable", true));
+        fails(HttpStatus.CONFLICT, "question_generation_unavailable", () -> documents.retry(leaderCaller, project, document, version, "retry-after-baseline-396"));
+    }
+
+    // 자동 재시도를 기다리는 사이 문서가 다시 분석되면 새 본문의 첫 실행이므로 자동 재시도 한 번을 새로 받는다.
+    @Test void reanalysisWhileAutoRetryIsWaitingGivesTheNewTextItsOwnRetry() {
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        generator.runOnce();
+        jdbc.update("UPDATE document_processing SET attempt=2 WHERE document_version_id=?", version);
+
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("PENDING");
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
     }
 
     @Test void answeredQuestionTextIsNotOverwrittenByReanalysis() {

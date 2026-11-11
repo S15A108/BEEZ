@@ -27,7 +27,11 @@ import {
   type OfficeWorkHit,
   type OfficeWorkState,
 } from './office-work'
-import { OfficeWorkSurface } from './office-work-surface'
+import {
+  OfficeWorkSurface,
+  type OfficeSurfaceKind,
+} from './office-work-surface'
+import type { OfficeScreens } from './office-screens'
 import { officeObjectKey } from './office-layout'
 import {
   OfficeAimOutline,
@@ -45,7 +49,7 @@ export interface OfficeSceneHit {
 }
 export interface OfficeAimTarget extends OfficeSceneHit {
   label: string
-  surface?: 'monitor' | 'board' | 'projection' | 'note'
+  surface?: OfficeSurfaceKind
 }
 
 /** Positions keep the existing simulation's 32 px tile coordinate system. */
@@ -195,7 +199,8 @@ function kitPalette(material: THREE.MeshStandardMaterial) {
     material.depthWrite = false
   }
 }
-// 화면 가운데 높이·폭·높이·기울기(m). 모니터·TV는 Kit 모델 단위에 배율을 곱하고(캔버스 SCREEN), 노트북은 크기로 어림한다.
+// 화면 가운데 높이·폭·높이·기울기(m). Kit 모델의 화면 면(재질 metal) 꼭짓점을 잰 값에 배율을 곱한다. 모니터·노트북 화면은
+// 위가 뒤로 누워 있어, 세워 두면 아래쪽이 화면 면 뒤로 숨는다(S15P31A108-375에서 어두운 코딩 화면으로 바꾸며 드러남).
 type KitSpec = NonNullable<Furniture['kit']>
 const KIT_SCREEN: Record<
   string,
@@ -203,23 +208,20 @@ const KIT_SCREEN: Record<
 > = {
   computerScreen: (kit) => {
     const s = kit.s?.[0] ?? 1
-    return [kit.y + 0.177 * s, 0.36 * s, 0.2 * s, 0]
+    return [kit.y + 0.1715 * s, 0.379 * s, 0.233 * s, -0.138]
   },
   televisionModern: (kit) => {
     const s = kit.s?.[0] ?? 1
-    return [kit.y + 0.265 * s, 0.635 * s, 0.355 * s, 0]
+    return [kit.y + 0.262 * s, 0.668 * s, 0.368 * s, 0]
   },
-  laptop: (kit) => [kit.y + kit.h * 0.62, kit.w * 0.72, kit.h * 0.6, -0.3],
+  // 노트북 모델은 안에서 0.44배라 폭(kit.w = 모델 0.6)으로 배율을 구한다.
+  laptop: (kit) => {
+    const s = kit.w / 0.6
+    return [kit.y + 0.199 * s, 0.52 * s, 0.289 * s, -0.42]
+  },
 }
-// 캔버스 uiMake와 같은 그림: 칸반·메모 벽은 종이, 그래프·대시보드는 화면
-function drawKitUi(
-  g: CanvasRenderingContext2D,
-  kind: string,
-  w: number,
-  h: number,
-) {
-  const font = (size: number, weight = 700) =>
-    (g.font = `${weight} ${size}px Geist, "Malgun Gothic", sans-serif`)
+// 캔버스 uiMake와 같은 칸반 그림(종이 메모). 메모 벽·관계 TV·대시보드는 실제 상태를 그리는 OfficeWorkSurface다(D47).
+function drawKanban(g: CanvasRenderingContext2D, w: number, h: number) {
   const note = (
     x: number,
     y: number,
@@ -247,109 +249,30 @@ function drawKitUi(
   const colors = ['#f3c530', '#fde68a', '#ffffff', '#cfe3f7', '#f9c6b8']
   g.fillStyle = '#ffffff'
   g.fillRect(0, 0, w, h)
-  if (kind === 'kanban' || kind === 'notes') {
-    const heads =
-      kind === 'kanban'
-        ? ['할 일', '진행 중', '검토', '완료']
-        : ['제안', '검토 중', '반영', '보류', '질문']
-    const cw = w / heads.length
-    heads.forEach((title, i) => {
-      if (i) {
-        g.fillStyle = '#d8d4cc'
-        g.fillRect(i * cw, 30, 4, h - 60)
-      }
-      font(kind === 'kanban' ? 64 : 58)
-      g.fillStyle = '#2c291f'
-      g.fillText(title, i * cw + 36, 92)
-      const n = 2 + ((i * 7 + 3) % 3)
-      for (let k = 0; k < n; k++)
-        note(
-          i * cw + 40 + (k % 2) * (cw * 0.44),
-          140 + Math.floor(k / 2) * (cw * 0.46),
-          cw * 0.38,
-          colors[(i + k) % colors.length],
-          (((i * 3 + k) % 5) - 2) * 0.03,
-        )
-    })
-    return
-  }
-  if (kind === 'graph') {
-    g.fillStyle = '#f7f8fa'
-    g.fillRect(0, 0, w, h)
-    const nodes: [number, number, string][] = [
-      [640, 360, '프로젝트'],
-      [300, 180, '화면'],
-      [980, 180, 'API'],
-      [280, 560, '데이터'],
-      [1000, 560, '정책'],
-      [640, 620, '변경'],
-    ]
-    g.strokeStyle = '#9aa3ad'
-    g.lineWidth = 6
-    for (const [x, y] of nodes.slice(1)) {
-      g.beginPath()
-      g.moveTo(640, 360)
-      g.lineTo(x, y)
-      g.stroke()
+  const heads = ['할 일', '진행 중', '검토', '완료']
+  const cw = w / heads.length
+  heads.forEach((title, i) => {
+    if (i) {
+      g.fillStyle = '#d8d4cc'
+      g.fillRect(i * cw, 30, 4, h - 60)
     }
-    nodes.forEach(([x, y, label], i) => {
-      g.fillStyle = i ? '#ffffff' : '#f3c530'
-      g.strokeStyle = '#2c291f'
-      g.lineWidth = 4
-      g.beginPath()
-      g.roundRect(x - 120, y - 48, 240, 96, 22)
-      g.fill()
-      g.stroke()
-      font(40)
-      g.fillStyle = '#2c291f'
-      g.textAlign = 'center'
-      g.fillText(label, x, y + 14)
-      g.textAlign = 'left'
-    })
-    return
-  }
-  // 대시보드: 숫자 칸과 선 그래프, 또는 진행 막대
-  g.fillStyle = '#1f2329'
-  g.fillRect(0, 0, w, h)
-  font(44)
-  g.fillStyle = '#ffffff'
-  g.fillText(kind === 'dash1' ? '팀 대시보드' : '프로젝트 진행', 60, 90)
-  if (kind === 'dash1') {
-    ;[
-      ['작업 중', '6'],
-      ['검토', '3'],
-      ['완료', '27'],
-    ].forEach(([title, value], i) => {
-      g.fillStyle = '#2c3138'
-      g.fillRect(60 + i * 400, 130, 360, 180)
-      font(30, 500)
-      g.fillStyle = '#aab2bc'
-      g.fillText(title, 90 + i * 400, 185)
-      font(84)
-      g.fillStyle = i ? '#ffffff' : '#f3c530'
-      g.fillText(value, 90 + i * 400, 285)
-    })
-    g.strokeStyle = '#f3c530'
-    g.lineWidth = 8
-    g.beginPath()
-    ;[0.2, 0.35, 0.3, 0.5, 0.45, 0.7, 0.8].forEach((v, i) =>
-      g.lineTo(80 + i * 180, 660 - v * 300),
-    )
-    g.stroke()
-    return
-  }
-  ;['도시 화면', '작업 현황', '회의실', '변경 제안', '문서함'].forEach(
-    (title, i) => {
-      font(32, 500)
-      g.fillStyle = '#d5dae0'
-      g.fillText(title, 60, 190 + i * 110)
-      g.fillStyle = '#2c3138'
-      g.fillRect(330, 160 + i * 110, 860, 40)
-      g.fillStyle = i === 1 ? '#f3c530' : '#7fb08a'
-      g.fillRect(330, 160 + i * 110, 860 * [0.9, 0.6, 0.75, 0.4, 0.55][i], 40)
-    },
-  )
+    g.font = '700 64px Geist, "Malgun Gothic", sans-serif'
+    g.fillStyle = '#2c291f'
+    g.fillText(title, i * cw + 36, 92)
+    const n = 2 + ((i * 7 + 3) % 3)
+    for (let k = 0; k < n; k++)
+      note(
+        i * cw + 40 + (k % 2) * (cw * 0.44),
+        140 + Math.floor(k / 2) * (cw * 0.46),
+        cw * 0.38,
+        colors[(i + k) % colors.length],
+        (((i * 3 + k) % 5) - 2) * 0.03,
+      )
+  })
 }
+// 배치의 화면 그림 이름(plans/*.ts) → 실제 상태를 그리는 화면. 회의실 TV(slides)는 프로젝트 진행이다.
+const kitScreenKind = (ui: string): OfficeSurfaceKind =>
+  ui === 'graph' || ui === 'dash1' ? ui : 'dash2'
 
 /** A real, interactive orthographic dollhouse; all assets are local procedural meshes. */
 export class OfficeRenderer3D {
@@ -429,6 +352,7 @@ export class OfficeRenderer3D {
     binding?: string
   }[] = []
   private lastWork: OfficeWorkState | undefined
+  private lastScreens: OfficeScreens | undefined
   private workSurfacesDirty = true
   private readonly raycaster = new THREE.Raycaster()
   private readonly aimOutline = new OfficeAimOutline()
@@ -875,7 +799,7 @@ export class OfficeRenderer3D {
 
   private workSurface(
     parent: THREE.Object3D,
-    kind: 'monitor' | 'board' | 'projection' | 'note',
+    kind: OfficeSurfaceKind,
     x: number,
     y: number,
     z: number,
@@ -883,7 +807,7 @@ export class OfficeRenderer3D {
     height: number,
     binding?: string,
   ) {
-    const surface = new OfficeWorkSurface(kind, width, height)
+    const surface = new OfficeWorkSurface(kind, width, height, binding)
     surface.mesh.position.set(x, y, z)
     parent.add(surface.mesh)
     this.workSurfaces.push({ surface, binding })
@@ -1230,16 +1154,17 @@ export class OfficeRenderer3D {
           surface.rotation.x = tilt
           return
         }
-        const plane = new THREE.Mesh(
-          this.geometry(
-            `ui${width},${height}`,
-            () => new THREE.PlaneGeometry(width, height),
-          ),
-          this.kitUi(kit.ui!),
+        // TV는 관계 그래프·대시보드를 실제 상태로 그린다(D47). 회의실 TV(slides)는 프로젝트 진행 화면이다.
+        const live = this.workSurface(
+          group,
+          kitScreenKind(kit.ui!),
+          0,
+          y,
+          z,
+          width,
+          height,
         )
-        plane.position.set(0, y, z)
-        plane.rotation.x = tilt
-        group.add(plane)
+        live.rotation.x = tilt
       })
       .catch(() => undefined)
   }
@@ -1284,15 +1209,15 @@ export class OfficeRenderer3D {
         '#1b1d21',
         0.01,
       )
-      const plane = new THREE.Mesh(
-        this.geometry(
-          `ui${length - 0.06},${kit.h - 0.06}`,
-          () => new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
-        ),
-        this.kitUi(ui),
+      this.workSurface(
+        group,
+        kitScreenKind(ui),
+        0,
+        kit.y + kit.h / 2,
+        0.026,
+        length - 0.06,
+        kit.h - 0.06,
       )
-      plane.position.set(0, kit.y + kit.h / 2, 0.026)
-      group.add(plane)
       return
     }
     const kanban = ui === 'kanban'
@@ -1309,15 +1234,27 @@ export class OfficeRenderer3D {
       '#d5d8db',
       0.005,
     )
-    const plane = new THREE.Mesh(
-      this.geometry(
-        `ui${length},${panel}`,
-        () => new THREE.PlaneGeometry(length, panel),
-      ),
-      this.kitUi(ui),
-    )
-    plane.position.set(0, bottom + panel / 2, 0.019)
-    group.add(plane)
+    // 메모 벽은 변경 제안을 실제 상태로 붙인다(D47). 칸반은 그림 그대로다.
+    if (kanban) {
+      const plane = new THREE.Mesh(
+        this.geometry(
+          `ui${length},${panel}`,
+          () => new THREE.PlaneGeometry(length, panel),
+        ),
+        this.kanbanUi(),
+      )
+      plane.position.set(0, bottom + panel / 2, 0.019)
+      group.add(plane)
+    } else
+      this.workSurface(
+        group,
+        'notes',
+        0,
+        bottom + panel / 2,
+        0.019,
+        length,
+        panel,
+      )
     if (kanban)
       for (const side of [-1, 1]) {
         this.box(
@@ -1345,28 +1282,25 @@ export class OfficeRenderer3D {
       }
   }
 
-  // 보드·화면 그림(캔버스 uiMake): 칸반, 메모 벽, 관계 그래프, 대시보드 둘
-  private kitUi(kind: string) {
-    const key = `kit-ui/${kind}`
+  // 칸반 그림(캔버스 uiMake). 종이라 방 빛을 받는다.
+  private kanbanUi() {
+    const key = 'kit-ui/kanban'
     let material = this.materials.get(key)
     if (material) return material
-    const W = kind === 'notes' ? 2048 : 1280,
-      H = kind === 'notes' ? 910 : kind === 'kanban' ? 1100 : 720
     const canvas = document.createElement('canvas')
-    canvas.width = W
-    canvas.height = H
+    canvas.width = 1280
+    canvas.height = 1100
     const g = canvas.getContext('2d')
-    if (g) drawKitUi(g, kind, W, H)
+    if (g) drawKanban(g, canvas.width, canvas.height)
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.anisotropy = 4
     this.textures.push(texture)
-    const paper = kind === 'kanban' || kind === 'notes'
     material = new THREE.MeshStandardMaterial({
       map: texture,
       emissive: '#ffffff',
       emissiveMap: texture,
-      emissiveIntensity: paper ? 0.08 : 0.85,
+      emissiveIntensity: 0.08,
       roughness: 0.5,
     })
     this.materials.set(key, material)
@@ -3617,6 +3551,8 @@ ${note ?? ''}`
       /** 내 캐릭터. 비비가 가까이 온 나에게 손을 흔든다(D35). */
       playerId?: string
       work?: OfficeWorkState
+      /** 메모 벽·관계 TV·대시보드에 그릴 프로젝트 상태(D47) */
+      screens?: OfficeScreens
       /** 사무실 시간대(D39). 없으면 낮이다. */
       time?: OfficeTime
     },
@@ -3643,13 +3579,19 @@ ${note ?? ''}`
       this.floorKey = floorKey
       this.buildFloor(floor)
     }
-    if (this.workSurfacesDirty || this.lastWork !== opts.work) {
+    if (
+      this.workSurfacesDirty ||
+      this.lastWork !== opts.work ||
+      this.lastScreens !== opts.screens
+    ) {
       this.lastWork = opts.work
+      this.lastScreens = opts.screens
       this.workSurfacesDirty = false
       for (const { surface, binding } of this.workSurfaces)
         surface.update(
           opts.work,
           binding ? opts.work?.monitors[binding] : opts.work?.summary,
+          opts.screens,
         )
     }
     const eye = opts.firstPersonId
@@ -3967,7 +3909,7 @@ ${note ?? ''}`
   private pickScene(
     screenX: number,
     screenY: number,
-  ): { target: OfficeAimTarget; outline: THREE.Object3D } | null {
+  ): { target: OfficeAimTarget; outline?: THREE.Object3D } | null {
     if (!this.floor) return null
     this.raycaster.setFromCamera(
       new THREE.Vector2(
@@ -4008,7 +3950,9 @@ ${note ?? ''}`
           entityId,
           label: '동료와 대화',
         },
-        outline: robot.body,
+        // 비비에는 윤곽을 그리지 않는다(S15P31A108-380, 사용자 요청). 가리키고 Enter를 누르면 비비 대화가
+        // 열리는 것은 그대로다.
+        outline: robot.appearance === 'bibi' ? undefined : robot.body,
       }
     }
     if (!workHit) return null

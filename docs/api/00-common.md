@@ -125,6 +125,8 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 502 | AI·모델 실패 | ai_unavailable, model_unavailable, model_output_truncated(AI 내부, 출력 상한에 끊김), ai_output_too_long(기획 질문·설계 초안 작업 실패 코드. BE 가 위 코드를 이렇게 저장·노출, 재시도 가능) |
 | 503 | 처리 기반 이용 불가 | processing_unavailable |
 | 504 | 분석 시간 초과 | ai_timeout, model_timeout, review_timeout(문서 비비 검토 시간 초과, DOC-A16) |
+| 409 | 작업 계획 문서 초안 | insufficient_documents(승인 문서에서 고른 발췌 없음), draft_in_progress(같은 사람의 호출 진행 중). TSK-A08 |
+| 429 | 작업 계획 문서 초안 호출 제한 | draft_limit_exceeded(시간당 횟수 초과). TSK-A08 |
 
 현재 backend의 공통 오류 응답과 snake_case 설정을 따른다. 신규 업무 code·페이지·문자열 ID는 구현 시 이 계약과 맞춘다. 검증이 NEEDS_INPUT/NEEDS_REVIEW/ERROR로 저장된 경우는 HTTP 전송 실패와 구분한다. 409 뒤에는 최신 리소스를 다시 조회한다.
 
@@ -897,6 +899,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `question_type` | `CHOICE\|SHORT_ANSWER\|ESSAY` | N | 선택·단답·서술. AI가 만든 질문에만 있다. S15P31A108-232 |
 | `answer_format` | `object` | N | 질문 유형별 답변 형식(선택지·`multiple`·`allow_other`·`max_length`). 133 계약 §6. S15P31A108-232 |
 | `status` | `OPEN\|ANSWERED\|DISMISSED` | N | 답변 상태. `SUPERSEDED`(재분석으로 대체됨)는 목록에 내지 않는다. S15P31A108-232 |
+| `freshness` | `CURRENT\|REFRESHING\|REFRESH_FAILED\|AWAITING_RESUBMISSION` | N | 지금 본문으로 만든 질문인지. 질문이 붙은 버전이 아니라 그 문서의 질문 기준 버전(승인본이 있으면 승인본, 없으면 최신 초안 — 기획 분석 화면·설계 초안이 고르는 버전과 같다)으로 판정한다. 현재 버전의 질문을 다시 만드는 중이면 `REFRESHING`(이전 본문 기준·갱신 중), 그러다 실패하면 `REFRESH_FAILED`(최신 본문으로 갱신하지 못함), 첫 제출이 반려돼 기준 버전이 아직 없으면 `AWAITING_RESUBMISSION`(반려된 문서 · 다시 제출 대기). 기준 설계 발행 뒤·보관된 프로젝트·현재 버전 없음·실행 기록이 없는 같은 버전의 옛 질문은 `CURRENT`. 현재 버전 질문이 다 만들어지면 기준이 아닌 이전 버전(반려 뒤 다시 낸 초안·새 승인본에 밀린 버전)의 미답변 질문은 목록·개수에서 빠지고 PLN-A04는 409 `question_superseded`다. 저장된 행은 바꾸지 않으므로 새 버전이 반려돼 현재 버전이 되돌아오면 다시 보인다. 기준 설계가 발행되거나 프로젝트가 보관된 뒤에는 다시 만들 일이 없으므로 이전 버전 미답변 질문은 기다리지 않고 바로 빠진다. 등록을 취소한(DOC-A25) 문서는 다시 제출할 수 없으므로 그 문서의 미답변 질문도 같은 방식으로 목록·개수에서 빠진다. `CURRENT`가 아니면 미답변(`OPEN`) 질문은 PLN-A04가 409 `question_outdated`로 막고, 답한·닫은 질문은 이력이라 그대로 둔다. S15P31A108-396 |
 | `evidence_status` | `REVIEW_CANDIDATE\|UNVERIFIED` | N | `UNVERIFIED`면 화면에 "근거 미확인"으로 구분한다. S15P31A108-232 |
 | `summary` | `string` | N | 무엇이 비었거나 모호한지. S15P31A108-232 |
 | `source` | [Source](00-common.md#schema-source) | N | 출처(첫 근거의 위치) |

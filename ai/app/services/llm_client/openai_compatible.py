@@ -198,6 +198,28 @@ class OpenAICompatibleProvider:
             raise ProviderError("invalid_output", **kwargs)
         choice = choices[0]
         message = choice.get("message")
+        # Numeric diagnostics only. Never propagate arbitrary provider strings.
+        finish = choice.get("finish_reason")
+        kwargs["finish_reason"] = (
+            finish
+            if isinstance(finish, str)
+            and finish in {"stop", "length", "content_filter", "tool_calls"}
+            else None
+        )
+        details = (
+            body.get("usage", {}).get("completion_tokens_details")
+            if isinstance(body.get("usage"), dict)
+            else None
+        )
+        reasoning = (
+            details.get("reasoning_tokens") if isinstance(details, dict) else None
+        )
+        if (
+            type(reasoning) is int
+            and output_tokens is not None
+            and 0 <= reasoning <= output_tokens
+        ):
+            kwargs["reasoning_tokens"] = reasoning
         # 출력 상한(max_tokens)에 닿아 답이 중간에 끊겼다. 형식 오류가 아니라 상한 문제이므로 따로 알린다 (S15P31A108-382).
         if choice.get("finish_reason") == "length":
             raise ProviderError("output_truncated", **kwargs)
@@ -216,4 +238,6 @@ class OpenAICompatibleProvider:
             model=reported_model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            reasoning_tokens=kwargs.get("reasoning_tokens"),
+            finish_reason=kwargs.get("finish_reason"),
         )

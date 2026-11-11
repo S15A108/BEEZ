@@ -21,7 +21,8 @@ interface AnalysisLike {
 // AI 호출이 길면 뒤 문서는 한참 동안 응답에 question_generation 이 없다. 이 상태는 시간으로 끊지 않고 문서가 서버의
 // 대상(isQuestionTarget)인 동안 WAITING 으로 계속 따라간다. 주기는 @/lib/pollIntervals 에 모아 두었다.
 
-// 서버(PlanningQuestionRepository.nextRunnable)는 기준 설계가 없고 문서 버전이 DRAFT·APPROVED 일 때만 질문을 만든다.
+// 서버(PlanningQuestionRepository.nextRunnable)는 기준 설계가 없고 문서의 질문 기준 버전(승인본 우선, 없으면 최신 초안)일 때만
+// 질문을 만든다. 여기 오는 버전은 PlanningPanel 의 versionOf 가 같은 규칙으로 고른 것이라 상태만 본다.
 // 기준이 발행됐거나 다른 상태의 버전은 실행 행이 영영 생기지 않으므로 기다리지 않는다.
 export const isQuestionTarget = (
   version: { status: string },

@@ -84,6 +84,31 @@ class Settings(BaseSettings):
     # chat read limit (DOCUMENT_REVIEW_READ_TIMEOUT, 55s) and nginx /api/ (60s).
     document_review_chat_llm_timeout_seconds: str = "50"
 
+    # Task plan draft from approved document excerpts (S15P31A108-385). The
+    # model call reuses gms_key and bee_default_model. The BE read limit
+    # (beez.task-plan-draft.read-timeout, 40s) and nginx (60s) must stay longer
+    # than the model limit. Parsed per request.
+    task_plan_drafts_max_body_bytes: str = "524288"
+    task_plan_drafts_llm_timeout_seconds: str = "30"
+    task_plan_drafts_llm_output_token_limit: str = "4096"
+    task_plan_drafts_llm_output_token_parameter: str = "max_completion_tokens"
+    # Empty effort omits the provider option (for compatible gateways).
+    task_plan_drafts_llm_reasoning_effort: str = "low"
+    # Offline cl100k estimate of system + JSON; reserve covers message framing.
+    task_plan_drafts_input_token_limit: str = "4096"
+    task_plan_drafts_input_reserve_tokens: str = "128"
+    # Operational output budgets; schema limits remain the API contract ceiling.
+    task_plan_drafts_goal_chars: str = "160"
+    task_plan_drafts_approach_chars: str = "240"
+    task_plan_drafts_list_items: str = "3"
+    task_plan_drafts_list_entry_chars: str = "100"
+    task_plan_drafts_evidence_items: str = "5"
+    task_plan_drafts_quote_chars: str = "160"
+    task_plan_drafts_link_candidates: str = "3"
+    task_plan_drafts_reason_chars: str = "100"
+    task_plan_drafts_new_items: str = "3"
+    task_plan_drafts_unlinked_items: str = "3"
+
     bee_chat_enabled: bool = False
     bee_chat_max_body_bytes: str = "2097152"
     bee_chat_llm_timeout_seconds: str = "30"

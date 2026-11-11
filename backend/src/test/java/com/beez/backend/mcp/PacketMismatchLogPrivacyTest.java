@@ -36,7 +36,7 @@ class PacketMismatchLogPrivacyTest {
             when(access.requireMember(caller, 987654L))
                     .thenReturn(new ProjectActor(31, 32, 987654, ProjectRole.MEMBER, ActorType.AGENT, 33L));
             var packets = new ContextPacketService(access, mock(InputValidator.class), null, null, null, null, null);
-            var mcp = new ContextMcpService(access, packets, null, null, null);
+            var mcp = new ContextMcpService(access, packets, null, null, null, null, null);
             var packet = new SavePacketArgs("request", "987655", null, "1", List.of(), List.of(), List.of(), List.of(), List.of());
 
             assertThatThrownBy(() -> mcp.getDevelopmentContext(caller, 987654L,

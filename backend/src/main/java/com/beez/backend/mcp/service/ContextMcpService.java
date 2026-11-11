@@ -17,6 +17,8 @@ import com.beez.backend.context.dto.WriteContextArgs;
 import com.beez.backend.context.service.ContextLookup;
 import com.beez.backend.context.service.ContextPacketService;
 import com.beez.backend.context.service.ContextRecordService;
+import com.beez.backend.context.service.DevelopmentContextComposer;
+import com.beez.backend.context.service.DevelopmentContextLimiter;
 import com.beez.backend.mcp.dto.GetDevelopmentContextArgs;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
@@ -36,26 +38,33 @@ public class ContextMcpService {
 
     private final McpCommandStore commands;
     private final ContextLookup lookup;
+    private final DevelopmentContextComposer composer;
+    private final DevelopmentContextLimiter limiter;
 
     private static final String OP_WRITE = "write_context";
+    /** MCP-01 request 상한(-110 합의, AI ShortText 와 같음). 넘으면 잘라 저장하지 않고 400 */
+    static final int MAX_REQUEST_CODE_POINTS = 2000;
 
     public ContextMcpService(ProjectAccessChecker access, ContextPacketService packets, ContextRecordService records,
-                             McpCommandStore commands, ContextLookup lookup) {
+                             McpCommandStore commands, ContextLookup lookup, DevelopmentContextComposer composer,
+                             DevelopmentContextLimiter limiter) {
         this.access = access;
         this.packets = packets;
         this.records = records;
         this.commands = commands;
         this.lookup = lookup;
+        this.composer = composer;
+        this.limiter = limiter;
     }
 
     /**
      * MCP-01 get_development_context. 어댑터는 도구 인수만 넘기고, 패킷 구성과 저장은 여기서 한다.
      *
-     * <p>패킷 내용 구성(승인 설계 검색·의존 설계 확장·미확정·관련 작업·근거)은 박상은 모듈(-131·-132)이 맡는다.
-     * 그 모듈이 붙기 전에는 <b>503 context_not_ready</b> (전진 MCP 오류표, #40 B4) 를 주고 패킷을 저장하지 않는다 (리뷰 반영).
-     * 빈 구성으로 저장·반환하면 호출자가 "근거 없음"으로 읽는다 — 명세 MCP-01 "검색 실패와 근거 없음은 구분한다".
-     * 모듈이 붙으면 아래 자리에서 구성 결과로 {@link SavePacketArgs} 를 만들어 {@link ContextPacketService#save} 를 부른다.
-     * 권한(404·사람 세션 403)과 인수(400) 확인은 지금도 먼저 한다.
+     * <p>패킷 내용 구성(승인 설계 검색·의존 설계 확장·미확정·관련 작업·근거)은 AI 모듈(-131·-132)이 맡고,
+     * {@link DevelopmentContextComposer} 가 스냅샷을 모아 부른 뒤 {@link SavePacketArgs} 로 돌려준다 (S15P31A108-399).
+     * 색인 미준비·AI 실패는 <b>503 context_not_ready</b> 로 끝내고 저장하지 않는다 — 빈 구성으로 저장·반환하면 호출자가
+     * "근거 없음"으로 읽는다(명세 MCP-01 "검색 실패와 근거 없음은 구분한다"). 검색을 마친 근거 0건은 unresolved 의 NO_MATCH 다.
+     * 권한(404·사람 세션 403)과 인수(400) 확인은 AI 호출 전에 먼저 한다. 이 메서드는 트랜잭션을 열지 않는다(AI 호출 동안 잠금 없음).
      */
     public ContextPacketResponse getDevelopmentContext(CallerContext caller, Long projectId, GetDevelopmentContextArgs args) {
         ProjectActor actor = access.requireMember(caller, projectId);
@@ -66,6 +75,10 @@ public class ContextMcpService {
         if (args == null || args.request() == null || args.request().isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "request 는 필수입니다");
         }
+        if (args.request().codePointCount(0, args.request().length()) > MAX_REQUEST_CODE_POINTS) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    "request 는 " + MAX_REQUEST_CODE_POINTS + "자 이하여야 합니다");
+        }
         // 인수의 project_id 는 토큰 프로젝트와 같은지만 본다 (05 참고 2 "MCP 인자 project_id 가 토큰 프로젝트와 다름 → not_found")
         if (args.projectId() != null && !Ids.parse(args.projectId(), "project_id").equals(projectId)) {
             throw AccessErrors.notFound("packet_project_mismatch");
@@ -75,9 +88,13 @@ public class ContextMcpService {
         if (taskId != null) {
             lookup.requireTaskInProject(projectId, taskId);
         }
-        // 구성: 박상은 모듈 연결 전. 연결되면 구성 결과로 packets.save(caller, projectId, composed) 를 부른다
-        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "context_not_ready",
-                "개발 컨텍스트 구성 모듈이 아직 연결되지 않았습니다");
+        // 기준이 없으면 AI 를 부르지 않는다. save 도 같은 404 를 주지만 그 전에 비용이 드는 호출을 막는다
+        Long baselineId = lookup.currentBaselineId(projectId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음"));
+        // 유료 구성 직전에 센다. 권한·인수·기준 오류는 비용이 없어 한도를 쓰지 않는다
+        limiter.acquire(actor.agentTokenId(), projectId);
+        SavePacketArgs composed = composer.compose(projectId, baselineId, taskId, args.request());
+        return packets.save(caller, projectId, composed);
     }
 
     /** MCP-05 find_context */

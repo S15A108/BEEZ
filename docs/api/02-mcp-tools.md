@@ -68,8 +68,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 개발 컨텍스트 조회 기능을 제공한다.
 
 관련 요구사항: MCP-01, TRC-02·03  
-담당: BE: 전진(도구) / 업무 저장: 변준성 / AI: 박상은(검색·의존 설계·JSON) / FE: —  
-상태: 컨텍스트 계약 검토
+담당: BE: 전진(도구·AI 연결 -399) / 업무 저장: 변준성 / AI: 박상은(검색·의존 설계·JSON) / FE: —  
+상태: 구현(S15P31A108-399). BE가 현재 기준 스냅샷을 모아 AI-A14(`/v1/development-context-selections`)로 패킷을 구성하고 저장한다. 구성 방식은 [AI-A14](03-ai-internal.md#ai-a14)
 
 #### 인증
 
@@ -79,7 +79,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `request` | `string` | Y | 개발 요청 |
+| `request` | `string` | Y | 개발 요청. 2,000 Unicode 코드 포인트 이하(넘으면 잘라 저장하지 않고 400). 패킷에 저장되어 같은 프로젝트 멤버에게 공유되므로 비밀번호·토큰 등 비밀값을 넣지 않는다 |
 | `project_id` | `ID` | N | 토큰 프로젝트와 일치해야 함 |
 | `task_id` | `ID` | N | 관련 작업 |
 
@@ -175,7 +175,9 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
 | 409 | `baseline_conflict` | 선택에 사용한 기준이 저장 전 변경됨. 패킷을 저장하지 않고 최신 기준으로 다시 구성한다 |
-| 503 | `context_not_ready` | 컨텍스트 구성 모듈 미연결·색인 미준비. 패킷을 저장하지 않는다. 검색을 마쳤는데 근거가 0건이면 오류가 아니라 정상 응답의 `unresolved`로 표시한다 ([서비스 연결 계약](../design/08-mcp-service-contract.md)) |
+| 409 | `revision_conflict` | `task_id` 작업의 계획이나 상태가 구성하는 동안 바뀜. 패킷을 저장하지 않는다. 다시 조회한다 |
+| 429 | `rate_limited` | (에이전트 토큰, 프로젝트)마다 1분 6회를 넘김(서버 설정). 권한·인수·기준 오류는 세지 않는다 |
+| 503 | `context_not_ready` | 문서 색인 미준비, 컨텍스트 구성 AI 미설정·실패·시간 초과, 스냅샷이 구성 상한 초과. 패킷을 저장하지 않는다. 검색을 마쳤는데 근거가 0건이면 오류가 아니라 정상 응답의 `unresolved`(`NO_MATCH`)로 표시한다 ([서비스 연결 계약](../design/08-mcp-service-contract.md), [AI-A14](03-ai-internal.md#ai-a14)) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 

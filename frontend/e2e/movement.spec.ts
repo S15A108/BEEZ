@@ -119,6 +119,28 @@ test('산책에서 키를 누르면 거리에서 걷는다', async ({ page }) =>
   }
 })
 
+// S15P31A108-379: 산책에서 돌아오면 엘리베이터 앞이 아니라 나가기 전 자리에서 이어 간다.
+test('산책에서 돌아오면 나가기 전 자리에 서 있다', async ({ page }) => {
+  const canvas = await office(page, '101')
+  await canvas.focus()
+  await walkRight(page)
+  await walkRight(page)
+  const position = async () =>
+    `${await canvas.getAttribute('data-player-x')},${await canvas.getAttribute('data-player-y')}`
+  const before = await position()
+  await page.getByRole('button', { name: '산책', exact: true }).click()
+  await expect(canvas).toHaveAttribute('data-street-x', /\d/, {
+    timeout: 30_000,
+  })
+  await page.getByRole('button', { name: '사무실로', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: '산책', exact: true }),
+  ).toBeVisible()
+  // 돌아온 뒤 몇 프레임이 지나도(빈 칸 확인까지 끝나도) 그 자리다.
+  await page.waitForTimeout(500)
+  expect(await position()).toBe(before)
+})
+
 // D35: 비비 자리는 현재 상태(BEE-A04)를 따른다. 건물 외관을 고르지 않은 예시 프로젝트는 모던 화이트 배치다.
 // 상태가 바뀔 때 걸어가는 것은 office-actors.test.ts가 확인한다.
 test('비비는 회의가 열려 있으면 회의실에, 한가하면 라운지에 서 있다', async ({

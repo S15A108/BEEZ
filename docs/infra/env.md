@@ -124,6 +124,8 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_WORKER_READ_TIMEOUT` | | `110`·`120s` | 기본값. 문서 비비 검토(DOC-A16, AI-A10) 첫 검토·재검토의 AI 모델 호출 제한(초, ai 컨테이너, 상한 120)과 backend 검토 워커의 AI 읽기 제한. 검토는 접수 뒤 backend 워커가 HTTP 요청 밖에서 하므로 **nginx 와 무관하게 모델 호출 < 워커 읽기** 만 지킨다. 워커 lease 는 워커 읽기 + 1분이다(S15P31A108-391). 서버 env 파일에 옛 값(`DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS=50`)이 남아 있으면 그 값이 이기므로 지우거나 고친다 |
 | `DOCUMENT_REVIEW_WORKER_CONCURRENCY` | | `4` | 기본값. 문서 비비 검토를 동시에 처리하는 backend 워커 스레드 수(S15P31A108-391). 스케줄 풀과 별도다 |
 | `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_READ_TIMEOUT` | | `50`·`55s` | 기본값. 문서 비비 검토의 제안 대화·직접 요청(DISCUSS·REQUEST)은 사용자 요청 안에서 기다린다. **대기 시간 사슬: 모델 호출 < backend 읽기 < nginx `/api/` 읽기 대기(60초)** 를 지킨다. nginx 값은 env 가 아니라 서버의 `dev.beez.ai.kr.conf` 의 `proxy_read_timeout` 이다(S15P31A108-382·-391) |
+| `BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT`·`BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT_WINDOW` | | `6`·`1m` | 기본값. MCP-01 `get_development_context` 호출 한도((에이전트 토큰, 프로젝트)마다 창 안 횟수, 넘으면 429 `rate_limited`). 호출마다 유료 임베딩이 나가 반복 호출을 막는다. 메모리에만 세므로 재시작하면 처음부터다. `infra/compose.yaml` 이 backend 로 전달한다(S15P31A108-399) |
+| `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT` | | `40s` | 기본값. MCP-01 `get_development_context` 의 AI 컨텍스트 선택 호출 읽기 제한(S15P31A108-399). ai `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` 보다 길게 둔다. `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다. 질의 임베딩은 이 값이 아니라 `AI_READ_TIMEOUT` 을 쓴다. `/mcp` 는 nginx 대기가 1시간이라 60초 사슬과 무관하지만 에이전트가 기다리는 동기 호출이다. `infra/compose.yaml` 이 backend 로 전달한다 |
 | `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
 | `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
@@ -164,7 +166,7 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `AI_INTERNAL_TOKEN` | 비밀 | backend 가 보내는 `Authorization: Bearer` 와 비교. 비거나 다르면 401 `invalid_internal_token` |
 | `VALIDATION_RESPONSE_FORMAT` | | 기본 `json_object`. 모델이 strict 출력을 지원할 때만 `json_schema` |
 | `DESIGN_RECOMMENDATION_ENABLED` | | 설계 근거 추천(#185). 기본 `false` |
-| `CONTEXT_SELECTION_ENABLED`·`CONTEXT_SELECTION_*` | | 컨텍스트 선택(#131). 기본 `false`, 한도 값은 기본 없음 |
+| `CONTEXT_SELECTION_ENABLED`·`CONTEXT_SELECTION_*` | | MCP-01 개발 컨텍스트 선택(#131·#132). 기본 `false`, 한도 값(`MIN_SIMILARITY`·`MAX_ITEMS`·`MAX_EVIDENCE`·`TOTAL_TIMEOUT_SECONDS`)은 기본 없음 — 하나라도 비면 503 `selection_not_configured` 이고 에이전트는 503 `context_not_ready` 를 받는다. compose 가 ai 에 전달한다(S15P31A108-399). dev 시작 제안값은 `0.3`·`10`·`8`·`30`(AI 담당 확인 전). `TOTAL_TIMEOUT_SECONDS` 는 backend `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT`(40초)보다 짧게 |
 | `PLANNING_QUESTIONS_ENABLED`·`PLANNING_QUESTIONS_*` | | 기획 보완 질문(#133). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다(S15P31A108-232). 켜면 `GMS_KEY`·`BEE_DEFAULT_MODEL` 로 호출 |
 | `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
 | `ASSIGNMENT_RECOMMENDATION_ENABLED` | | 역할 분담 추천(#136). 기본 `false`; BE 계약 합의 후에만 켠다. compose 가 ai 에 전달한다 |
@@ -258,7 +260,7 @@ IMPACT_LLM_MODEL=gpt-6-luna'
 docker exec beez-ai-1 env | grep -E '_ENABLED=|^IMPACT_LLM_MODEL=' | sort
 ```
 
-화면에서는 기획 분석의 **보완 질문 만들기**, **답변으로 초안 만들기**, 비비 질문 한 번, 설계 항목을 바꾸는 변경
+화면에서는 기획 분석의 **보완 질문 만들기**, **답변으로 보완 초안 만들기**, 비비 질문 한 번, 설계 항목을 바꾸는 변경
 제안의 영향 분석을 한 번씩 해 봅니다. 영향 분석이 `invalid_output`으로 실패하면 응답의 모델 이름이 요청과 다른
 것이므로 `IMPACT_LLM_ALLOWED_RESPONSE_MODELS`를 봅니다.
 

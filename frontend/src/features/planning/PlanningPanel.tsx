@@ -83,6 +83,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     queryFn: () => documentsApi.list(projectId, { limit: 100 }),
   })
   // 문서별 승인(DOC-A21)을 마친 문서는 그 승인본을, 아직이면 최신 초안을 기준 후보로 본다(dev 89b2c60).
+  // 서버가 보완 질문을 만드는 기준 버전(QuestionBasisVersion)과 같은 규칙이다 — 바꾸면 두 곳을 함께 바꾼다(S15P31A108-396).
   const versionOf = (document: {
     approved_version?: DocumentVersion
     latest_draft?: DocumentVersion

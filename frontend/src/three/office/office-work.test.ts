@@ -53,3 +53,64 @@ test('에이전트가 있어도 작업 자리와 모니터의 주인은 팀원�
     expect(monitor.owner).not.toContain('에이전트')
   }
 })
+
+// 사무실 컴퓨터는 모두 에이전트 자리다(사용자 2026-11-10 "사람자리는 없어, 컴퓨터는 다 에이전트만 해"). 자리는 주인
+// 기준 그대로이고, 모니터에는 그 팀원 에이전트의 상태와 주인의 작업이 뜬다.
+test('팀원 자리 모니터는 그 팀원 에이전트의 화면이고, 사무실에 없는 에이전트는 연결 전이다', () => {
+  const agents = officeSceneAgents([
+    { id: 'member:21', name: '나', kind: 'human' },
+    { id: 'member:22', name: '김동료', kind: 'agent' },
+    { id: 'member:23', name: '이동료', kind: 'agent' },
+    { id: 'member:26', name: '박팀원', kind: 'agent' },
+    {
+      id: 'agent:22',
+      name: '김동료의 에이전트',
+      kind: 'agent',
+      owner: '22',
+      status: 'waiting',
+    },
+    {
+      id: 'agent:26',
+      name: '박팀원의 에이전트',
+      kind: 'agent',
+      owner: '26',
+      status: 'working',
+    },
+  ])
+  const floor = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'glass', undefined, officePopulationOf(agents))
+      .floors[1],
+    4,
+  )
+  const work = buildOfficeWork(
+    floor,
+    officeSceneSnapshot({ id: '1', name: '프로젝트' }, agents, [
+      {
+        id: 'TASK-003',
+        title: '로그인',
+        state: 'IN_PROGRESS',
+        assignee_id: 'member:26',
+      },
+    ]),
+  )
+  const of = (id: string) =>
+    Object.values(work.monitors).find((monitor) => monitor.agentId === id)
+  expect(of('member:26')).toMatchObject({
+    owner: '박팀원',
+    agent: '박팀원의 에이전트',
+    status: '작업 중',
+    screen: 'working',
+    title: '로그인',
+    target: { type: 'task', id: 'TASK-003' },
+  })
+  expect(of('member:22')).toMatchObject({
+    agent: '김동료의 에이전트',
+    status: '대기',
+    screen: 'idle',
+  })
+  expect(of('member:23')).toMatchObject({
+    agent: '이동료의 에이전트',
+    status: '연결 전',
+    screen: 'locked',
+  })
+})

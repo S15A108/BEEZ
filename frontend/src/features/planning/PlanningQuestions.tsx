@@ -39,6 +39,25 @@ const typeLabel = {
   SHORT_ANSWER: '단답형',
   ESSAY: '서술형',
 } as const
+// S15P31A108-396: 본문이 바뀐 뒤 질문을 새로 만드는 중이거나 그러지 못한 동안의 이전 질문 표시
+const freshnessLabel = {
+  REFRESHING: '이전 본문 기준 · 갱신 중',
+  REFRESH_FAILED: '최신 본문으로 갱신하지 못함',
+  AWAITING_RESUBMISSION: '반려된 문서 · 다시 제출 대기',
+} as const
+const lockedMessage = {
+  REFRESHING: '새 본문으로 질문을 다시 만드는 중이라 끝난 뒤 답할 수 있어요.',
+  REFRESH_FAILED:
+    '이전 본문으로 만든 질문이라 답할 수 없어요. 질문을 새 본문으로 다시 만든 뒤 답해 주세요.',
+  AWAITING_RESUBMISSION:
+    '문서가 반려돼 이 질문은 답할 수 없어요. 문서를 다시 제출하면 새 본문으로 질문을 만들어요.',
+} as const
+
+const isOutdated = (question: PlanningQuestion) =>
+  !!question.freshness && question.freshness !== 'CURRENT'
+// 서버는 이전 본문으로 만든 미답변 질문의 답변·닫기를 막는다(409 question_outdated). 답한·닫은 질문은 이력이라 고칠 수 있다.
+const isLocked = (question: PlanningQuestion) =>
+  isOutdated(question) && !question.answer && question.status !== 'DISMISSED'
 
 export interface QuestionGenerationView {
   /** 질문 생성이 도는 중이거나 실패한 문서 하나(문서 버전마다 따로 온다) */
@@ -68,8 +87,10 @@ export function PlanningQuestions({
   published: boolean
   onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
 }) {
-  // 답하는 중인 질문의 id. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 id 만 바꿔 넘긴다.
-  const [answeringId, setAnsweringId] = useState<string | null>(null)
+  // 답하는 중인 질문. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 질문을 바꿔 넘긴다.
+  // 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠져도 창을 닫지 않고 연 때의 질문을 보인다 — 쓰던 답이 사라지지 않고,
+  // 저장하면 서버가 409(question_superseded 등)로 이유를 알려 준다(S15P31A108-396).
+  const [opened, setOpened] = useState<PlanningQuestion | null>(null)
   const failed = generations.filter((item) => item.status === 'FAILED')
   const activeIds = generations
     .filter((item) => item.status !== 'FAILED')
@@ -106,11 +127,20 @@ export function PlanningQuestions({
     queryFn: ({ pageParam }) =>
       planningApi.questions(projectId, { cursor: pageParam, limit: 100 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
-    // 질문을 만드는 동안에는 끝날 때까지 목록을 다시 불러온다.
-    refetchInterval: generating ? ACTIVE_POLL_MS : false,
+    // 질문을 만드는 동안에는 끝날 때까지 목록을 다시 불러온다. 질문 생성이 시작되기 전 문서 재분석 단계에도
+    // 서버가 '갱신 중'으로 표시한 질문이 있으면 끝날 때까지 따라간다(S15P31A108-396).
+    refetchInterval: (query) =>
+      generating ||
+      query.state.data?.pages.some((page) =>
+        page.items.some((item) => item.freshness === 'REFRESHING'),
+      )
+        ? ACTIVE_POLL_MS
+        : false,
   })
   const allQuestions = questions.data?.pages.flatMap((page) => page.items) ?? []
-  const answering = allQuestions.find((item) => item.id === answeringId)
+  const answering = opened
+    ? (allQuestions.find((item) => item.id === opened.id) ?? opened)
+    : undefined
   return (
     <Card>
       <CardHeader>
@@ -197,7 +227,7 @@ export function PlanningQuestions({
                     busy={busy}
                     answerable={answerable}
                     published={published}
-                    onAnswer={() => setAnsweringId(question.id)}
+                    onAnswer={() => setOpened(question)}
                   />
                 )}
               />
@@ -208,9 +238,13 @@ export function PlanningQuestions({
       {answering && (
         <QuestionAnswerForm
           question={answering}
-          siblings={allQuestions}
-          onNavigate={setAnsweringId}
-          onClose={() => setAnsweringId(null)}
+          siblings={allQuestions.filter(
+            (item) => item.id === answering.id || !isLocked(item),
+          )}
+          onNavigate={(id) =>
+            setOpened(allQuestions.find((item) => item.id === id) ?? null)
+          }
+          onClose={() => setOpened(null)}
           onSubmit={(input) => onAnswer(answering.id, input)}
         />
       )}
@@ -287,7 +321,8 @@ function QuestionCard({
 }) {
   const dismissed = question.status === 'DISMISSED'
   const answered = !!question.answer && !dismissed
-  const clickable = isLeader && !busy && answerable
+  const locked = isLocked(question)
+  const clickable = isLeader && !busy && answerable && !locked
   return (
     <article
       className={cn(
@@ -327,6 +362,11 @@ function QuestionCard({
         )}
         {dismissed && <Tag>답변 없이 닫음</Tag>}
         {answered && <Tag tone={operationTone.CREATE}>답변 완료</Tag>}
+        {question.freshness && question.freshness !== 'CURRENT' && (
+          <Tag tone={operationTone.UPDATE}>
+            {freshnessLabel[question.freshness]}
+          </Tag>
+        )}
       </div>
       <p className="text-sm leading-6">{question.question}</p>
       {question.summary && (
@@ -349,6 +389,15 @@ function QuestionCard({
           기준 설계가 발행되어 답변을 바꿀 수 없어요.
         </p>
       )}
+      {isLeader &&
+        !published &&
+        locked &&
+        question.freshness &&
+        question.freshness !== 'CURRENT' && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {lockedMessage[question.freshness]}
+          </p>
+        )}
       {clickable && (
         <p className="mt-3 text-xs text-muted-foreground">
           {answered ? '눌러서 답변 수정' : '눌러서 답변하기'}
