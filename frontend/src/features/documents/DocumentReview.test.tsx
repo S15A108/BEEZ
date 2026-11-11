@@ -291,7 +291,10 @@ it('올린 사람이 아니어도 비비 검토가 끝나면 창을 다시 열�
 // S15P31A108-383: -382는 실패한 검토를 기다리지 않도록 팀원 창의 다시 읽기를 멈췄다. 그런데 올린 사람이
 // 다시 검토해 성공해도 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다. 실패 뒤 10분 동안은 가끔 다시 읽고,
 // 그보다 오래된 실패는 열어 둔 창이 끝없이 부르지 않게 멈춘다.
-async function watchFailedReview(failedAt: string) {
+async function watchFailedReview(
+  failedAt: string,
+  status: 'EDITING' | 'REJECTED' = 'EDITING',
+) {
   const before = await documentsApi.workingCopy('102', '221')
   await documentsApi.requestBeeReview('102', '221', {
     expected_revision: before.revision,
@@ -307,6 +310,7 @@ async function watchFailedReview(failedAt: string) {
         ? copy
         : {
             ...copy,
+            status,
             latest_review: undefined,
             bee_review_request: {
               status: 'FAILED' as const,
@@ -329,6 +333,30 @@ it('검토가 방금 실패한 문서를 보는 팀원 창은 느린 주기로 �
     const reads = read.mock.calls.length
     await vi.advanceTimersByTimeAsync(REVIEW_POLL_MS * 2)
     expect(read).toHaveBeenCalledTimes(reads)
+    state.retried = true
+    await vi.advanceTimersByTimeAsync(SLOW_POLL_MS)
+    expect(
+      await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
+    ).toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+    read.mockRestore()
+  }
+})
+
+// S15P31A108-383 리뷰: 반려된 문서는 무조건 다시 읽기를 멈춰, 반려 사유로 다시 받던 검토가 실패했다가
+// 올린 사람의 재시도로 성공해도 팀원 창이 따라가지 못했다.
+it('반려 뒤 다시 받던 검토가 실패한 문서도 팀원 창이 재시도 성공을 따라간다', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { read, state } = await watchFailedReview(
+    new Date().toISOString(),
+    'REJECTED',
+  )
+  try {
+    mount(false)
+    expect(
+      await screen.findByText(/올린 사람이 다시 검토하거나 문서를 고쳐야 해요/),
+    ).toBeInTheDocument()
     state.retried = true
     await vi.advanceTimersByTimeAsync(SLOW_POLL_MS)
     expect(

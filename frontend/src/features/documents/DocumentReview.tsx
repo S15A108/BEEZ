@@ -108,15 +108,17 @@ export function DocumentReview({
       if (running) return REVIEW_POLL_MS
       // 조회가 실패하면(등록 취소로 404 등) 마지막 결과를 붙잡고 계속 부르지 않는다(S15P31A108-383).
       if (status === 'error') return false
-      if (
-        !data ||
-        data.owner_account_id === session.data?.id ||
-        data.status === 'REJECTED'
-      )
-        return false
+      if (!data || data.owner_account_id === session.data?.id) return false
       const stage = reviewStage(data)
       if (stage.step !== 1 || stage.stale) return false
-      if (!stage.failed) return REVIEW_POLL_MS
+      if (!stage.failed) {
+        // 반려된 문서는 올린 사람이 다시 열 때까지 검토가 돌지 않으므로, 반려 사유로 다시 검토하는 중일 때만 따라간다.
+        // 예전에는 반려면 무조건 멈춰, 재검토가 실패했다가 성공해도 팀원 창이 따라가지 못했다(S15P31A108-383).
+        return data.status !== 'REJECTED' ||
+          data.bee_review_request?.status === 'RUNNING'
+          ? REVIEW_POLL_MS
+          : false
+      }
       // 실패한 검토는 기다려도 끝나지 않는다(S15P31A108-382). 다만 올린 사람이 다시 검토하면 결과가 생기므로
       // 실패 뒤 얼마 동안은 가끔 확인한다. 멈추면 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다(S15P31A108-383).
       // 오래 지난 실패는 열어 둔 창이 끝없이 부르지 않게 멈춘다(창을 다시 보면 새로 읽는다).
