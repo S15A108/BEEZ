@@ -15,6 +15,10 @@ export const REVIEW_POLL_MS = inTest ? 40 : 3000
 // 이 값을 직접 확인하므로(beeStatusQuery·sceneQuery 시험) 테스트에서도 줄이지 않는다.
 /** 발행된 제안의 사후 분석처럼 오래 걸리는 작업을 가끔 확인하는 주기. */
 export const SLOW_POLL_MS = 15_000
+/** 내 위치를 서버에 보고하는 주기(MON-A06). 서버 TTL 은 이 값의 3배(45초)다. */
+export const PRESENCE_REPORT_MS = 15_000
+/** 팀원 접속 현황(MON-A07)을 다시 읽는 주기. 걷는 모습까지는 따라오지 않는다(실시간 연결은 후속). */
+export const PRESENCE_POLL_MS = 15_000
 /** 비비 상태·사무실 장면처럼 계속 띄워 두는 화면을 새로 맞추는 주기. */
 export const BACKGROUND_POLL_MS = 30_000
 /**

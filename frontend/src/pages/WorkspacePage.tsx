@@ -17,6 +17,8 @@ import { InboxPanel } from '@/features/inbox/InboxPanel'
 import { BibiPanel } from '@/features/bee/BibiPanel'
 import { beeStatusQuery } from '@/features/bee/beeStatusQuery'
 import { ContextPanel } from '@/features/contexts/ContextPanel'
+import { presenceReportOf } from '@/features/presence/presenceText'
+import { usePresenceReporter } from '@/features/presence/usePresenceReporter'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
 import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
@@ -100,6 +102,12 @@ function Workspace({ projectId }: { projectId: string }) {
     setParams({}, { replace: true })
   }, [settingsParam, openPane, setParams])
   const query = useQuery(sceneQuery(projectId, session.data?.id))
+  // 내 위치 보고(MON-A06): 열어 둔 동안 15초마다. 팀원 접속 점·위치는 HUD가 MON-A07로 읽는다.
+  usePresenceReporter(
+    projectId,
+    idSchema.safeParse(projectId).success ? session.data?.id : undefined,
+    presenceReportOf({ outdoor, pane }),
+  )
   // 작업 현황(MON-A05)은 따로 30초마다 다시 부른다. 없거나 아직 못 받았으면 undefined라 연결 여부로 어림한다(D37).
   const agentWork =
     useQuery(agentWorkQuery(projectId, session.data?.id)).data ?? undefined
