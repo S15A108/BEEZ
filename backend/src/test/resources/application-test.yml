@@ -20,6 +20,9 @@ beez:
   # 한도 시험(ClientIpRateLimitIntegrationTest)은 이 값을 읽어 다른 IP(X-Forwarded-For)로 채운다
   auth-guard:
     ip-limit: 1000
+  # MCP-01 호출 한도(운영 1분 6회)도 같은 이유로 넉넉히 둔다. 한도 규칙은 DevelopmentContextLimiterTest 가 본다 (-399)
+  development-context:
+    rate-limit: 1000
   validation:
     worker-enabled: false   # 시험은 ValidationWorker.runOnce 를 직접 부른다
   planning:

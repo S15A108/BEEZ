@@ -2294,6 +2294,7 @@ BE는 권한과 현재 baseline을 확인한 뒤 검색 결과와 명시적 관�
 | 스냅샷이 AI 입력 상한 초과(설계 200·관계 1,000·문서 버전 1,000·본문 262,144바이트) | 503 `context_not_ready`. 선택 AI 미호출, 저장 없음. 설계·관계 수는 질의 임베딩 전에 본다 |
 | 설계를 읽은 뒤 검색 사이에 기준 변경 | 409 `baseline_conflict`. 선택 AI 미호출 |
 | 구성하는 동안 `task_id` 작업의 계획·상태 변경 | 409 `revision_conflict`(저장 단계 재확인). 저장 없음 |
+| (에이전트 토큰, 프로젝트)마다 1분 6회 초과 | 429 `rate_limited`. 검색·AI 미호출 (`BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT`) |
 | AI 오류 전부(`selection_not_configured`·`embedding_timeout`·`search_failed`·`validation_failed` 등)·시간 초과·응답 모양 불일치 | 503 `context_not_ready`. 저장 없음, AI code 는 BE 로그에만 |
 | 검색을 마쳤는데 근거 0건 | 정상 패킷, `unresolved` 에 `NO_MATCH` |
 

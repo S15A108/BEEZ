@@ -18,6 +18,7 @@ import com.beez.backend.context.service.ContextLookup;
 import com.beez.backend.context.service.ContextPacketService;
 import com.beez.backend.context.service.ContextRecordService;
 import com.beez.backend.context.service.DevelopmentContextComposer;
+import com.beez.backend.context.service.DevelopmentContextLimiter;
 import com.beez.backend.mcp.dto.GetDevelopmentContextArgs;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
@@ -38,19 +39,22 @@ public class ContextMcpService {
     private final McpCommandStore commands;
     private final ContextLookup lookup;
     private final DevelopmentContextComposer composer;
+    private final DevelopmentContextLimiter limiter;
 
     private static final String OP_WRITE = "write_context";
     /** MCP-01 request 상한(-110 합의, AI ShortText 와 같음). 넘으면 잘라 저장하지 않고 400 */
     static final int MAX_REQUEST_CODE_POINTS = 2000;
 
     public ContextMcpService(ProjectAccessChecker access, ContextPacketService packets, ContextRecordService records,
-                             McpCommandStore commands, ContextLookup lookup, DevelopmentContextComposer composer) {
+                             McpCommandStore commands, ContextLookup lookup, DevelopmentContextComposer composer,
+                             DevelopmentContextLimiter limiter) {
         this.access = access;
         this.packets = packets;
         this.records = records;
         this.commands = commands;
         this.lookup = lookup;
         this.composer = composer;
+        this.limiter = limiter;
     }
 
     /**
@@ -87,6 +91,8 @@ public class ContextMcpService {
         // 기준이 없으면 AI 를 부르지 않는다. save 도 같은 404 를 주지만 그 전에 비용이 드는 호출을 막는다
         Long baselineId = lookup.currentBaselineId(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음"));
+        // 유료 구성 직전에 센다. 권한·인수·기준 오류는 비용이 없어 한도를 쓰지 않는다
+        limiter.acquire(actor.agentTokenId(), projectId);
         SavePacketArgs composed = composer.compose(projectId, baselineId, taskId, args.request());
         return packets.save(caller, projectId, composed);
     }

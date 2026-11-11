@@ -7,6 +7,7 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.context.dto.RelatedTaskDto;
 import com.beez.backend.context.dto.SavePacketArgs;
 import com.beez.backend.context.dto.SourceDto;
+import com.beez.backend.document.service.ChunkRetrievalMetadata;
 import com.beez.backend.document.service.DocumentIndexWorker;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -269,9 +270,9 @@ public class DevelopmentContextComposer {
         return content.get("description") instanceof String s && !s.isBlank() ? s : null;
     }
 
-    /** 근거 위치. 문서 검색 결과와 같은 표기(DocumentIndexWorker.chunkLocation)를 쓴다 */
+    /** 근거 위치. 문서 검색 결과와 같은 표기(ChunkRetrievalMetadata.location)를 쓴다 */
     private static String location(Map<String, Object> locator) {
-        String text = DocumentIndexWorker.chunkLocation(locator);
+        String text = ChunkRetrievalMetadata.location(locator);
         return text.length() > MAX_LOCATION ? text.substring(0, MAX_LOCATION) : text;
     }
 
