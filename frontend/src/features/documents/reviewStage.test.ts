@@ -63,3 +63,41 @@ it('본문 리비전이 달라진 검토는 stale이 아니라 검토 중으로 
     stale: false,
   })
 })
+
+// S15P31A108-383: 서버가 지금 본문의 마지막 검토 요청이 실패했다고 알리면(-382) '검토 중'이 아니라 실패로 본다.
+const failure = {
+  status: 'FAILED' as const,
+  error_code: 'review_timeout',
+  updated_at: '2026-11-10T08:16:05Z',
+}
+
+it('검토 결과 없이 마지막 요청이 실패했으면 검토 실패 단계로 본다', () => {
+  expect(
+    reviewStage(
+      copy({ latest_review: undefined, bee_review_request: failure }),
+    ),
+  ).toMatchObject({ step: 1, label: '검토 실패', failed: true, stale: false })
+  expect(
+    reviewStage(
+      copy({
+        latest_review: undefined,
+        bee_review_request: { ...failure, status: 'RUNNING' },
+      }),
+    ),
+  ).toMatchObject({ label: '비비 검토 중', failed: false })
+})
+
+it('무효가 된 검토나 팀장 검토 중인 건은 실패보다 그 상태를 먼저 본다', () => {
+  expect(
+    reviewStage(copy({ review_stale: true, bee_review_request: failure })),
+  ).toMatchObject({ label: '다시 검토 필요', stale: true, failed: false })
+  expect(
+    reviewStage(
+      copy({
+        status: 'SUBMITTED',
+        latest_review: undefined,
+        bee_review_request: failure,
+      }),
+    ),
+  ).toMatchObject({ label: '팀장 승인 대기', failed: false })
+})

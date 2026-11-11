@@ -1,4 +1,4 @@
-import { REVIEW_POLL_MS } from '@/lib/pollIntervals'
+import { REVIEW_POLL_MS, SLOW_POLL_MS } from '@/lib/pollIntervals'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
@@ -100,17 +100,20 @@ export function DocumentReview({
     queryFn: () => documentsApi.workingCopy(projectId, documentId),
     // 다른 창에서 이미 검토 중이면 끝날 때까지 다시 읽는다. 올린 사람이 아닌 팀원은 검토를 부르지 않아
     // review_in_progress를 받지 못하므로, 작업본이 비비 검토 단계(1단계, 반려 아님)면 끝날 때까지 다시 읽는다(PR #142 리뷰).
-    refetchInterval: ({ state: { data } }) =>
-      running ||
-      (data &&
-        data.owner_account_id !== session.data?.id &&
-        data.status !== 'REJECTED' &&
-        reviewStage(data).step === 1 &&
-        !reviewStage(data).stale &&
-        // 실패한 검토는 기다려도 끝나지 않는다. 올린 사람이 다시 시도하거나 고칠 때까지 조회를 멈춘다(S15P31A108-382).
-        data.bee_review_request?.status !== 'FAILED')
-        ? REVIEW_POLL_MS
-        : false,
+    refetchInterval: ({ state: { data } }) => {
+      if (running) return REVIEW_POLL_MS
+      if (
+        !data ||
+        data.owner_account_id === session.data?.id ||
+        data.status === 'REJECTED'
+      )
+        return false
+      const stage = reviewStage(data)
+      if (stage.step !== 1 || stage.stale) return false
+      // 실패한 검토는 기다려도 끝나지 않는다(S15P31A108-382). 다만 올린 사람이 다시 검토하면 결과가 생기므로
+      // 멈추지 않고 가끔만 확인한다. 멈추면 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다(S15P31A108-383).
+      return stage.failed ? SLOW_POLL_MS : REVIEW_POLL_MS
+    },
   })
   const current = copy.data
   const currentStage = current && reviewStage(current)

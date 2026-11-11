@@ -169,10 +169,10 @@ beez:
     internal-token: ${AI_INTERNAL_TOKEN:change-me}
     connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${AI_READ_TIMEOUT:20s}
-  # 문서 비비 검토(AI-A10) 전용 읽기 제한 (S15P31A108-382). 사슬: AI 모델 호출 30초 < 이 값 40초 < nginx /api/ 60초.
+  # 문서 비비 검토(AI-A10) 전용 읽기 제한 (S15P31A108-382). 사슬: AI 모델 호출 50초 < 이 값 55초 < nginx /api/ 60초(S15P31A108-383).
   # AI 보다 짧으면 AI 는 계속 돌고 BE 만 끊어 비용만 나간다. 공통 ai.read-timeout 보다 짧게 설정해도 공통값이 적용된다
   document-review:
-    read-timeout: ${DOCUMENT_REVIEW_READ_TIMEOUT:40s}
+    read-timeout: ${DOCUMENT_REVIEW_READ_TIMEOUT:55s}
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
     # 초대 메일 발송 한도 (Q05 결정 2026-11-09, S15P31A108-334). 초대한 계정마다 MEM-A01 새 초대 + MEM-A11 다시 보내기를 합쳐 센다.

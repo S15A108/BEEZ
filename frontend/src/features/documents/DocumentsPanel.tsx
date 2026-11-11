@@ -138,6 +138,7 @@ export function DocumentsPanel({
   isLeader: boolean
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
+  const session = useSession()
   // 알림·근거·가이드에서 들어오면 그 문서(또는 'upload:종류' 등록 화면)를 바로 연다.
   const [view, setView] = useState<View>(() => {
     const focus = useWorkspaceStore.getState().focusId
@@ -362,31 +363,38 @@ export function DocumentsPanel({
                         ] as const)
                       : stage?.stale
                         ? (['amber', stage.label] as const)
-                        : stage?.label === '팀장 승인 대기'
-                          ? (['orange', stage.label] as const)
-                          : stage?.label === '반려됨'
-                            ? (['red', stage.label] as const)
-                            : stage?.step === 2
-                              ? (['amber', stage.label] as const)
-                              : ([
-                                  'blue',
-                                  stage?.label ?? '비비 검토 중',
-                                ] as const)
+                        : stage?.failed
+                          ? (['red', stage.label] as const)
+                          : stage?.label === '팀장 승인 대기'
+                            ? (['orange', stage.label] as const)
+                            : stage?.label === '반려됨'
+                              ? (['red', stage.label] as const)
+                              : stage?.step === 2
+                                ? (['amber', stage.label] as const)
+                                : ([
+                                    'blue',
+                                    stage?.label ?? '비비 검토 중',
+                                  ] as const)
                   const next = approved
                     ? '현재 문서로 들어갔어요'
                     : stage?.stale
                       ? '참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'
-                      : stage?.label === '팀장 승인 대기'
-                        ? isLeader
-                          ? '승인 검토하기'
-                          : '팀장 승인을 기다리고 있어요'
-                        : stage?.label === '반려됨'
-                          ? '반려 사유를 보고 다시 검토를 받아요'
-                          : stage?.step === 2
-                            ? '비비 제안을 확인하고 반영해 주세요'
-                            : stage?.step === 3
-                              ? '최종본을 확인하고 검토를 요청해요'
-                              : '비비가 검토하고 있어요'
+                      : stage?.failed
+                        ? // 실패한 검토를 '비비가 검토하고 있어요'로 보여 끝없이 기다리게 했다(S15P31A108-383).
+                          copy?.owner_account_id === session.data?.id
+                          ? '비비 검토를 마치지 못했어요. 열어서 다시 검토해 주세요'
+                          : '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토해요'
+                        : stage?.label === '팀장 승인 대기'
+                          ? isLeader
+                            ? '승인 검토하기'
+                            : '팀장 승인을 기다리고 있어요'
+                          : stage?.label === '반려됨'
+                            ? '반려 사유를 보고 다시 검토를 받아요'
+                            : stage?.step === 2
+                              ? '비비 제안을 확인하고 반영해 주세요'
+                              : stage?.step === 3
+                                ? '최종본을 확인하고 검토를 요청해요'
+                                : '비비가 검토하고 있어요'
                   return (
                     <li
                       key={kind}
