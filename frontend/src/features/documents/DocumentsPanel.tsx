@@ -527,6 +527,23 @@ export function DocumentsPanel({
                         기획 분석에서 초안 만들기
                       </Button>
                     )}
+                    {isLeader && !start.needsDrafts && start.work.open && (
+                      <>
+                        <span className="text-sm text-muted-foreground">
+                          {start.work.summary}이 남아 있어요. 시작하면 아직
+                          채택하지 않은 후보는 기준에 들어가지 않아요.
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="justify-self-start"
+                          onClick={() => openPane('planning')}
+                        >
+                          <Sparkles />
+                          {start.work.label}
+                        </Button>
+                      </>
+                    )}
                     {start.error && (
                       <span role="alert" className="text-sm text-destructive">
                         {start.error}

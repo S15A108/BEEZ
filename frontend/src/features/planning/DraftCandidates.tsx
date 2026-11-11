@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { ShowMoreButton } from './ShowMoreButton'
+import { useShowMore } from './useShowMore'
 import { RefreshCw, Sparkles } from 'lucide-react'
 import type { Source } from '@/api/contracts/common'
 import {
@@ -19,7 +21,13 @@ import {
 import { Tag } from '@/features/changes/Tag'
 import { operationTone } from '@/features/changes/tagTones'
 import { statusLabel } from '@/lib/display'
-import { candidateJobs, isActiveJob, latestJobs } from './draftJobs'
+import {
+  answerJobs,
+  candidateJobs,
+  hasActiveJob,
+  isActiveJob,
+  latestJobs,
+} from './draftJobs'
 import type { AdoptCandidateInput, DraftCandidate, DraftJob } from './schemas'
 
 const supportLabel = {
@@ -338,16 +346,21 @@ export function DraftCandidates({
   ) => Promise<unknown>
   onDiscard: (candidate: DraftCandidate) => Promise<unknown>
 }) {
-  const latest = latestJobs(jobs)
+  // 문서에서 자동으로 뽑은 후보는 DocumentCandidates 가 보여 준다. 여기는 질문·답변으로 보완한 후보만 다룬다.
+  const answered = answerJobs(jobs)
+  const latest = latestJobs(answered)
   const active = latest.some(isActiveJob)
-  const candidates = candidateJobs(jobs).flatMap((job) => job.candidates)
+  // 한 문서 버전에는 동시에 하나의 생성 작업만 돈다(서버 409 draft_in_progress). 문서에서 후보를 만드는 중에는 이 단계도 기다린다.
+  const waitingForDocuments = !active && hasActiveJob(jobs)
+  const candidates = candidateJobs(answered).flatMap((job) => job.candidates)
   // 후보가 어느 문서에서 나왔는지. 낡은 후보를 다시 만들 때 그 문서만 다시 만든다.
   const versionOfCandidate = new Map(
-    candidateJobs(jobs).flatMap((job) =>
+    candidateJobs(answered).flatMap((job) =>
       job.candidates.map((item) => [item.id, job.document_version_id] as const),
     ),
   )
   const regenerate = (candidate: DraftCandidate) => {
+    if (waitingForDocuments) return
     const versionId = versionOfCandidate.get(candidate.id)
     onGenerate(versionId ? [versionId] : undefined)
   }
@@ -355,25 +368,33 @@ export function DraftCandidates({
     (candidate) => candidate.status === 'PENDING',
   )
   const done = candidates.filter((candidate) => candidate.status !== 'PENDING')
+  const waitingList = useShowMore(waiting)
+  const doneList = useShowMore(done)
   return (
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle>초안 후보</CardTitle>
+          <CardTitle>질문·답변으로 보완한 후보</CardTitle>
           {isLeader && (
             <Button
               size="sm"
-              disabled={busy || active || !canGenerate}
+              disabled={busy || active || waitingForDocuments || !canGenerate}
               onClick={() => onGenerate()}
             >
               <Sparkles />
-              답변으로 초안 만들기
+              답변으로 보완 초안 만들기
             </Button>
           )}
         </div>
+        {waitingForDocuments && (
+          <p role="status" className="text-sm text-muted-foreground">
+            문서에서 후보를 만드는 중이라 끝난 뒤에 누를 수 있어요.
+          </p>
+        )}
         <CardDescription>
-          비비가 문서와 답변으로 제안한 후보예요. 팀장이 채택해야 설계 항목
-          초안이 돼요.
+          문서에서 정하지 못한 모호한 부분을 질문에 답한 뒤 보완하는 단계예요.
+          비비가 문서와 답변으로 제안한 후보를 팀장이 채택해야 설계 항목 초안이
+          돼요.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -417,7 +438,7 @@ export function DraftCandidates({
             )
           return null
         })}
-        {candidateJobs(jobs).some(
+        {candidateJobs(answered).some(
           (job) =>
             job.unanswered_question_keys?.length || job.unresolved?.length,
         ) && (
@@ -427,13 +448,13 @@ export function DraftCandidates({
         )}
         {latest.length === 0 && (
           <EmptyState>
-            ‘답변으로 초안 만들기’를 누르면 후보가 여기에 나와요.
+            ‘답변으로 보완 초안 만들기’를 누르면 후보가 여기에 나와요.
           </EmptyState>
         )}
         {latest.length > 0 && !active && candidates.length === 0 && (
           <EmptyState>이번에는 제안할 후보가 없어요.</EmptyState>
         )}
-        {waiting.map((candidate) => (
+        {waitingList.shown.map((candidate) => (
           <CandidateCard
             key={candidate.id}
             candidate={candidate}
@@ -445,13 +466,18 @@ export function DraftCandidates({
             onRegenerate={() => regenerate(candidate)}
           />
         ))}
+        <ShowMoreButton
+          hidden={waitingList.hidden}
+          label="후보"
+          onClick={waitingList.more}
+        />
         {done.length > 0 && (
           <details>
             <summary className="cursor-pointer text-sm text-muted-foreground">
               처리한 후보 {done.length}개
             </summary>
             <div className="mt-3 space-y-3">
-              {done.map((candidate) => (
+              {doneList.shown.map((candidate) => (
                 <CandidateCard
                   key={candidate.id}
                   candidate={candidate}
@@ -463,6 +489,11 @@ export function DraftCandidates({
                   onRegenerate={() => regenerate(candidate)}
                 />
               ))}
+              <ShowMoreButton
+                hidden={doneList.hidden}
+                label="처리한 후보"
+                onClick={doneList.more}
+              />
             </div>
           </details>
         )}

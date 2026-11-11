@@ -224,8 +224,8 @@ it('직접 요청하면 DIRECT_REQUEST 제안이 붙고, 팀장 검토 요청 �
     review.id,
     { expected_revision: copy.revision, text: '오류 표에 403 행을 추가해 줘.' },
   )
-  expect(added.suggestion.origin).toBe('DIRECT_REQUEST')
-  expect(added.suggestion.decision).toBe('PENDING')
+  expect(added.suggestion?.origin).toBe('DIRECT_REQUEST')
+  expect(added.suggestion?.decision).toBe('PENDING')
   let current = copy
   const all = (await documentsApi.workingCopy('102', documentId)).latest_review!
   for (const suggestion of all.suggestions)

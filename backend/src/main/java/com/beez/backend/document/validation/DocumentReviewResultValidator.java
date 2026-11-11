@@ -195,6 +195,21 @@ public final class DocumentReviewResultValidator {
     }
 
     /**
+     * REQUEST 가 "고칠 곳이 없다"고 답했는지. 제안이 하나도 없고(outcome NO_CHANGE 이거나 생략) 이유(summary)가 있으면 그 이유를 돌려주고,
+     * 제안이 있으면 null 이다(그때는 {@link #validateRequested} 가 검증한다). 제안이 없는데 이유가 없거나 outcome 이 어긋나면 502 invalid_ai_output.
+     */
+    public static String requestedNoChangeReason(Map<String, Object> envelope, Map<String, Object> input) {
+        var raw = identified(envelope, input);
+        if (raw.get("suggestions") instanceof List<?> entries && !entries.isEmpty()) {
+            if ("NO_CHANGE".equals(raw.get("outcome"))) throw invalidAi();
+            return null;
+        }
+        if (raw.get("suggestions") != null && !(raw.get("suggestions") instanceof List<?>)) throw invalidAi();
+        if (raw.get("outcome") != null && !"NO_CHANGE".equals(raw.get("outcome"))) throw invalidAi();
+        return text(raw.get("summary"), 1000);
+    }
+
+    /**
      * REQUEST: 제안 정확히 1개. 검토 때 정한 단계(완료된 것)와 출처 규칙을 그대로 따르고, 원문은 지금 본문에서 한 곳과만 일치하며
      * 아직 처리하지 않은 다른 제안의 구간과 겹치지 않아야 한다. 겹침 구간은 호출한 쪽이 reserved 로 넘긴다.
      */

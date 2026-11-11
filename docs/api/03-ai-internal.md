@@ -2032,6 +2032,8 @@ BE는 v2 요청 필드(contract_version=2, 지금 본문, content_hash, referenc
 - DISCUSS 요청: `mode=DISCUSS`, `suggestion`(`{id,type,step,explanation,original_text,replacement_text,decision}`), `messages`(`[{author_kind: HUMAN|BEE, text, proposed_text?}]`, 지금까지의 대화 + 새 사람 메시지, 최대 40개). 응답 result: `reply: {text(≤10,000자), proposed_text?(≤100,000자, 빈 문자열이면 그 부분을 지운다)}`. `suggestions`는 없거나 []이어야 하며 본문은 바꾸지 않는다.
 - REQUEST 요청: `mode=REQUEST`, `request_text`(≤5,000자). 응답 result: `suggestions` 정확히 1개 `{type: PATCH, step, explanation, original_text, replacement_text, sources[]}`. step은 해당 검토에서 완료된 단계, sources는 그 단계의 출처 규칙(BODY는 [], 비교 단계는 해당 단계 승인본 1개 이상)을 따른다. original_text는 입력 본문에서 한 곳과만 일치하고 아직 처리하지 않은 다른 제안의 구간과 겹치지 않아야 한다(요청에는 그 구간을 싣지 않으며, BE가 저장 전에 검증하고 어기면 502 invalid_ai_output으로 거절한다).
 
+REQUEST에서 요청한 내용이 이미 본문에 있거나 안전하게 고칠 수 없으면 모델은 `{"outcome":"NO_CHANGE","suggestions":[],"summary":"이유"}`로 답한다(S15P31A108-389 후속). `summary`가 비어 있으면 형식 위반(502 `invalid_output`)이고, `NO_CHANGE`에 제안이 섞여도 형식 위반이다. 정상 답이라 사용량은 실패로 세지 않는다. `outcome`을 빼도 제안이 없고 이유가 있으면 `NO_CHANGE`로 읽으며, 응답에는 항상 `outcome`을 담는다.
+
 329 AI 구현은 BE가 기존 검토의 완료 단계와 미처리 구간을 요청에 싣지 않으므로 REQUEST에서 본문과 사용자 요청만 모델에 전달하고 `step=BODY`, `sources=[]`인 PATCH 하나만 반환한다. 참고 문서를 근거로 한 비교 제안은 이 경로가 지원하지 않으며, 다른 미처리 제안과의 겹침은 BE가 검사한다. DISCUSS는 대화 응답과 적용 가능한 `PENDING` PATCH의 대체문을 제안하며 문서를 직접 바꾸지 않는다. 현재 요청에는 기존 제안의 출처가 없어 답변과 제안 출처의 일치를 검증하지 못한다.
 
 RERUN은 양의 문자열 `rejection_submission_id`와 비어 있지 않은 `rejection_reason`(Java UTF-16 기준 최대 10,000자)을 필수로 받아 반려 사유를 데이터로 모델에 제공한다. RERUN 및 mode를 생략한 기존 호출을 포함한 REVIEW의 모든 제안에 category·severity를 요구하고 열거형을 검증한다. `REJECTION_FIX`는 반려 맥락이 있는 RERUN에만 허용하며, 해결된 반려 사유에 대해 제안을 강제로 만들지 않는다. BE는 가장 최근 제출이 REJECTED인 경우 이 필드를 전달하고, 제안의 분류 쌍을 검증·저장·반환한다. 기존 모델과 과거 제안에는 두 필드를 모두 생략할 수 있다. FE 표시와 실제 모델 연동 및 계약 합의는 별도 확인이 필요하다.
@@ -2230,7 +2232,7 @@ result 필드:
 - 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡고 순서를 바꾼 문장을 replacement_text로 낸다.
 - (수정안 요청) evidence는 입력 references 안의 버전만 쓴다. quote가 그 버전 content에 없으면 잘못된 출력이다. BE는 references의 document_id·version_no를 붙이고 quote를 location에 넣어 DocumentReviewSuggestion.sources로 옮긴다.
 - BE는 제안의 category·severity를 한 쌍으로 검증해 저장·반환한다. 과거 미분류 제안은 null이다. evidence와 화면 표시는 별도 연동이 필요하다.
-- (수정안 요청) mode별 결과: REVIEW·RERUN은 suggestions 목록, REQUEST는 suggestions 1개다. DISCUSS는 reply가 필수이고 suggestions는 []다. 네 mode 모두 result의 식별값 4개와 summary를 돌려준다.
+- (수정안 요청) mode별 결과: REVIEW·RERUN은 suggestions 목록, REQUEST는 suggestions 1개(`outcome=SUGGESTION`) 또는 고칠 곳이 없다는 답(`outcome=NO_CHANGE`, suggestions `[]`, 이유는 `summary` 필수)이다. DISCUSS는 reply가 필수이고 suggestions는 []다. 네 mode 모두 result의 식별값 4개와 summary를 돌려준다.
 - (수정안 요청) steps는 BE가 DOC-A16의 단계 표시(DocumentBeeReview.steps)에 쓴다. REVIEW 기본: 문서 읽기 → 승인된 API 명세서와 비교 → ERD와 맞춰 보기 → 요구사항과 비교 → 수정 제안 정리. RERUN: 반려 사유 읽기 → 관련 문단 찾기 → ERD와 맞춰 보기 → 수정 제안 정리. 비교할 승인본이 없는 단계는 result에 그 사유를 쓴다.
 - (수정안 요청) RERUN은 BE가 DOC-A16 선택 규칙으로 고른 rejection_submission_id와 그 rejection_reason을 넣는다. 비비는 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만든다. 팀장은 문단을 고르지 않는다.
 - 이 문서의 동기 응답 원칙을 따른다. 실제 단계별 진행률을 보이려면 BE가 단계마다 나눠 부르거나 스트리밍이 필요하며, 방식은 Q19다.
