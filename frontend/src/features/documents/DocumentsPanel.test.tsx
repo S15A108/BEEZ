@@ -84,8 +84,10 @@ it('근거에서 이동한 문서가 첫 목록에 없어도 해당 문서를 �
 
 // PR #218 리뷰: 비비·회의·기획 답의 근거는 문서 ID만이 아니라 인용한 버전으로 문서함을 연다.
 async function openFromSource(source: Source) {
-  const links = render(<SourceLinks sources={[source]} />)
-  await userEvent.click(screen.getByRole('button', { name: /문서 2 v/ }))
+  const links = render(
+    <SourceLinks sources={[source]} titleOf={() => focusedDocument.title} />,
+  )
+  await userEvent.click(screen.getByRole('button', { name: /같은 제목 v/ }))
   links.unmount()
   return mount()
 }
@@ -180,6 +182,7 @@ it('인용을 누르면 지정 버전의 확인된 원문을 강조하고 그 �
   try {
     const links = render(
       <SourceLinks
+        titleOf={() => focusedDocument.title}
         sources={[
           {
             document_id: '2',
@@ -197,7 +200,7 @@ it('인용을 누르면 지정 버전의 확인된 원문을 강조하고 그 �
         }}
       />,
     )
-    await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+    await userEvent.click(screen.getByRole('button', { name: /같은 제목 v1/ }))
     links.unmount()
     mount()
     const excerpt = await screen.findByRole('region', {
@@ -237,6 +240,7 @@ it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 �
   })
   const links = render(
     <SourceLinks
+      titleOf={() => focusedDocument.title}
       sources={[
         {
           document_id: '2',
@@ -254,7 +258,7 @@ it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 �
       }}
     />,
   )
-  await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+  await userEvent.click(screen.getByRole('button', { name: /같은 제목 v1/ }))
   links.unmount()
   mount()
   expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -268,6 +272,7 @@ it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 �
 it('인용과 다른 문서 버전으로 연결되는 버튼은 열 수 없다', () => {
   render(
     <SourceLinks
+      titleOf={() => focusedDocument.title}
       sources={[
         {
           document_id: '2',
@@ -285,7 +290,7 @@ it('인용과 다른 문서 버전으로 연결되는 버튼은 열 수 없다',
       }}
     />,
   )
-  expect(screen.getByRole('button', { name: /문서 2 v2/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /같은 제목 v2/ })).toBeDisabled()
 })
 
 // PR #218 리뷰: 인용한 버전 번호를 찾기 전에는 문서를 부르지 않는다(승인본으로 넘어가지 않는다).

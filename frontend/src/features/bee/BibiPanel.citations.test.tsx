@@ -8,7 +8,14 @@ import { BibiPanel } from './BibiPanel'
 import { askResponseSchema } from './schemas'
 
 const ask = vi.hoisted(() => vi.fn())
-vi.mock('@/api/services', () => ({ beeApi: { ask } }))
+// 출처 버튼은 공용 문서함 목록에서 문서 제목을 찾는다(S15P31A108-395).
+const list = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    items: [{ id: '20', project_id: '1', kind: 'PLAN', title: '접근 정책' }],
+    has_more: false,
+  }),
+)
+vi.mock('@/api/services', () => ({ beeApi: { ask }, documentsApi: { list } }))
 
 const openPane = vi.fn()
 const originalOpenPane = useWorkspaceStore.getState().openPane
@@ -84,9 +91,11 @@ describe('비비 답변 근거', () => {
     ).toBeInTheDocument()
     expect(within(panel).queryByText('참고 문서')).not.toBeInTheDocument()
     expect(
-      within(panel).getAllByRole('button', { name: /문서 20 v2/ }),
+      within(panel).getAllByRole('button', { name: /접근 정책 v2/ }),
     ).toHaveLength(1)
-    await user.click(within(panel).getByRole('button', { name: /문서 20 v2/ }))
+    await user.click(
+      within(panel).getByRole('button', { name: /접근 정책 v2/ }),
+    )
     expect(openPane).toHaveBeenCalledWith(
       'documents',
       expect.stringMatching(/^citation:/),
@@ -160,7 +169,7 @@ describe('비비 답변 근거', () => {
       within(panel).getByRole('button', { name: /승인 설계 \/ API-01/ }),
     ).toBeInTheDocument()
     expect(
-      within(panel).getAllByRole('button', { name: /문서 20 v2/ }),
+      within(panel).getAllByRole('button', { name: /접근 정책 v2/ }),
     ).toHaveLength(2)
   })
 
@@ -211,5 +220,26 @@ describe('비비 답변 근거', () => {
       await within(panel).findByRole('button', { name: /접근 정책 . 4~6행/ }),
     ).toBeInTheDocument()
     expect(within(panel).queryByText(/L4-L6/)).not.toBeInTheDocument()
+  })
+
+  // S15P31A108-395: 출처 버튼은 문서 DB 번호(문서 20) 대신 문서 제목을 보인다.
+  it('출처 버튼에 문서 번호 대신 문서 제목을 보인다', async () => {
+    ask.mockResolvedValue(cited)
+    renderPanel()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('설계 질문'), '질문')
+    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.click(
+      await screen.findByRole('button', { name: '인용 1번 근거 보기' }),
+    )
+    const panel = screen.getByRole('complementary', {
+      name: '선택한 답의 근거',
+    })
+    expect(
+      await within(panel).findByRole('button', {
+        name: '접근 정책 v2 · 4~6행',
+      }),
+    ).toBeInTheDocument()
+    expect(within(panel).queryByText(/문서 20/)).not.toBeInTheDocument()
   })
 })

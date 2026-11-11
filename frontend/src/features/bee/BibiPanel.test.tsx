@@ -77,7 +77,7 @@ it('찾는 범위를 그대로 두면 승인된 문서에서 찾고 대화가 �
   // 근거 칸은 마지막 답의 근거(승인 v1)를 보여 준다.
   expect(
     within(screen.getByRole('complementary')).getByRole('button', {
-      name: /문서 201 v1/,
+      name: /기획안 v1/,
     }),
   ).toBeInTheDocument()
 })

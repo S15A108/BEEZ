@@ -22,12 +22,7 @@ import {
   X,
 } from 'lucide-react'
 import { readAllPages } from '@/api/readAllPages'
-import {
-  contextsApi,
-  documentsApi,
-  planningApi,
-  tasksApi,
-} from '@/api/services'
+import { contextsApi, planningApi, tasksApi } from '@/api/services'
 import {
   idSchema,
   taskPlanInputSchema,
@@ -89,6 +84,7 @@ import {
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
 import { AgentTaskHandoff } from './AgentTaskHandoff'
 import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
@@ -367,14 +363,10 @@ export function TasksPanel({ projectId, isLeader }: Props) {
         : undefined
   const view = result ? toValidationView(result) : undefined
   // 검증 근거 위치는 문서 번호 대신 제목으로 보인다. 공용 문서함·기획 분석과 같은 목록을 쓴다.
-  const documents = useQuery({
-    queryKey: ['projects', projectId, 'planning-documents'],
-    queryFn: () => documentsApi.list(projectId, { limit: 100 }),
-    enabled: !!view?.findings.some((finding) => finding.sources.length),
-  })
-  const documentTitle = (id: string) =>
-    documents.data?.items.find((document) => document.id === id)?.title ??
-    '문서'
+  const documentTitle = useDocumentTitle(
+    projectId,
+    !!view?.findings.some((finding) => finding.sources.length),
+  )
   const policyAnalysis = view?.policyAnalysis
   const needsHumanReview = view?.needsHumanReview
   const delta =

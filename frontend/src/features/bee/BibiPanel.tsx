@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
 import { BeeAnswerEvidence } from './BeeAnswerEvidence'
 import type { AskResponse, AskScope } from './schemas'
 import { useBibiMessages } from './useBibiMessages'
@@ -143,6 +144,8 @@ export function BibiPanel({ projectId }: { projectId: string }) {
   }, [messages.length, pending])
   const selected =
     selectedIndex === null ? messages.at(-1) : messages[selectedIndex]
+  // 근거 버튼에 문서 번호 대신 제목을 보인다. 답이 생긴 뒤에만 목록을 부른다.
+  const documentTitle = useDocumentTitle(projectId, !!selected)
   const referenceCount = selected
     ? selected.answer.citations.length || selected.answer.sources.length
     : 0
@@ -359,7 +362,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
           <span className="text-muted-foreground">{referenceCount}</span>
         </h3>
         {selected ? (
-          <BeeAnswerEvidence answer={selected.answer} />
+          <BeeAnswerEvidence answer={selected.answer} titleOf={documentTitle} />
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">
             질문하면 비비가 찾은 문서가 여기에 떠요. 근거를 못 찾으면 짐작하지

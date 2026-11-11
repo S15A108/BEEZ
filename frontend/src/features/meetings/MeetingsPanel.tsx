@@ -1190,7 +1190,10 @@ function Bubble({
               </p>
             )}
             {entry.generation && (
-              <SourceLinks sources={entry.generation.sources} />
+              <SourceLinks
+                sources={entry.generation.sources}
+                titleOf={documentTitleOf}
+              />
             )}
           </article>
         </div>

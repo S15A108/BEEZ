@@ -18,6 +18,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
 import { DraftCandidates } from './DraftCandidates'
 import { TaskBreakdown } from './TaskBreakdown'
 import { hasActiveJob } from './draftJobs'
@@ -182,6 +183,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     !drafts.hasNextPage &&
     snapshotConsistent &&
     !documents.data?.has_more
+  const documentTitle = useDocumentTitle(projectId)
   const labelOfVersion = (versionId: string) => {
     const version = versions.find((item) => item.id === versionId)
     const document = documents.data?.items.find(
@@ -371,6 +373,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                 <DraftCandidates
                   jobs={data.jobs}
                   labelOfVersion={labelOfVersion}
+                  titleOf={documentTitle}
                   isLeader={isLeader}
                   busy={action.busy}
                   canGenerate={analysesReady}

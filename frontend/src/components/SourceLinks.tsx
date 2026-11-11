@@ -6,9 +6,12 @@ import { lineRangeText } from '@/lib/display'
 
 export function SourceLinks({
   sources,
+  titleOf,
   citation,
 }: {
   sources: Source[]
+  /** 문서 ID를 제목으로. 못 찾으면 번호 대신 '문서'를 돌려준다(useDocumentTitle). */
+  titleOf: (documentId: string) => string
   citation?: CitationTarget
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -36,7 +39,7 @@ export function SourceLinks({
             )
           }
         >
-          문서 {source.document_id} v{source.version_no} ·{' '}
+          {titleOf(source.document_id)} v{source.version_no} ·{' '}
           {lineRangeText(source.location)}
         </Button>
       ))}
