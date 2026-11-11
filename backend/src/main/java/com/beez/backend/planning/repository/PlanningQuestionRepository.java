@@ -128,6 +128,9 @@ public class PlanningQuestionRepository {
         }
     }
 
+    /** 기준 설계가 발행됐거나 프로젝트가 보관돼 워커가 더는 질문을 만들지 않는다. */
+    private static final String FROZEN = "(p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL)";
+
     /** 현재 버전의 질문이 지금 분석으로 다 만들어졌거나, 워커가 다시 만들 일이 없다(본문 없음·분석 기록 없음). */
     private static final String SETTLED = "(cur.content_text IS NULL OR dp.document_version_id IS NULL"
             + " OR (dp.status='COMPLETED' AND r.status='COMPLETED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash))";
@@ -145,10 +148,13 @@ public class PlanningQuestionRepository {
      * 목록·개수는 이 행을 빼고, 답변은 409 question_superseded 다. 답한·닫은 질문은 이력이라 CURRENT 로 남는다.
      * 등록을 취소한(DOC-A25, discarded_at) 문서는 다시 제출할 수 없으므로 그 문서의 미답변 질문도 같은 방식으로 대체로 판정한다.
      */
-    private static final String FRESHNESS = "CASE WHEN v.id IS NULL OR p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL THEN 'CURRENT'"
+    private static final String FRESHNESS = "CASE WHEN v.id IS NULL THEN 'CURRENT'"
+            // 대체·폐기 판정이 기준 발행·보관보다 먼저다 — 발행 뒤 숨겼던 이전 질문이 다시 나오지 않게(#279 리뷰).
             + " WHEN qd.discarded_at IS NOT NULL THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
+            + " WHEN cur.id IS NOT NULL AND q.document_version_id<>cur.id AND (" + FROZEN + " OR " + SETTLED + ")"
+            + " THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
+            + " WHEN " + FROZEN + " THEN 'CURRENT'"
             + " WHEN cur.id IS NULL THEN 'AWAITING_RESUBMISSION'"
-            + " WHEN q.document_version_id<>cur.id AND " + SETTLED + " THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
             + " WHEN " + SETTLED + " OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'"
             + " WHEN dp.status='FAILED' OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'"
             + " ELSE 'REFRESHING' END AS freshness";

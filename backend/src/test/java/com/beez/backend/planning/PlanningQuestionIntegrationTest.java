@@ -230,6 +230,12 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(page.get("total_count")).isEqualTo(4L);
         assertThat(items(page)).extracting(i -> i.get("number")).containsExactly(1L, 2L, 3L, 4L);
         fails(HttpStatus.CONFLICT, "question_superseded", () -> questions.answer(leaderCaller, project, id[1], new AnswerRequest("답", null, null)));
+
+        // #279 리뷰: 기준 설계가 발행돼도 숨겼던 이전 버전 미답변 질문이 다시 나오지 않는다.
+        publishBaseline();
+        var published = questions.list(leaderCaller, project, null, null, null);
+        assertThat(items(published)).extracting(i -> i.get("id")).doesNotContain("" + id[1], "" + id[2]);
+        assertThat(published.get("total_count")).isEqualTo(4L);
     }
 
     // 등록을 취소한 문서(DOC-A25)는 다시 제출할 수 없다 — '다시 제출 대기'가 아니라 미답변 질문을 대체로 판정해 목록에서 뺀다.

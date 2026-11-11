@@ -454,6 +454,18 @@ def test_unsafe_patch_combination_keeps_only_a_safe_subset(api, case):
     assert_every_order_is_safe(content, kept)
 
 
+# #279 review: an unsafe PATCH dropped later must not have claimed its range first and
+# blocked a sound PATCH on the same text (both were dropped and the review failed).
+def test_dropped_unsafe_patch_does_not_block_a_sound_one_on_the_same_text(api):
+    api[1].output["suggestions"] = [patch("A", ""), patch("A", "fixed")]
+    response = post(api, request_with_content("A"))
+    assert response.status_code == 200, response.text[:500]
+    kept = response.json()["result"]["suggestions"]
+    assert [(s["original_text"], s["replacement_text"]) for s in kept] == [
+        ("A", "fixed")
+    ]
+
+
 def test_disjoint_patches_remain_applicable_for_every_order_and_subset(api):
     from itertools import permutations
 

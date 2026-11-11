@@ -167,7 +167,6 @@ def _suggestion_problem(
     suggestion: ClassifiedSuggestion,
     body: DocumentReviewRequest,
     step: dict,
-    ranges: list[tuple[int, int]],
 ) -> tuple[str | None, tuple[int, int, str, str] | None]:
     """Why one suggestion cannot be kept, or its PATCH range when it can."""
     if suggestion.category == "REJECTION_FIX" and body.mode != "RERUN":
@@ -194,12 +193,14 @@ def _suggestion_problem(
     start = body.content.find(original)
     if start < 0 or body.content.rfind(original) != start:
         return "patch is not unique", None
-    end = start + len(original)
-    if any(
-        start < other_end and other_start < end for other_start, other_end in ranges
-    ):
-        return "overlapping patches", None
-    return None, (start, end, original, replacement)
+    return None, (start, start + len(original), original, replacement)
+
+
+def _overlaps(patch: tuple[int, int, str, str], kept: list[tuple[int, int, str, str]]):
+    start, end = patch[:2]
+    return any(
+        start < other_end and other_start < end for other_start, other_end, *_ in kept
+    )
 
 
 def _safe_patch_set(
@@ -210,19 +211,25 @@ def _safe_patch_set(
     """Keep the suggestions whose PATCHes stay safe together in every order and subset.
 
     The sequence check is expensive, so the whole set is checked once first; only when
-    it fails is each PATCH added one by one and the one that breaks the set dropped.
+    it overlaps or fails is each PATCH added one by one and the one that breaks the set
+    dropped. Overlap is checked against the PATCHes actually kept, so a PATCH dropped
+    later as unsafe does not block a sound one on the same text (#279 review).
     """
     patches = [patch for _, patch in candidates if patch]
-    try:
-        validate_patch_sequence(content, patches)
-        return [suggestion for suggestion, _ in candidates]
-    except ValueError as exc:
-        if str(exc) == "invalid patch input document":
-            raise
+    if not any(_overlaps(patch, patches[:i]) for i, patch in enumerate(patches)):
+        try:
+            validate_patch_sequence(content, patches)
+            return [suggestion for suggestion, _ in candidates]
+        except ValueError as exc:
+            if str(exc) == "invalid patch input document":
+                raise
     kept: list[ClassifiedSuggestion] = []
     safe: list[tuple[int, int, str, str]] = []
     for suggestion, patch in candidates:
         if patch:
+            if _overlaps(patch, safe):
+                dropped["overlapping patches"] += 1
+                continue
             try:
                 validate_patch_sequence(content, [*safe, patch])
             except ValueError:
@@ -260,7 +267,6 @@ def _select_suggestions(
     ):
         raise ValueError("incomplete review")
     dropped: Counter = Counter()
-    ranges: list[tuple[int, int]] = []
     candidates: list[tuple[ClassifiedSuggestion, tuple[int, int, str, str] | None]] = []
     for suggestion in parsed.suggestions:
         step = step_by_name[suggestion.step]
@@ -271,12 +277,10 @@ def _select_suggestions(
         if len(sources) != len(suggestion.sources):
             dropped["unknown source"] += len(suggestion.sources) - len(sources)
             suggestion = suggestion.model_copy(update={"sources": sources})
-        problem, patch = _suggestion_problem(suggestion, body, step, ranges)
+        problem, patch = _suggestion_problem(suggestion, body, step)
         if problem:
             dropped[problem] += 1
             continue
-        if patch:
-            ranges.append(patch[:2])
         candidates.append((suggestion, patch))
     kept = _safe_patch_set(candidates, body.content, dropped)
     if parsed.suggestions and not kept:
