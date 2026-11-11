@@ -139,20 +139,31 @@ def _fields_as_array(content: Any) -> Any:
     ``{"id": "BIGINT, primary key", ...}`` and each was rejected for not having
     an array, so ERD documents produced no data contract at all
     (S15P31A108-388). The array element shape is not enforced; the common
-    example uses ``name``, so the key becomes ``name`` and nothing is lost.
+    example uses ``name``, so the key becomes ``name``. The key is the field's
+    identifier: a ``name`` inside the value (a display name like "회원 ID")
+    must not replace it, so it is kept as ``label`` when ``label`` is free.
     Only for a new item: an update's ``fields`` patch replaces the whole array,
     so a partial object turned into an array would silently drop the base
     item's other fields. Such an update stays malformed and is rejected alone.
     """
     if not isinstance(content, dict) or not isinstance(content.get("fields"), dict):
         return content
-    fields = [
-        {"name": name, **value}
-        if isinstance(value, dict)
-        else {"name": name, "description": value}
-        for name, value in content["fields"].items()
-    ]
-    return {**content, "fields": fields}
+    return {
+        **content,
+        "fields": [
+            _field_entry(name, value) for name, value in content["fields"].items()
+        ],
+    }
+
+
+def _field_entry(name: str, value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"name": name, "description": value}
+    entry = {"name": name, **{k: v for k, v in value.items() if k != "name"}}
+    own = value.get("name")
+    if own is not None and own != name and "label" not in value:
+        entry["label"] = own
+    return entry
 
 
 def _field_name(name: Any) -> str:

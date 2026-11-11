@@ -519,6 +519,9 @@ async def test_data_contract_fields_keyed_by_name_become_the_array():
                         "fields": {
                             "id": "BIGINT, 기본 키",
                             "nickname": {"type": "VARCHAR(20)"},
+                            # PR #272 리뷰: 값의 name(표시 이름)이 키(필드 식별자)를 덮으면 안 된다.
+                            "user_id": {"name": "회원 ID", "type": "BIGINT"},
+                            "email": {"name": "email", "type": "VARCHAR(100)"},
                         },
                     },
                 }
@@ -533,6 +536,8 @@ async def test_data_contract_fields_keyed_by_name_become_the_array():
     assert proposal.items[0].content["fields"] == [
         {"name": "id", "description": "BIGINT, 기본 키"},
         {"name": "nickname", "type": "VARCHAR(20)"},
+        {"name": "user_id", "type": "BIGINT", "label": "회원 ID"},
+        {"name": "email", "type": "VARCHAR(100)"},
     ]
     outcome = await generate_design_drafts(
         body,
