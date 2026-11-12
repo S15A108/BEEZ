@@ -175,7 +175,7 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `BEE_CHAT_ENABLED`·`BEE_CHAT_*` | | 비비 질문(#135, BEE-A01). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
 | `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 502 `model_unavailable`. compose 가 ai 에 전달한다 — 주소는 GMS 주소가 기본, 키·모델은 빈 값이다. 키가 비고 주소가 GMS 기본 주소와 똑같으면 `GMS_KEY` 를 쓰고, 다른 주소면 호출하지 않는다(-357) |
 | `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | 요청한 모델 이름 말고도 받아들일 응답 모델 이름(쉼표). 기본 빈 값. compose 가 ai 에 전달한다 |
-| `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT` | | 영향 분석 모델 호출 시간(초, 숫자만 — 예 `90`)·출력 토큰 상한(추론 토큰 포함, 최대 4096). 기본 `60`·`4096`. compose 가 ai 에 전달한다. 시간을 올리면 backend `BEEZ_CHANGE_IMPACT_READ_TIMEOUT` 도 그보다 길게 함께 올린다(S15P31A108-402) |
+| `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT` | | 영향 분석 모델 호출 시간(초, 숫자만 — 예 `90`, **0 초과 120 이하**)·출력 토큰 상한(추론 토큰 포함, 1~4096). 기본 `60`·`4096`. 범위를 벗어나면 ai 가 모델을 부르지 않고 모든 영향 분석이 502 `model_unavailable` 로 실패한다. compose 가 ai 에 전달한다. 시간을 올리면 backend `BEEZ_CHANGE_IMPACT_READ_TIMEOUT` 도 그보다 길게 함께 올린다(S15P31A108-402) |
 | `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 출력 옵션 이름·응답 형식·요청 크기. 기본값 있음. compose 가 전달하지 않는다 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
 | `GMS_EMBEDDING_DIMENSION` | | 기본 `1024`. backend(1024)와 같아야 합니다 |
@@ -218,6 +218,8 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
   적으면 반영됩니다(S15P31A108-402). 기본값 그대로면 쓸 필요가 없습니다. 시간을 올릴 때는 두 값을 함께 적고,
   backend 값에는 단위를 붙입니다. 예: `IMPACT_LLM_TIMEOUT_SECONDS=90`과 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT=105s`.
   `BEEZ_CHANGE_IMPACT_READ_TIMEOUT=105`처럼 단위를 빼면 Spring이 105ms로 읽어 공통 제한 20초가 적용됩니다.
+  `IMPACT_LLM_TIMEOUT_SECONDS`는 **최대 120초**(0 초과 120 이하)입니다. `150`처럼 넘기면 compose에는 들어가지만 ai가
+  설정을 거절해 모든 영향 분석이 502 `model_unavailable`로 실패합니다. 출력 상한도 4,096을 넘기면 같습니다.
 - 출력 상한 1,024이던 11-11에는 설계 40개 프로젝트(입력 약 1.1만 토큰)에서 영향 분석이 4번 모두 출력 1,024토큰에서 끊겨
   실패했습니다(약 12초). 잘림은 이제 `model_unavailable`이 아니라 `model_output_truncated`로 남고, ai 로그에
   `impact_completion … finish_reason=length` 한 줄이 WARNING으로 찍힙니다(정상 호출의 같은 줄은 INFO라 서버 로그에 안 보입니다). `model_timeout`이면 `llm_usage.latency_ms`로 실제 지연을

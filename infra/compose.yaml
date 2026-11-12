@@ -126,7 +126,8 @@ services:
       IMPACT_LLM_API_KEY: ${IMPACT_LLM_API_KEY:-}
       IMPACT_LLM_MODEL: ${IMPACT_LLM_MODEL:-}
       IMPACT_LLM_ALLOWED_RESPONSE_MODELS: ${IMPACT_LLM_ALLOWED_RESPONSE_MODELS:-}
-      # 모델 호출 시간(초)·출력 토큰 상한(추론 토큰 포함, 최대 4096). 기본값은 코드 기본값과 같다 (S15P31A108-402).
+      # 모델 호출 시간(초, 0 초과 120 이하)·출력 토큰 상한(추론 토큰 포함, 1~4096). 범위를 벗어나면 모든 영향 분석이 502 model_unavailable.
+      # 기본값은 코드 기본값과 같다 (S15P31A108-402).
       # 시간을 올릴 때는 backend BEEZ_CHANGE_IMPACT_READ_TIMEOUT 도 함께 올려 backend 가 먼저 끊지 않게 한다
       IMPACT_LLM_TIMEOUT_SECONDS: ${IMPACT_LLM_TIMEOUT_SECONDS:-60}
       IMPACT_LLM_OUTPUT_TOKEN_LIMIT: ${IMPACT_LLM_OUTPUT_TOKEN_LIMIT:-4096}

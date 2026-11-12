@@ -250,6 +250,11 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         return new RestClientResponseException("output truncated", 502, "Bad Gateway", null, body, StandardCharsets.UTF_8);
     }
 
+    /**
+     * 선점 순서 검사 전용 후속 발행 행. 기준 v3 과 접수행만 SQL 로 넣고 project.current_baseline_id 는 바꾸지 않는다.
+     * 실제 발행이 먼저 끝나면 현재 기준이 바뀌어 선행 건의 재시도는 기존 baseline_changed 규칙(ImpactContextQuery)에 걸리므로,
+     * 이 행으로는 "선행 건이 끝나야 후속 건을 집는다"만 본다 (#286 리뷰).
+     */
     private long pendingLaterPublication() {
         long nextBaseline = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
                 .param("p", project).param("a", leader).query(Long.class).single();
@@ -274,9 +279,13 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         api.jdbc.sql("UPDATE published_change_analysis SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id")
                 .param("id", intake).update();
         processor.process(intake);
-        assertThat(api.jdbc.sql("SELECT outcome||':'||coalesce(error_code,'') FROM published_analysis_attempt WHERE intake_id=:id ORDER BY attempt")
-                .param("id", intake).query(String.class).list())
-                .containsExactly("FAILED:model_output_truncated", "INSUFFICIENT_EVIDENCE:");
+        // 시도별로 본다. 첫 시도는 잘림 코드 그대로, 두 번째는 평가 결과만(사유 코드는 관계·검색 범위에 따라 붙으므로 이 시험의 대상이 아니다)
+        var attempts = api.jdbc.sql("SELECT attempt,outcome,error_code FROM published_analysis_attempt WHERE intake_id=:id ORDER BY attempt")
+                .param("id", intake).query().listOfRows();
+        assertThat(attempts).hasSize(2);
+        assertThat(attempts.get(0)).containsEntry("attempt", 1).containsEntry("outcome", "FAILED")
+                .containsEntry("error_code", "model_output_truncated");
+        assertThat(attempts.get(1)).containsEntry("attempt", 2).containsEntry("outcome", "INSUFFICIENT_EVIDENCE");
         assertThat(api.jdbc.sql("SELECT status FROM published_change_analysis WHERE id=:id").param("id", intake)
                 .query(String.class).single()).isEqualTo("COMPLETED");
         assertThat(repository.claimNow(nextIntake, 60)).isPresent();
