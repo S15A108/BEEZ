@@ -84,8 +84,10 @@ it('근거에서 이동한 문서가 첫 목록에 없어도 해당 문서를 �
 
 // PR #218 리뷰: 비비·회의·기획 답의 근거는 문서 ID만이 아니라 인용한 버전으로 문서함을 연다.
 async function openFromSource(source: Source) {
-  const links = render(<SourceLinks sources={[source]} />)
-  await userEvent.click(screen.getByRole('button', { name: /문서 2 v/ }))
+  const links = render(
+    <SourceLinks sources={[source]} titleOf={() => focusedDocument.title} />,
+  )
+  await userEvent.click(screen.getByRole('button', { name: /같은 제목 v/ }))
   links.unmount()
   return mount()
 }
@@ -180,6 +182,7 @@ it('인용을 누르면 지정 버전의 확인된 원문을 강조하고 그 �
   try {
     const links = render(
       <SourceLinks
+        titleOf={() => focusedDocument.title}
         sources={[
           {
             document_id: '2',
@@ -197,7 +200,7 @@ it('인용을 누르면 지정 버전의 확인된 원문을 강조하고 그 �
         }}
       />,
     )
-    await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+    await userEvent.click(screen.getByRole('button', { name: /같은 제목 v1/ }))
     links.unmount()
     mount()
     const excerpt = await screen.findByRole('region', {
@@ -237,6 +240,7 @@ it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 �
   })
   const links = render(
     <SourceLinks
+      titleOf={() => focusedDocument.title}
       sources={[
         {
           document_id: '2',
@@ -254,7 +258,7 @@ it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 �
       }}
     />,
   )
-  await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+  await userEvent.click(screen.getByRole('button', { name: /같은 제목 v1/ }))
   links.unmount()
   mount()
   expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -268,6 +272,7 @@ it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 �
 it('인용과 다른 문서 버전으로 연결되는 버튼은 열 수 없다', () => {
   render(
     <SourceLinks
+      titleOf={() => focusedDocument.title}
       sources={[
         {
           document_id: '2',
@@ -285,7 +290,7 @@ it('인용과 다른 문서 버전으로 연결되는 버튼은 열 수 없다',
       }}
     />,
   )
-  expect(screen.getByRole('button', { name: /문서 2 v2/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /같은 제목 v2/ })).toBeDisabled()
 })
 
 // PR #218 리뷰: 인용한 버전 번호를 찾기 전에는 문서를 부르지 않는다(승인본으로 넘어가지 않는다).
@@ -476,6 +481,35 @@ it('시작 전에는 문서 등록 버튼이 없고, 형식이 다르면 파일 
   ).toBeDisabled()
   expect(documentsApi.upload).not.toHaveBeenCalled()
 })
+
+// 서버는 0바이트나 공백뿐인 파일을 400 validation_failed로 거절한다(S15P31A108-395).
+it.each([
+  ['0바이트', ''],
+  ['공백뿐인', '\uFEFF \n\t\n'],
+])(
+  '%s 파일을 고르면 파일 줄에 빈 파일이라고 알리고 등록 버튼을 끈다',
+  async (_, content) => {
+    const user = userEvent.setup()
+    mount()
+    await user.click(
+      await screen.findByRole('button', { name: '기획안 올리기' }),
+    )
+    await user.upload(
+      screen.getByLabelText(/원본 파일/),
+      new File([content], 'empty.md', { type: 'text/markdown' }),
+    )
+    expect(
+      await screen.findByText(
+        '빈 파일은 올릴 수 없어요. 내용이 있는 Markdown(.md) 파일을 골라 주세요.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('선택됨')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '등록하고 비비 검토 받기' }),
+    ).toBeDisabled()
+    expect(documentsApi.upload).not.toHaveBeenCalled()
+  },
+)
 
 it('서버가 거절하면 원인별로 알리고 입력값을 남긴다', async () => {
   const user = userEvent.setup()

@@ -25,13 +25,15 @@ it('실패는 유형과 상관없이 실패로 보인다', () => {
   ).toMatchObject({ label: '실패', notable: true })
 })
 
-it('토큰이 하나면 팀원 이름만, 둘이면 토큰 이름이나 세션 번호를 붙인다', () => {
+it('토큰이 하나면 팀원 이름만, 둘이면 토큰 이름이나 이름 없는 토큰을 붙인다', () => {
   const name = () => '민수'
   const one = { member_id: '1', agent_session_id: '91', agent_name: '노트북' }
   const two = { member_id: '1', agent_session_id: '95' }
   expect(agentLabel(one, [one], name)).toBe('민수의 에이전트')
   expect(agentLabel(one, [one, two], name)).toBe('민수의 에이전트 · 노트북')
-  expect(agentLabel(two, [one, two], name)).toBe('민수의 에이전트 · #95')
+  expect(agentLabel(two, [one, two], name)).toBe(
+    '민수의 에이전트 · 이름 없는 토큰',
+  )
 })
 
 it('이름 뒤에 붙는 토큰 구분은 토큰이 둘 이상일 때만 생긴다', () => {
@@ -39,7 +41,7 @@ it('이름 뒤에 붙는 토큰 구분은 토큰이 둘 이상일 때만 생긴�
   const two = { member_id: '1', agent_session_id: '95' }
   expect(agentTokenSuffix(one, [one])).toBe('')
   expect(agentTokenSuffix(one, [one, two])).toBe(' · 노트북')
-  expect(agentTokenSuffix(two, [one, two])).toBe(' · #95')
+  expect(agentTokenSuffix(two, [one, two])).toBe(' · 이름 없는 토큰')
 })
 
 // S15P31A108-346: 호출이 모두 미보고면 서버가 주는 0은 모르는 값이라 '0 USD + 미보고 N건'으로 보이면 안 된다.

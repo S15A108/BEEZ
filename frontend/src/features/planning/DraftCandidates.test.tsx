@@ -18,6 +18,7 @@ const show = (jobs: DraftJob[]) => {
     <DraftCandidates
       jobs={jobs}
       labelOfVersion={(id) => `문서 ${id}`}
+      titleOf={() => '문서'}
       isLeader
       busy={false}
       canGenerate

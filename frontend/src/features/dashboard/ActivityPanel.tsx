@@ -115,7 +115,7 @@ export function ActivityPanel({
   const statusOf = useAgentStatusOf(projectId)
   const memberName = (memberId: string) =>
     members.data?.items.find((member) => member.id === memberId)?.name ??
-    `팀원 #${memberId}`
+    '알 수 없는 팀원'
   const actorName = (item: Activity) => {
     if (item.actor_type === 'BEE') return '비비'
     if (item.actor_type === 'SYSTEM') return '시스템'
@@ -124,7 +124,7 @@ export function ActivityPanel({
     )?.name
     if (item.actor_type === 'AGENT')
       return owner ? `${owner}의 에이전트` : (item.actor_name ?? '에이전트')
-    return owner ?? item.actor_name ?? `회원 #${item.actor_account_id}`
+    return owner ?? item.actor_name ?? '알 수 없는 팀원'
   }
   // 호출이 있는데 에이전트별 줄이 하나도 없으면 서버가 호출자별로 나누지 않은 것이라 0회로 단정하지 않는다.
   const usageUnsplit =
@@ -159,6 +159,16 @@ export function ActivityPanel({
       ...rows.filter((row) => row.key === 'WEB'),
     ]
   }
+  // 서버가 검증별 줄에 이름(label)을 주지 않는다. DB 번호 대신, 여러 건이면 오래된 검증(작은 번호)부터 순번을 붙여 줄끼리 구별한다.
+  const validationNames = new Map(
+    (usage.data?.by_validation ?? [])
+      .map((row) => row.key)
+      .sort((a, b) => a.length - b.length || a.localeCompare(b))
+      .map((key, index, keys) => [
+        key,
+        keys.length > 1 ? `계획 검증 ${index + 1}` : '계획 검증',
+      ]),
+  )
   const rowLabels: Record<UsageView, (row: UsageBucket) => ReactNode> = {
     by_agent: (row) => {
       const web = row.key === 'WEB'
@@ -173,14 +183,15 @@ export function ActivityPanel({
               ? '웹에서 직접'
               : agent
                 ? agentLabel(agent, firstWork.data?.items ?? [], memberName)
-                : (row.label ?? `에이전트 #${row.key}`)}
+                : (row.label ?? '알 수 없는 에이전트')}
           </span>
         </span>
       )
     },
     by_feature: (row) => FEATURE_LABELS[row.key] ?? row.key,
-    by_task: (row) => row.label ?? `작업 #${row.key}`,
-    by_validation: (row) => `검증 #${row.key}`,
+    // 서버는 작업 키를 label로 준다. 없으면 프로젝트에서 그 작업을 찾지 못한 것이다.
+    by_task: (row) => row.label ?? '알 수 없는 작업',
+    by_validation: (row) => validationNames.get(row.key) ?? '계획 검증',
   }
   if (view === 'relations')
     return <RelationsView projectId={projectId} hasBaseline={hasBaseline} />
@@ -325,8 +336,7 @@ export function ActivityPanel({
                                         openPane('tasks', item.current_task_id)
                                       }
                                     >
-                                      {item.task_title ??
-                                        `작업 #${item.current_task_id}`}
+                                      {item.task_title ?? '이름 없는 작업'}
                                     </Button>
                                   ) : (
                                     <span className="text-muted-foreground">

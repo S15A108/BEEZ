@@ -88,6 +88,7 @@ import {
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
 import { AgentTaskHandoff } from './AgentTaskHandoff'
 import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
@@ -372,6 +373,11 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
         ? task.validation
         : undefined
   const view = result ? toValidationView(result) : undefined
+  // 검증 근거 위치는 문서 번호 대신 제목으로 보인다. 공용 문서함·기획 분석과 같은 목록을 쓴다.
+  const documentTitle = useDocumentTitle(
+    projectId,
+    !!view?.findings.some((finding) => finding.sources.length),
+  )
   const collectionNeedsReview =
     !!view?.collectionFailure &&
     !view.collectionFailure.retryable &&
@@ -1439,8 +1445,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                               key={index}
                               className="mt-2 text-xs text-muted-foreground"
                             >
-                              문서 {source.document_id} v{source.version_no} ·{' '}
-                              {source.location}
+                              {documentTitle(source.document_id)} v
+                              {source.version_no} · {source.location}
                             </p>
                           ))}
                           {finding.conflicting_design_refs?.map((ref) => (

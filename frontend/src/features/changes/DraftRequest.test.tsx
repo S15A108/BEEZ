@@ -206,7 +206,7 @@ it('일부만 반영했으면 이유와 참고한 곳을 보여 준다', async (
   expect(
     await screen.findByText('관련 설계 항목 63개 중 50개만 전달했어요.'),
   ).toBeInTheDocument()
-  expect(screen.getByText(/요구사항 명세서 v2 · L3-L8/)).toBeInTheDocument()
+  expect(screen.getByText(/요구사항 명세서 v2 · 3~8행/)).toBeInTheDocument()
 })
 
 it('요청하는 동안 진행 중임을 알리고 버튼을 막는다', async () => {

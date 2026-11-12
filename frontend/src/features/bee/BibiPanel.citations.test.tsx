@@ -8,7 +8,14 @@ import { BibiPanel } from './BibiPanel'
 import { askResponseSchema } from './schemas'
 
 const ask = vi.hoisted(() => vi.fn())
-vi.mock('@/api/services', () => ({ beeApi: { ask } }))
+// 출처 버튼은 공용 문서함 목록에서 문서 제목을 찾는다(S15P31A108-395).
+const list = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    items: [{ id: '20', project_id: '1', kind: 'PLAN', title: '접근 정책' }],
+    has_more: false,
+  }),
+)
+vi.mock('@/api/services', () => ({ beeApi: { ask }, documentsApi: { list } }))
 
 const openPane = vi.fn()
 const originalOpenPane = useWorkspaceStore.getState().openPane
@@ -84,9 +91,11 @@ describe('비비 답변 근거', () => {
     ).toBeInTheDocument()
     expect(within(panel).queryByText('참고 문서')).not.toBeInTheDocument()
     expect(
-      within(panel).getAllByRole('button', { name: /문서 20 v2/ }),
+      within(panel).getAllByRole('button', { name: /접근 정책 v2/ }),
     ).toHaveLength(1)
-    await user.click(within(panel).getByRole('button', { name: /문서 20 v2/ }))
+    await user.click(
+      within(panel).getByRole('button', { name: /접근 정책 v2/ }),
+    )
     expect(openPane).toHaveBeenCalledWith(
       'documents',
       expect.stringMatching(/^citation:/),
@@ -160,7 +169,7 @@ describe('비비 답변 근거', () => {
       within(panel).getByRole('button', { name: /승인 설계 \/ API-01/ }),
     ).toBeInTheDocument()
     expect(
-      within(panel).getAllByRole('button', { name: /문서 20 v2/ }),
+      within(panel).getAllByRole('button', { name: /접근 정책 v2/ }),
     ).toHaveLength(2)
   })
 
@@ -183,7 +192,12 @@ describe('비비 답변 근거', () => {
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('설계 질문'), '질문')
     await user.click(screen.getByRole('button', { name: '보내기' }))
-    expect(await screen.findByText('템플릿 응답')).toBeInTheDocument()
+    expect(
+      await screen.findByText('문서의 원문을 직접 확인해 주세요.'),
+    ).toBeInTheDocument()
+    // 모델 답을 쓰지 못한 응답에는 꼬리표가 없다(오너 결정 11-11). 줄 글자가 '찾은 문서 1개'뿐이다.
+    expect(screen.getByText('찾은 문서 1개')).toBeInTheDocument()
+    expect(screen.queryByText('템플릿 응답')).not.toBeInTheDocument()
     expect(
       screen.getByText('이 답변에서 확인된 근거가 없어요.'),
     ).toBeInTheDocument()
@@ -192,5 +206,40 @@ describe('비비 답변 근거', () => {
       screen.queryByRole('button', { name: /인용 \d+번 근거 보기/ }),
     ).not.toBeInTheDocument()
     expect(screen.queryByText('모델 생성')).not.toBeInTheDocument()
+  })
+
+  // S15P31A108-395: 참고 문서의 위치는 서버의 L4-L6 표기 대신 인용과 같은 4~6행 표기로 보인다.
+  it('참고 문서의 줄 범위를 행 표기로 보인다', async () => {
+    ask.mockResolvedValue({ ...cited, citations: [], grounded: false })
+    renderPanel()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('설계 질문'), '질문')
+    await user.click(screen.getByRole('button', { name: '보내기' }))
+    const panel = await screen.findByRole('complementary')
+    expect(
+      await within(panel).findByRole('button', { name: /접근 정책 . 4~6행/ }),
+    ).toBeInTheDocument()
+    expect(within(panel).queryByText(/L4-L6/)).not.toBeInTheDocument()
+  })
+
+  // S15P31A108-395: 출처 버튼은 문서 DB 번호(문서 20) 대신 문서 제목을 보인다.
+  it('출처 버튼에 문서 번호 대신 문서 제목을 보인다', async () => {
+    ask.mockResolvedValue(cited)
+    renderPanel()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('설계 질문'), '질문')
+    await user.click(screen.getByRole('button', { name: '보내기' }))
+    await user.click(
+      await screen.findByRole('button', { name: '인용 1번 근거 보기' }),
+    )
+    const panel = screen.getByRole('complementary', {
+      name: '선택한 답의 근거',
+    })
+    expect(
+      await within(panel).findByRole('button', {
+        name: '접근 정책 v2 · 4~6행',
+      }),
+    ).toBeInTheDocument()
+    expect(within(panel).queryByText(/문서 20/)).not.toBeInTheDocument()
   })
 })

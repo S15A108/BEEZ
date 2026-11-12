@@ -22,7 +22,13 @@ function verificationText(answer: AskResponse) {
   return '근거 확인 수준은 제공되지 않았어요.'
 }
 
-export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
+export function BeeAnswerEvidence({
+  answer,
+  titleOf,
+}: {
+  answer: AskResponse
+  titleOf: (documentId: string) => string
+}) {
   // BEE-A01은 인용마다 문서 제목과 행 범위로 sources.location을 만든다.
   // 인용에 쓰인 출처만 빼고 승인 설계 항목 등에 연결된 다른 위치는 남긴다.
   const citedSources = new Set(
@@ -74,6 +80,7 @@ export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
           )}
           <SourceLinks
             sources={[citationSource(citation)]}
+            titleOf={titleOf}
             citation={{
               document_id: citation.document_id,
               document_version_id: citation.document_version_id,
@@ -87,7 +94,7 @@ export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
       {!!otherSources.length && (
         <div>
           <p className="font-medium">참고 문서</p>
-          <SourceLinks sources={otherSources} />
+          <SourceLinks sources={otherSources} titleOf={titleOf} />
         </div>
       )}
       {!!answer.citations.length && (

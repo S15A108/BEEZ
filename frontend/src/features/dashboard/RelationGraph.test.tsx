@@ -191,3 +191,20 @@ it('연결된 노드가 그래프 밖에 있어도 깨지지 않고 그릴 수 �
   expect(within(svg).queryByText('구현')).toBeNull()
   expect(svg).toHaveAccessibleName(expect.stringContaining('이어진 관계 없음'))
 })
+
+// PR #280 리뷰: 화면에 DB 번호(#501)를 보이지 않는다. 관계 목록도 양 끝을 항목 이름으로 읽는다.
+it('그래프와 전체 목록에 DB 번호 대신 항목 이름을 보인다', async () => {
+  graph()
+  await userEvent.click(screen.getByText('전체 항목과 관계 읽기'))
+  expect(
+    screen.getByText(
+      '작업 TASK-001 목록 화면 → 설계 항목 REQ-001 · 구현 · 확인됨',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(
+      '변경 제안 빈 화면 안내 → 설계 항목 REQ-001 · 고침 · 후보',
+    ),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/#(501|301|12|71)\b/)).not.toBeInTheDocument()
+})

@@ -866,3 +866,33 @@ it('담당자 이름을 못 찾으면 담당자 없음으로 말하지 않고, �
   )
   expect(await screen.findByText('TASK-003 · 담당자 없음')).toBeInTheDocument()
 })
+
+// S15P31A108-395: 작업 제목이 없으면 DB 번호(작업 #N) 대신 이름 없는 작업으로 보인다.
+it('에이전트 요약의 현재 작업에 제목이 없으면 번호 대신 이름 없는 작업으로 보인다', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(0))}
+        activities={query(none)}
+        work={query({
+          items: [
+            {
+              member_id: '22',
+              agent_session_id: '53',
+              current_task_id: '503',
+              task_status: 'IN_PROGRESS' as const,
+            },
+          ],
+          has_more: false,
+        })}
+        members={[{ id: '22', name: '김동료', agent_connected: true }] as never}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  const row = (await screen.findByText('김동료의 에이전트')).closest('li')!
+  expect(row).toHaveTextContent('이름 없는 작업 진행 중')
+  expect(row).not.toHaveTextContent('#503')
+})

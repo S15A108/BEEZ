@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   authApi,
   contextsApi,
+  documentsApi,
   membersApi,
   planningApi,
   tasksApi,
@@ -2156,6 +2157,52 @@ it('계획 이력이 한 페이지를 넘으면 다음 페이지 리비전까지
     cursor: 'r2',
     limit: 100,
   })
+})
+
+// S15P31A108-395: 검증 근거 위치는 문서 DB 번호(문서 21) 대신 문서 제목으로 보인다.
+it('검증 근거 위치에 문서 번호 대신 문서 제목을 보인다', async () => {
+  vi.spyOn(documentsApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '21',
+        project_id: '101',
+        kind: 'REQUIREMENTS',
+        title: '요구사항 명세서',
+      },
+    ],
+    has_more: false,
+  })
+  task = taskDetailSchema.parse({
+    ...task,
+    validation_status: 'NEEDS_REVIEW',
+    validation: {
+      ...task.validation!,
+      status: 'NEEDS_REVIEW',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL',
+          kind: 'MISMATCH',
+          severity: 'BLOCKING',
+          message: '계획과 승인 설계가 달라요',
+          sources: [
+            {
+              document_id: '21',
+              document_version_id: '22',
+              version_no: 2,
+              location: '4~5행',
+            },
+          ],
+          resolution: 'HUMAN_REVIEW',
+        },
+      ],
+    },
+  })
+  show(false)
+  expect(
+    await screen.findByText('요구사항 명세서 v2 · 4~5행'),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/문서 21/)).not.toBeInTheDocument()
 })
 
 // S15P31A108-385: 새 작업 계획 폼의 '문서로 초안 받기'. 저장하지 않고 빈 칸만 채우며 연결 후보는 사람이 체크한다.

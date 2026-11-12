@@ -3,7 +3,7 @@ import { AxiosError } from 'axios'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { beeApi } from '@/api/services'
+import { beeApi, documentsApi } from '@/api/services'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { BibiPanel } from './BibiPanel'
 
@@ -63,6 +63,11 @@ const backToChat = () =>
 
 beforeEach(() => {
   useWorkspaceStore.setState({ pane: 'chat', focusId: null })
+  // 근거 버튼은 공용 문서함 목록에서 문서 제목을 찾는다(S15P31A108-395).
+  vi.spyOn(documentsApi, 'list').mockResolvedValue({
+    items: [{ id: '201', project_id: '101', kind: 'PLAN', title: '기획안' }],
+    has_more: false,
+  })
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -76,7 +81,7 @@ it('근거를 눌러 문서함에 갔다가 비비 창으로 돌아와도 대화
 
   await userEvent.click(
     within(screen.getByRole('complementary')).getByRole('button', {
-      name: /문서 201 v2/,
+      name: /기획안 v2/,
     }),
   )
   expect(screen.getByText('documents 창')).toBeInTheDocument()
@@ -136,7 +141,7 @@ it('근거 문서를 보고 돌아와도 대기 질문이 남고 중복 제출�
   await send('기다리는 질문')
   await userEvent.click(
     within(screen.getByRole('complementary')).getByRole('button', {
-      name: /문서 201 v2/,
+      name: /기획안 v2/,
     }),
   )
   backToChat()
@@ -170,7 +175,7 @@ it('문서를 보는 사이 실패한 질문도 돌아오면 오류와 입력을
   await send('돌아와서 다시 보낼 질문')
   await userEvent.click(
     within(screen.getByRole('complementary')).getByRole('button', {
-      name: /문서 201 v2/,
+      name: /기획안 v2/,
     }),
   )
   await act(async () => reject(new AxiosError('offline', 'ERR_NETWORK')))

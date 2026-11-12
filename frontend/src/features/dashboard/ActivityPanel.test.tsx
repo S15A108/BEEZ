@@ -84,7 +84,7 @@ it('연결·대기 작업·통과한 계획을 분리하며 누락 비용을 0�
   expect(within(row).getByText('대기', { exact: true })).toBeInTheDocument()
   expect(within(row).getByText('통과')).toBeInTheDocument()
   expect(within(row).getByText('선행 작업 대기')).toBeInTheDocument()
-  await user.click(within(row).getByRole('button', { name: '작업 #8' }))
+  await user.click(within(row).getByRole('button', { name: '이름 없는 작업' }))
   expect(useWorkspaceStore.getState().focusId).toBe('8')
   expect(useWorkspaceStore.getState().pane).toBe('tasks')
   await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
@@ -544,14 +544,16 @@ describe('활동 타임라인', () => {
     await user.click(
       await screen.findByRole('button', { name: '다음 작업 현황' }),
     )
-    expect(await screen.findByText('팀원 #2')).toBeInTheDocument()
+    expect(await screen.findByText('알 수 없는 팀원')).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
     const filters = screen.getByRole('group', { name: '보기' })
     expect(
       await within(filters).findByRole('button', { name: '민수의 에이전트' }),
     ).toBeInTheDocument()
     expect(
-      within(filters).queryByRole('button', { name: '팀원 #2의 에이전트' }),
+      within(filters).queryByRole('button', {
+        name: '알 수 없는 팀원의 에이전트',
+      }),
     ).not.toBeInTheDocument()
   })
 
@@ -748,7 +750,7 @@ describe('에이전트별 사용량', () => {
     expect(screen.queryByText('기간별 사용량')).not.toBeInTheDocument()
   })
 
-  it('작업별 줄은 서버가 준 작업 키를 쓰고, 없으면 작업 번호를 쓴다', async () => {
+  it('작업별 줄은 서버가 준 작업 키를 쓰고, 없으면 알 수 없는 작업으로 보인다', async () => {
     vi.mocked(dashboardApi.usage).mockResolvedValue(
       usageWith({
         call_count: 3,
@@ -765,7 +767,7 @@ describe('에이전트별 사용량', () => {
       await screen.findByRole('button', { name: 'T-3' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: '작업 #502' }),
+      screen.getByRole('button', { name: '알 수 없는 작업' }),
     ).toBeInTheDocument()
   })
 
@@ -949,5 +951,59 @@ describe('에이전트 현황', () => {
       expect(screen.getAllByText('—').length).toBeGreaterThan(1),
     )
     expect(screen.queryByText('나눈 기록 없음')).not.toBeInTheDocument()
+  })
+})
+
+// S15P31A108-395: 이름을 못 찾으면 DB 번호(#N) 대신 중립적인 이름을 보인다.
+describe('이름이 없을 때', () => {
+  it('팀원 목록에 없고 이름도 없는 사람 행위자는 알 수 없는 팀원으로 보인다', async () => {
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [activity('1', { actor_account_id: '99' })],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    expect(await screen.findByText('알 수 없는 팀원')).toBeInTheDocument()
+    expect(screen.queryByText(/#99/)).not.toBeInTheDocument()
+  })
+
+  it('사용량의 모르는 에이전트 줄과 검증별 줄에 번호를 붙이지 않는다', async () => {
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 2,
+        currency: 'USD',
+        estimated_cost_amount: '1',
+        by_agent: [bucket('77', 1)],
+        by_validation: [bucket('601', 1)],
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    expect(await screen.findByText('알 수 없는 에이전트')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '검증별' }))
+    expect(await screen.findByText('계획 검증')).toBeInTheDocument()
+    expect(screen.queryByText(/#77|#601/)).not.toBeInTheDocument()
+  })
+
+  // PR #280 리뷰: 검증이 여러 건이면 줄끼리 구별되게 오래된 검증부터 순번을 붙인다.
+  it('검증별 줄이 여러 개면 오래된 검증부터 순번을 붙여 구별한다', async () => {
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 3,
+        currency: 'USD',
+        estimated_cost_amount: '1',
+        by_validation: [bucket('1001', 2), bucket('99', 1), bucket('601', 1)],
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    await user.click(await screen.findByRole('tab', { name: '검증별' }))
+    expect(await screen.findByText('계획 검증 1')).toBeInTheDocument()
+    expect(screen.getByText('계획 검증 2')).toBeInTheDocument()
+    expect(screen.getByText('계획 검증 3')).toBeInTheDocument()
+    expect(screen.queryByText(/#99|#601|#1001/)).not.toBeInTheDocument()
   })
 })

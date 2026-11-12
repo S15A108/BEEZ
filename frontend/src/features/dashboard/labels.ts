@@ -63,7 +63,7 @@ export function agentLabel(
   return `${memberName(agent.member_id)}의 에이전트${agentTokenSuffix(agent, all)}`
 }
 
-// 위 이름 뒤에 붙는 부분: 토큰이 하나면 비고, 둘 이상이면 ' · 토큰 이름'(이름이 없으면 세션 번호)
+// 위 이름 뒤에 붙는 부분: 토큰이 하나면 비고, 둘 이상이면 ' · 토큰 이름'(이름이 없으면 '이름 없는 토큰')
 export function agentTokenSuffix(
   agent: { member_id: string; agent_session_id?: string; agent_name?: string },
   all: { member_id: string; agent_session_id?: string }[],
@@ -71,9 +71,7 @@ export function agentTokenSuffix(
   const sessions = all.filter(
     (other) => other.agent_session_id && other.member_id === agent.member_id,
   )
-  return sessions.length > 1
-    ? ` · ${agent.agent_name ?? `#${agent.agent_session_id}`}`
-    : ''
+  return sessions.length > 1 ? ` · ${agent.agent_name ?? '이름 없는 토큰'}` : ''
 }
 
 // 호출이 있는데 서버가 호출자별로 나누지 않아 에이전트별 줄이 비었을 때의 안내.

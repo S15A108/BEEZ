@@ -163,7 +163,7 @@ export function ActivityTimeline({
                                 className="ml-2 h-auto p-0 text-xs"
                                 onClick={() => openPane('tasks', item.task_id)}
                               >
-                                작업 #{item.task_id}
+                                작업 보기
                               </Button>
                             )}
                             {item.change_proposal_id && (
@@ -174,7 +174,7 @@ export function ActivityTimeline({
                                   openPane('changes', item.change_proposal_id)
                                 }
                               >
-                                변경 요청 #{item.change_proposal_id}
+                                변경 요청 보기
                               </Button>
                             )}
                             {item.baseline_id && (
@@ -183,7 +183,7 @@ export function ActivityTimeline({
                                 className="ml-2 h-auto p-0 text-xs"
                                 onClick={() => openPane('documents')}
                               >
-                                기준 설계 #{item.baseline_id}
+                                기준 설계 보기
                               </Button>
                             )}
                           </span>

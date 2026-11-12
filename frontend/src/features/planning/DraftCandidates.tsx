@@ -151,6 +151,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
 
 function CandidateCard({
   candidate,
+  titleOf,
   isLeader,
   busy,
   onAdopt,
@@ -158,6 +159,7 @@ function CandidateCard({
   onRegenerate,
 }: {
   candidate: DraftCandidate
+  titleOf: (documentId: string) => string
   isLeader: boolean
   busy: boolean
   onAdopt: (input: AdoptCandidateInput) => Promise<unknown>
@@ -229,7 +231,9 @@ function CandidateCard({
             ))}
         </ul>
       )}
-      {sources.length > 0 && <SourceLinks sources={sources} />}
+      {sources.length > 0 && (
+        <SourceLinks sources={sources} titleOf={titleOf} />
+      )}
       {candidate.answer_refs.length > 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
           답변 {candidate.answer_refs.length}개를 반영했어요.
@@ -318,6 +322,7 @@ function CandidateCard({
 export function DraftCandidates({
   jobs,
   labelOfVersion,
+  titleOf,
   isLeader,
   busy,
   canGenerate,
@@ -328,6 +333,8 @@ export function DraftCandidates({
   jobs: DraftJob[]
   /** 문서 버전 ID를 사람이 읽는 이름(예: 요구사항 명세서 v1)으로 바꾼다 */
   labelOfVersion: (versionId: string) => string
+  /** 근거 버튼의 문서 ID를 제목으로 바꾼다 */
+  titleOf: (documentId: string) => string
   isLeader: boolean
   busy: boolean
   canGenerate: boolean
@@ -451,6 +458,7 @@ export function DraftCandidates({
           <CandidateCard
             key={candidate.id}
             candidate={candidate}
+            titleOf={titleOf}
             isLeader={isLeader}
             busy={busy}
             onAdopt={(input) => onAdopt(candidate, input)}
@@ -473,6 +481,7 @@ export function DraftCandidates({
                 <CandidateCard
                   key={candidate.id}
                   candidate={candidate}
+                  titleOf={titleOf}
                   isLeader={isLeader}
                   busy={busy}
                   onAdopt={(input) => onAdopt(candidate, input)}
