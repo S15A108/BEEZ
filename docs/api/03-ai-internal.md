@@ -969,6 +969,7 @@ HTTP `200`.
 | 413 | `invalid_ai_input` | #188 제안: 설정된 요청 본문 크기 초과 |
 | 422 | `invalid_ai_input` | 본문 업무 구조 부적합 |
 | 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
+| 502 | `model_output_truncated` | 모델 답이 출력 토큰 상한(`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`, 기본 4,096, 추론 토큰 포함)에서 끊김. BE 는 이 코드를 그대로 `error_code` 로 저장하고, 발행 후 분석은 첫 시도의 잘림만 한 번 더 시도한다(S15P31A108-402) |
 | 504 | `model_timeout` | 모델 시간 초과 |
 
 ```json
@@ -1749,7 +1750,7 @@ HTTP `200`.
 관련 요구사항: MTG-06·08  
 담당: BE: 오서현 / AI: 양지훈 / FE: —
 
-상태: 내부 계약 초안. SUMMARY 는 BE 가 호출하는 경계를 구현했다(S15P31A108-235). AI 서버는 2026-11-05 기준 SUMMARY 를 아직 받지 않아(`SUMMARY contract is not agreed`) 실제 연동은 AI 구현 뒤 확인한다
+BE는 회의 정리와 수정 요청에서 `SUMMARY` 모드를 호출한다. 모델 호출 제한은 `MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS`(기본 35초)로 정한다. 회의 정리의 BE 읽기 제한은 `MEETING_SUMMARY_READ_TIMEOUT`(기본 45초)이다. 동기 요청이므로 AI 호출보다 BE 읽기 제한을 길게 두고, nginx `/api/` 대기 60초 안에 입력 준비와 결과 저장까지 끝날 여유를 둔다. [환경 변수](../infra/env.md)
 
 #### 인증
 
@@ -2385,3 +2386,35 @@ AI의 `TASK_PLAN_DRAFTS_INPUT_TOKEN_LIMIT`(4096), `TASK_PLAN_DRAFTS_INPUT_RESERV
 사용량 `feature`는 `BEE_DRAFT`다. 문서 발췌는 신뢰할 수 없는 입력이라 모델에 지시가 아닌 데이터로 알린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="ai-a15"></a>
+
+## AI-A15. 기존 작업 계획 수정안
+
+### POST `/v1/task-plan-revision-proposals`
+
+S15P31A108-400. 내부 Bearer 인증 전용. AI는 제안만 반환하며 생성은 [TSK-A10](01-backend-rest.md#tsk-a10), 승인·검증 접수는 [TSK-A11](01-backend-rest.md#tsk-a11)이 담당한다.
+
+입력은 AI-A14의 `project_id`, `request_key`, `task`, `excerpts`, `design_items`에 다음을 더한다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `current_plan` | 서버가 조회한 전체 현재 계획. 제목, 목표, 포함·제외 범위, 접근 방법, 완료 기준, 의존 작업, 설계 참조(버전 포함), 미연결 내용, 계약 변경 여부, 개발 맥락 |
+| `validation` | `{id, status: NEEDS_INPUT\|NEEDS_REVIEW, findings[]}`. 현재 계획의 서버 저장 검증 결과 |
+
+`FIX_PLAN` 항목이 있어야 한다. 실행·근거 수집 실패는 수정안 입력으로 허용하지 않는다. 현재 계획과 검증 결과는 입력 토큰 예산 때문에 잘라내지 않으며, 전체 원본과 유효한 문서 발췌를 담을 수 없으면 유료 호출 전에 거절한다. 신뢰할 수 없는 문서·계획 내용은 모델 지시가 아닌 데이터로 취급한다.
+
+HTTP `200` 응답은 `{result, origin: MODEL, model, usage[]}`이며 `result`는 다음과 같다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `status` | `PROPOSED` 또는 안전하게 수정할 근거가 없는 `INSUFFICIENT` |
+| `plan` | 목표·포함 범위·제외 범위·접근 방법·완료 기준 5개 칸. 변경되지 않은 칸은 원본 그대로 |
+| `changes` | 최대 5개 `{field, reason, finding_ids[]}`. 수정한 칸마다 입력의 `FIX_PLAN` 항목을 인용 |
+| `evidence` | 각 변경을 뒷받침하는 문서 인용. AI-A14의 `Evidence`와 동일 |
+
+모델은 전체 계획 대신 칸별 변경만 반환한다. AI가 원본에 변경을 합성하고, 수정하지 않은 칸은 보존한다. 허용하지 않은 필드, 중복 변경, 없는 발견 항목, 원문과 일치하지 않는 인용은 전체 제안을 거절한다. `HUMAN_REVIEW`·`PROPOSE_CHANGE` 항목은 계획 수정의 권한으로 사용하지 않는다. BE는 반환된 5개 칸만 원본에 덮어쓰고, 나머지 필드는 기존 값을 보존한다.
+
+요청 크기·출력 토큰·입력 예산·사용량·오류 형식은 AI-A14 설정을 재사용한다. 이 엔드포인트의 모델 실행 제한은 최대 30초다. 수정안 생성 실패를 계획 저장 성공으로 표시하지 않으며 자동 추가 호출하지 않는다.

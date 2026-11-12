@@ -89,5 +89,13 @@ async def analyze_meeting(
     body: MeetingAnalysisRequest,
     settings: Annotated[Settings, Depends(get_settings)],
 ):
+    try:
+        timeout_seconds = float(settings.meeting_analysis_llm_timeout_seconds)
+    except (TypeError, ValueError):
+        raise HTTPException(502, detail="model_unavailable") from None
+    if not 0 < timeout_seconds < 60:
+        raise HTTPException(502, detail="model_unavailable")
     async with get_meeting_client(settings) as client:
-        return await analyze(body, client, settings.bee_default_model)
+        return await analyze(
+            body, client, settings.bee_default_model, timeout_seconds=timeout_seconds
+        )

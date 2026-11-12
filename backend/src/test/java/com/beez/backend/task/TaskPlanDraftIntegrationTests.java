@@ -37,6 +37,7 @@ class TaskPlanDraftIntegrationTests extends IntegrationTestSupport {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final String PLAN_TEXT = "고객은 앱에서 메뉴를 고르고 결제하면 주문 번호를 받는다.";
     @Autowired JdbcTemplate db;
+    @Autowired com.beez.backend.task.service.TaskPlanDraftService draftService;
     @MockitoBean AiClient ai;
     @MockitoBean DocumentIndexWorker documents;
     private AccessFixtures.ProjectWithLeader project;
@@ -111,6 +112,25 @@ class TaskPlanDraftIntegrationTests extends IntegrationTestSupport {
     }
 
     private long taskCount() { return db.queryForObject("select count(*) from task where project_id = ?", Long.class, project.projectId()); }
+
+    @Test void revisionUsesDedicatedAiPathServerContextSharedEvidenceVerificationAndUsageGuard() {
+        var current = Map.<String,Object>of("title", "주문", "goal", "목표", "included_scope", List.of("주문"),
+                "excluded_scope", List.of(), "approach", "방법", "completion_criteria", List.of("성공"),
+                "dependency_task_ids", List.of("19"), "design_refs", List.of(), "unlinked", List.of(), "no_contract_change", true);
+        var validation = Map.<String,Object>of("id", "9", "status", "NEEDS_INPUT", "findings", List.of(Map.of("id", "10", "resolution", "FIX_PLAN")));
+        var changes = List.of(Map.of("field", "goal", "reason", "목표 구체화", "finding_ids", List.of("10")));
+        when(ai.taskPlanRevisionProposals(anyMap())).thenReturn(aiReply("status", "PROPOSED", "changes", changes));
+        var response = draftService.revision(com.beez.backend.common.auth.CallerContext.human(project.leaderAccountId()),
+                project.projectId(), new com.beez.backend.task.dto.TaskPlanDraftRequest("주문", "목표 구체화"), current, validation);
+        @SuppressWarnings("unchecked") ArgumentCaptor<Map<String,Object>> sent = ArgumentCaptor.forClass(Map.class);
+        verify(ai).taskPlanRevisionProposals(sent.capture());
+        verify(ai, never()).taskPlanDrafts(anyMap());
+        assertThat(sent.getValue()).containsEntry("current_plan", current).containsEntry("validation", validation);
+        assertThat(response.get("changes")).isEqualTo(changes);
+        assertThat((List<?>)response.get("evidence")).hasSize(1);
+        assertThat(taskCount()).isZero();
+        assertThat(db.queryForObject("select count(*) from llm_usage where project_id=? and feature='BEE_DRAFT'", Long.class, project.projectId())).isEqualTo(1);
+    }
 
     @Test void fillsFromApprovedDocumentsKeepsOnlyApprovedItemsAndStoresNothing() {
         when(ai.taskPlanDrafts(anyMap())).thenReturn(aiReply());

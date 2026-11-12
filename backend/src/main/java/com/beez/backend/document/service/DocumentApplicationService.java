@@ -429,7 +429,8 @@ public class DocumentApplicationService {
                  FROM project p JOIN baseline_item b ON b.baseline_id=p.current_baseline_id
                  JOIN design_item i ON i.id=b.design_item_id AND i.project_id=p.id
                  JOIN design_item_version v ON v.id=b.design_item_version_id AND v.design_item_id=i.id
-                 LEFT JOIN baseline_document bd ON bd.baseline_id=p.current_baseline_id AND bd.document_version_id=v.source_document_version_id
+                 JOIN baseline_item_effective_source es ON es.baseline_id=b.baseline_id AND es.design_item_id=b.design_item_id
+                 LEFT JOIN baseline_document bd ON bd.baseline_id=p.current_baseline_id AND bd.document_version_id=es.source_document_version_id
                  LEFT JOIN document_version dv ON dv.id=bd.document_version_id WHERE p.id=:project
                 ) hits WHERE (position(lower(:q) IN lower(title))>0 OR position(lower(:q) IN lower(body))>0)
                 """;

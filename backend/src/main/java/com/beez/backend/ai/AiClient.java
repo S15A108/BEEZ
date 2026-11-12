@@ -34,6 +34,8 @@ public class AiClient {
      */
     static final Duration ASSIGNMENT_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration MEETING_REVISION_READ_TIMEOUT = Duration.ofSeconds(55);
+    /** 회의 정리(AI-A08)는 사용자 요청 안에서 기다리므로 AI 모델 제한과 nginx /api/ 제한 사이에 둔다. */
+    private static final int DEFAULT_MEETING_SUMMARY_READ_TIMEOUT_SECONDS = 45;
     /**
      * 문서 검토 제안 대화·직접 요청(DISCUSS·REQUEST, 사용자 요청 안에서 기다림) 전용. 대화 모델 제한(50초)보다 길고
      * nginx(60초)보다 짧아야 한다 (S15P31A108-382·-391). 첫 검토·재검토는 아래 워커 전용 제한을 쓴다.
@@ -53,17 +55,32 @@ public class AiClient {
      * 정상 선택을 먼저 끊지 않는다.
      */
     static final Duration DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT = Duration.ofSeconds(40);
+    /**
+     * 변경 영향 분석(AI-A03) 전용(S15P31A108-402). 재분석·발행 후 분석 모두 백그라운드 실행이라 nginx 60초에 묶이지 않는다.
+     * AI 영향 분석 모델 제한(IMPACT_LLM_TIMEOUT_SECONDS 60초)보다 길어야 정상 분석을 먼저 끊지 않는다. 실행 lease 도 이 값으로 잡으므로
+     * 영향 분석 서비스들은 {@link #changeImpactLeaseSeconds(BeezProperties.Ai, Duration)} 로 같은 값에서 lease 를 얻는다.
+     * 기본값(초)은 한 곳에만 두고 Spring 설정 기본값과 짧은 생성자 기본값이 함께 따른다.
+     */
+    private static final String DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS = "75";
+    public static final String CHANGE_IMPACT_READ_TIMEOUT =
+            "${beez.change-impact.read-timeout:" + DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS + "s}";
+    static final Duration DEFAULT_CHANGE_IMPACT_READ_TIMEOUT =
+            Duration.ofSeconds(Long.parseLong(DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS));
+    private static final int DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS = 40;
 
     private final RestClient rest;
+    private final RestClient validationRest;
     private final RestClient questionRest;
     private final RestClient draftRest;
     private final RestClient assignmentRest;
     private final RestClient meetingRevisionRest;
+    private final RestClient meetingSummaryRest;
     private final RestClient reviewRest;
     private final RestClient reviewWorkerRest;
     private final RestClient taskBreakdownRest;
     private final RestClient taskPlanRest;
     private final RestClient developmentContextRest;
+    private final RestClient changeImpactRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
 
@@ -91,6 +108,30 @@ public class AiClient {
                 taskPlanReadTimeout, DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT);
     }
 
+    /** 영향 분석 읽기 제한을 기본값(75초)으로 두는 생성자. */
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
+                    Duration taskBreakdownReadTimeout, Duration reviewWorkerReadTimeout, Duration taskPlanReadTimeout,
+                    Duration developmentContextReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, reviewWorkerReadTimeout,
+                taskPlanReadTimeout, developmentContextReadTimeout, DEFAULT_CHANGE_IMPACT_READ_TIMEOUT);
+    }
+
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
+                    Duration taskBreakdownReadTimeout, Duration reviewWorkerReadTimeout, Duration taskPlanReadTimeout,
+                    Duration developmentContextReadTimeout, Duration changeImpactReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, reviewWorkerReadTimeout,
+                taskPlanReadTimeout, developmentContextReadTimeout, changeImpactReadTimeout,
+                Duration.ofSeconds(DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS));
+    }
+
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
+                    Duration taskBreakdownReadTimeout, Duration reviewWorkerReadTimeout, Duration taskPlanReadTimeout,
+                    Duration developmentContextReadTimeout, Duration changeImpactReadTimeout, Duration validationReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, reviewWorkerReadTimeout,
+                taskPlanReadTimeout, developmentContextReadTimeout, changeImpactReadTimeout, validationReadTimeout,
+                Duration.ofSeconds(DEFAULT_MEETING_SUMMARY_READ_TIMEOUT_SECONDS));
+    }
+
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
@@ -99,14 +140,29 @@ public class AiClient {
                     @Value("${beez.task-breakdown.read-timeout:105s}") Duration taskBreakdownReadTimeout,
                     @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout,
                     @Value("${beez.task-plan-draft.read-timeout:40s}") Duration taskPlanReadTimeout,
-                    @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout) {
+                    @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout,
+                    @Value(CHANGE_IMPACT_READ_TIMEOUT) Duration changeImpactReadTimeout,
+                    @Value("${beez.validation.read-timeout:" + DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS + "s}")
+                    Duration validationReadTimeout,
+                    @Value("${beez.meeting.summary.read-timeout:" + DEFAULT_MEETING_SUMMARY_READ_TIMEOUT_SECONDS + "s}")
+                    Duration meetingSummaryReadTimeout) {
         BeezProperties.Ai ai = props.ai();
+        if (validationReadTimeout.isZero() || validationReadTimeout.isNegative()) {
+            throw new IllegalArgumentException("beez.validation.read-timeout must be positive");
+        }
+        if (meetingSummaryReadTimeout.isZero() || meetingSummaryReadTimeout.isNegative()
+                || meetingSummaryReadTimeout.compareTo(Duration.ofSeconds(60)) >= 0) {
+            throw new IllegalArgumentException("beez.meeting.summary.read-timeout must be positive and below 60s");
+        }
         this.rest = client(ai, ai.readTimeout());
+        // 검증 워커의 예산에 맞춰 전용 제한을 적용한다. 공통 읽기 제한을 조정해도 검증 호출에는 영향을 주지 않는다.
+        this.validationRest = client(ai, validationReadTimeout);
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
         this.assignmentRest = client(ai, max(ai.readTimeout(), ASSIGNMENT_READ_TIMEOUT));
         this.meetingRevisionRest = client(ai, max(ai.readTimeout(), MEETING_REVISION_READ_TIMEOUT));
+        this.meetingSummaryRest = client(ai, meetingSummaryReadTimeout);
         this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
         this.reviewWorkerRest = client(ai, max(ai.readTimeout(), reviewWorkerReadTimeout));
         // 작업 분해 워커는 모델 제한(90초)보다 긴 전용 읽기 제한을 쓴다.
@@ -116,12 +172,26 @@ public class AiClient {
         this.taskBreakdownRest = client(ai, taskBreakdownReadTimeout);
         this.taskPlanRest = client(ai, max(ai.readTimeout(), taskPlanReadTimeout));
         this.developmentContextRest = client(ai, max(ai.readTimeout(), developmentContextReadTimeout));
+        this.changeImpactRest = client(ai, changeImpactReadTimeout(ai, changeImpactReadTimeout));
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
         this.chatHttp = http(ai);
     }
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
+
+    /** 영향 분석 호출이 실제로 쓰는 읽기 제한. 공통 제한보다 짧게 설정되어도 공통값을 쓴다. */
+    public static Duration changeImpactReadTimeout(BeezProperties.Ai ai, Duration configured) {
+        return max(ai.readTimeout(), configured);
+    }
+
+    /**
+     * 영향 분석 실행(재분석·발행 후 분석)의 lease(초). 실제 읽기 제한 + 연결 제한 + 1분, 최소 1분이라 긴 정상 분석 중에
+     * lease 가 끝나 중단으로 읽히지 않는다. 두 실행 경로가 같은 식을 쓰도록 여기 한 곳에 둔다 (S15P31A108-402).
+     */
+    public static long changeImpactLeaseSeconds(BeezProperties.Ai ai, Duration configured) {
+        return Math.max(60, changeImpactReadTimeout(ai, configured).plus(ai.connectTimeout()).toSeconds() + 60);
+    }
 
     private static HttpClient http(BeezProperties.Ai ai) {
         // Uvicorn uses HTTP/1.1; avoid h2c upgrades on streamed request bodies.
@@ -163,7 +233,7 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> validate(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/validate").body(input).retrieve().body(java.util.Map.class);
+        return validationRest.post().uri("/v1/validate").body(input).retrieve().body(java.util.Map.class);
     }
 
     /** 이후 lead/review/embeddings 호출이 공통으로 쓸 RestClient. */
@@ -184,7 +254,7 @@ public class AiClient {
     /** Analyze a proposal; callers must retain the usage envelope and handle failures explicitly. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> changeImpact(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
+        return changeImpactRest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
     }
 
     /**
@@ -208,6 +278,12 @@ public class AiClient {
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> taskPlanDrafts(java.util.Map<String, Object> input) {
         return taskPlanRest.post().uri("/v1/task-plan-drafts").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /** Human-reviewed plan repair; same bounded synchronous budget as document drafts. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> taskPlanRevisionProposals(java.util.Map<String, Object> input) {
+        return taskPlanRest.post().uri("/v1/task-plan-revision-proposals").body(input).retrieve().body(java.util.Map.class);
     }
 
     /** 기획 보완 질문 생성(AI 모델 제한 90초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */
@@ -279,11 +355,10 @@ public class AiClient {
 
     /**
      * AI-A08 회의 분석 ({@code POST /v1/bee/meeting-analysis}). BE 는 SUMMARY 모드(회의 정리)로 부른다.
-     * 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다. AI 서버는 2026-11-05 기준 SUMMARY 를
-     * 아직 받지 않는다(S15P31A108-235). 읽기 시간 제한은 다른 호출과 같은 {@code ai.read-timeout} 이다.
+     * 회의 정리·정리 수정 요청은 이 호출의 전용 읽기 제한을 쓴다. 호출 실패·HTTP 오류는 호출하는 쪽에서 분류한다.
      */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> meetingAnalysis(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/bee/meeting-analysis").body(input).retrieve().body(java.util.Map.class);
+        return meetingSummaryRest.post().uri("/v1/bee/meeting-analysis").body(input).retrieve().body(java.util.Map.class);
     }
 }

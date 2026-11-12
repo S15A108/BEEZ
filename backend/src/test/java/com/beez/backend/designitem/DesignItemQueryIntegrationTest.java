@@ -140,6 +140,48 @@ class DesignItemQueryIntegrationTest extends IntegrationTestSupport {
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus().value()).isEqualTo(400));
     }
 
+    /** S15P31A108-406 출처 필터는 응답의 유효 출처와 같은 값으로 거르고, 과거 기준을 조회하면 그 기준의 출처를 보인다. */
+    @Test
+    void sourceFilterAndPastBaselineFollowTheEffectiveSourceOfTheQueriedBaseline() {
+        long first = item("REQ-001", "REQUIREMENT");
+        long second = item("REQ-002", "REQUIREMENT");
+        long document = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'PLAN','plan',?) RETURNING id",
+                Long.class, project.projectId(), project.leaderAccountId());
+        long v1 = documentVersion(document, 1);
+        long v2 = documentVersion(document, 2);
+        String locator = "{\"type\":\"text_lines\",\"start_line\":1,\"end_line\":1,\"location\":\"L1-L1\"}";
+        jdbc.update("UPDATE design_item_version SET source_document_version_id=?,source_locator=cast(? AS jsonb) WHERE id IN (?,?)",
+                v1, locator, first, second);
+        long oldBaseline = publishFixture(1, first, second);
+        var pinned = queries.list(leader, project.projectId(), "APPROVED", null, null, null, 1);
+        assertThat(pinned.nextCursor()).isNotNull();
+
+        long nextBaseline = publishFixture(2, first, second);
+        jdbc.update("""
+                INSERT INTO baseline_item_source(baseline_id,project_id,design_item_id,source_document_version_id,
+                  source_locator,source_status,remapped_from_document_version_id)
+                SELECT ?,?,design_item_id,?,cast(? AS jsonb),'REMAPPED',? FROM design_item_version WHERE id=?
+                """, nextBaseline, project.projectId(), v2, locator, v1, second);
+        assertThat(nextBaseline).isNotEqualTo(oldBaseline);
+
+        // 현재 기준: 응답이 v2 로 보이는 항목은 v2 로 걸러지고, 옛 v1 로는 걸러지지 않는다.
+        assertThat(queries.list(leader, project.projectId(), "APPROVED", null, v2, null, 20).items())
+                .extracting(DesignItemResponse::id).containsExactly(Long.toString(second));
+        assertThat(queries.list(leader, project.projectId(), "APPROVED", null, v1, null, 20).items())
+                .extracting(DesignItemResponse::id).containsExactly(Long.toString(first));
+        // 처음 기준에 고정된 cursor 로 이어 읽으면 그 기준에는 없던 v2 출처가 보이지 않는다.
+        var rest = queries.list(leader, project.projectId(), "APPROVED", null, null, pinned.nextCursor(), 20).items();
+        assertThat(rest).extracting(DesignItemResponse::id).containsExactly(Long.toString(second));
+        assertThat(rest.getFirst().source().documentVersionId()).isEqualTo(Long.toString(v1));
+    }
+
+    private long documentVersion(long document, int versionNo) {
+        return jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text)
+                VALUES(?,?,'DRAFT',?,'hash','text') RETURNING id
+                """, Long.class, document, versionNo, "q" + document + "-" + versionNo + ".md");
+    }
+
     private long publishFixture(int versionNo, long... versions) {
         long baseline = jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,?,?) RETURNING id",
                 Long.class, project.projectId(), versionNo, project.leaderAccountId());

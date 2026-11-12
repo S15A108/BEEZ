@@ -26,6 +26,8 @@ import tools.jackson.databind.json.JsonMapper;
 /** Actual DB and unified worker; search and AI are controlled test doubles. */
 class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final String SELECTION_TRUNCATED =
+            "SELECTION_TRUNCATED: 직접 일치 후보 중 설계 9건, 원문 12건이 직접 선택 상한으로 제외됐습니다.";
     @Autowired DataSource dataSource;
     @Autowired ValidationWorker worker;
     @Autowired ValidationAcceptService acceptance;
@@ -109,6 +111,8 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
         assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
                 .param("v", validation).query(String.class).single()).isEqualTo("HUMAN_REVIEW");
+        assertThat(api.jdbc.sql("select summary::text from validation where id=:v").param("v", validation).query(String.class).single())
+                .contains("EVIDENCE_COLLECTION_FAILED", "search_results_truncated");
         assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")
                 .param("v", validation).query(String.class).optional()).isEmpty();
     }
@@ -336,8 +340,9 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(Integer.class).single()).isZero();
     }
 
-    @Test void currentContextPacketWithConstraintsCanPass() throws Exception {
-        long[] task = queuedTaskWithPacket("{\"constraints\":[\"접근 로그 기록\"],\"unresolved\":[]}");
+    @Test void contextPacketSelectionTruncationAloneDoesNotBlockPass() throws Exception {
+        long[] task = queuedTaskWithPacket(JSON.writeValueAsString(Map.of(
+                "constraints", List.of("접근 로그 기록"), "unresolved", List.of(SELECTION_TRUNCATED))));
         long validation = Long.parseLong(acceptance.accept(CallerContext.human(owner), project, task[0], task[1],
                 (int) task[2]).validation().id());
         AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
@@ -351,12 +356,20 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         assertThat(sent.get()).isNotNull();
         assertThat(sent.get().get("context_packet_constraints")).isEqualTo(List.of("접근 로그 기록"));
         assertThat(sent.get().get("unresolved")).isEqualTo(List.of());
+        long packet = api.jdbc.sql("select context_packet_id from task_plan_revision where id=:r")
+                .param("r", task[1]).query(Long.class).single();
+        var revision = (Map<?, ?>) sent.get().get("plan_revision");
+        assertThat(((Map<?, ?>) revision.get("plan")).get("context_packet_id")).isEqualTo(Long.toString(packet));
+        assertThat(api.jdbc.sql("select content->'unresolved'->>0 from dev_context_packet where id=:p")
+                .param("p", packet).query(String.class).single()).isEqualTo(SELECTION_TRUNCATED);
         assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
                 .query(String.class).single()).isEqualTo("PASS");
     }
 
-    @Test void contextPacketUnresolvedCannotPassEvenIfAnalyzerClaimsComplete() throws Exception {
-        long[] task = queuedTaskWithPacket("{\"constraints\":[],\"unresolved\":[\"접근 정책 확인\"]}");
+    @Test void genuineContextPacketGapStillRequiresReviewWithSelectionTruncation() throws Exception {
+        String gap = "INSUFFICIENT_EVIDENCE: 접근 정책 확인";
+        long[] task = queuedTaskWithPacket(JSON.writeValueAsString(Map.of(
+                "constraints", List.of(), "unresolved", List.of(SELECTION_TRUNCATED, gap))));
         long validation = Long.parseLong(acceptance.accept(CallerContext.human(owner), project, task[0], task[1],
                 (int) task[2]).validation().id());
         AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
@@ -369,7 +382,7 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         assertThat(worker.runOnce()).isTrue();
         assertThat(sent.get()).isNotNull();
         assertThat((List<String>) sent.get().get("unresolved"))
-                .singleElement().asString().contains("접근 정책 확인");
+                .singleElement().asString().endsWith(" " + gap);
         assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
                 .query(String.class).single()).isEqualTo("ERROR");
         assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")

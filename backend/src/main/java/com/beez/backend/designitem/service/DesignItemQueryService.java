@@ -111,7 +111,15 @@ public class DesignItemQueryService {
 
     private DesignItemResponse view(Map<String, Object> row) {
         DesignItemSourceResponse source = null;
-        if (row.get("source_document_version_id") != null) {
+        if (row.get("override_status") != null) {
+            // 문서가 바뀐 현재 기준에서는 항목 버전의 출처가 아니라 그 기준의 유효 출처를 보여 준다(-406).
+            var locator = object(row.get("override_locator"));
+            String location = Objects.toString(locator.get("location"), canonical(locator));
+            if ("NEEDS_CONFIRMATION".equals(row.get("override_status"))) location += " (출처 확인 필요)";
+            source = new DesignItemSourceResponse(row.get("override_document_id").toString(),
+                    row.get("override_document_version_id").toString(), ((Number) row.get("override_version_no")).intValue(),
+                    location);
+        } else if (row.get("source_document_version_id") != null) {
             var locator = row.get("source_locator") == null ? Map.<String, Object>of() : object(row.get("source_locator"));
             source = new DesignItemSourceResponse(row.get("source_document_id").toString(),
                     row.get("source_document_version_id").toString(), ((Number) row.get("source_version_no")).intValue(),

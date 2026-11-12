@@ -198,6 +198,32 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
     }
 
+    /** 출력 상한 잘림을 model_unavailable 로 접으면 장애로 보여 발행 후 분석이 같은 상한으로 재시도만 반복한다 (S15P31A108-402). */
+    @Test
+    void outputTruncationKeepsItsOwnCodeInsteadOfModelUnavailable() {
+        var snapshot = snapshot();
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(snapshot);
+        byte[] body = "{\"error\":{\"code\":\"model_output_truncated\"},\"usage\":[{\"request_key\":\"call-1\",\"failed\":true}]}"
+                .getBytes(StandardCharsets.UTF_8);
+        when(ai.changeImpact(any())).thenThrow(new RestClientResponseException("failed", 502,
+                "Bad Gateway", null, body, StandardCharsets.UTF_8));
+
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.AI_FAILED);
+        assertThat(outcome.errorCode()).isEqualTo("model_output_truncated");
+        assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
+        // 발행 후 분석: 잘림은 첫 시도에서만 한 번 더 시도하고(최종 FAILED 는 후속 발행 분석을 멈춤), 일시 장애는 횟수대로 재시도한다
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure(outcome.errorCode(), 1)).isTrue();
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure(outcome.errorCode(), 2)).isFalse();
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure("model_timeout", 3)).isTrue();
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure("model_unavailable", 3)).isTrue();
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure("invalid_output", 1)).isFalse();
+    }
+
     @Test
     void inputChangedDuringAiCallDoesNotReturnStaleAiResult() {
         var snapshot = snapshot();

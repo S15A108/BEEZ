@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.schemas.validation import ValidateRequest
-from app.services.llm_client import LLMClient, ProviderResponse
+from app.services.llm_client import LLMClient, LLMError, ProviderResponse
 from app.services.validation import (
     InvalidInput,
     analyze,
@@ -296,3 +296,54 @@ async def test_policy_analysis_uses_one_bounded_model_call():
     assert len(provider.requests) == 1
     assert provider.requests[0].max_attempts == 1
     assert provider.requests[0].model_options == {"max_completion_tokens": 4096}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reference", "reason"),
+    [
+        ("plan", "policy plan quote not in input"),
+        ("content", "policy content reference outside input"),
+    ],
+)
+async def test_policy_rejection_logs_specific_reason_without_input_or_output(
+    reference, reason, caplog
+):
+    body = request()
+    body["plan_revision"]["plan"]["goal"] = "private plan text"
+    result = complete()
+    item = result["policy_assessments"][0]
+    quote = (
+        item["plan_evidence"]
+        if reference == "plan"
+        else item["approved_content_refs"][0]
+    )
+    quote["quote"] = "private model text"
+
+    class Provider:
+        async def complete(self, model_request, *, timeout_seconds):
+            return ProviderResponse(json.dumps(result), model_request.model, 11, 7)
+
+    with (
+        caplog.at_level("WARNING", logger="app.services.validation"),
+        pytest.raises(LLMError) as caught,
+    ):
+        await analyze(
+            ValidateRequest.model_validate(body), LLMClient(Provider()), "test-model"
+        )
+
+    assert caught.value.code == "invalid_output"
+    payload = caught.value.to_api_dict()
+    assert payload["error"]["code"] == "model_unavailable"
+    [usage] = payload["usage"]
+    assert usage["failed"] is True
+    assert (usage["input_tokens"], usage["output_tokens"]) == (11, 7)
+    [record] = [
+        record for record in caplog.records if record.name == "app.services.validation"
+    ]
+    assert record.getMessage() == (
+        f"task validation answer rejected: {reason} (validation_id=601 attempt=1)"
+    )
+    assert record.exc_info is None
+    assert "private" not in caplog.text
+    assert "private" not in json.dumps(payload)

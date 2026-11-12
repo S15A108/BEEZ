@@ -315,7 +315,8 @@ public class ChangeDraftService {
         source.put("document_id", Long.toString(document));
         source.put("document_version_id", Long.toString(version));
         source.put("version_no", versionRow.get("version_no"));
-        source.put("location", location(item.get("source_locator")));
+        // 문서가 바뀌어 인용 줄을 옮기지 못한 항목(NEEDS_CONFIRMATION)의 옛 줄 번호는 새 문서에서 틀린 위치다 — 문서 전체로만 알린다(-406).
+        source.put("location", "NEEDS_CONFIRMATION".equals(item.get("source_status")) ? "원문 전체" : location(item.get("source_locator")));
         view.put("source", source);
         return view;
     }

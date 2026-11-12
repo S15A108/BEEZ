@@ -126,11 +126,14 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_READ_TIMEOUT` | | `50`·`55s` | 기본값. 문서 비비 검토의 제안 대화·직접 요청(DISCUSS·REQUEST)은 사용자 요청 안에서 기다린다. **대기 시간 사슬: 모델 호출 < backend 읽기 < nginx `/api/` 읽기 대기(60초)** 를 지킨다. nginx 값은 env 가 아니라 서버의 `dev.beez.ai.kr.conf` 의 `proxy_read_timeout` 이다(S15P31A108-382·-391) |
 | `BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT`·`BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT_WINDOW` | | `6`·`1m` | 기본값. MCP-01 `get_development_context` 호출 한도((에이전트 토큰, 프로젝트)마다 창 안 횟수, 넘으면 429 `rate_limited`). 호출마다 유료 임베딩이 나가 반복 호출을 막는다. 메모리에만 세므로 재시작하면 처음부터다. `infra/compose.yaml` 이 backend 로 전달한다(S15P31A108-399) |
 | `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT` | | `40s` | 기본값. MCP-01 `get_development_context` 의 AI 컨텍스트 선택 호출 읽기 제한(S15P31A108-399). ai `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` 보다 길게 둔다. `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다. 질의 임베딩은 이 값이 아니라 `AI_READ_TIMEOUT` 을 쓴다. `/mcp` 는 nginx 대기가 1시간이라 60초 사슬과 무관하지만 에이전트가 기다리는 동기 호출이다. `infra/compose.yaml` 이 backend 로 전달한다 |
+| `BEEZ_CHANGE_IMPACT_READ_TIMEOUT` | | `75s` | 기본값. 변경 영향 분석(재분석·발행 후 분석)의 AI 읽기 제한. ai `IMPACT_LLM_TIMEOUT_SECONDS`(60초)보다 길게 둔다. 실행 lease 는 이 값 + 연결 제한 + 1분이다. 백그라운드 실행이라 nginx 와 무관하다. **단위를 붙여 쓴다**(예 `90s`) — `90`만 쓰면 Spring 이 90ms 로 읽고, `AI_READ_TIMEOUT` 보다 짧으면 그 값(20초)이 적용돼 정상 분석을 먼저 끊는다. `infra/compose.yaml` 이 backend 로 전달한다(S15P31A108-402) |
 | `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
 | `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
-| `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
-| `VALIDATION_BUDGET_MS` | | `15000`. `AI_READ_TIMEOUT` 보다 짧게 | 기본값 |
+| `VALIDATION_BUDGET_MS` | | `30000` | `infra/compose.yaml`이 backend에 전달. AI에 보내는 검증 실행 예산(ms, 1000~60000). 검증 전용 읽기 제한보다 짧게 둔다. 서버 env 파일에 이전 값 `15000`이 남아 있다면 기본값을 쓰려면 제거한다. |
+| `VALIDATION_READ_TIMEOUT` | | `40s` | `infra/compose.yaml`이 backend에 전달. 검증 워커의 `/v1/validate` 읽기 제한. 단위를 붙여 쓴다(예 `50s`). 근거 검색 임베딩은 공통 `AI_READ_TIMEOUT`을 쓴다. 검증은 비동기라 nginx 읽기 제한을 거치지 않는다. |
+| `VALIDATION_LEASE_SECONDS` | | `120` | `infra/compose.yaml`이 backend에 전달. 근거 수집, AI 연결·읽기, 결과 저장에 필요한 시간(초)을 포함한다. 읽기 제한을 늘릴 때 리스 여유도 확인한다. |
+| `MEETING_SUMMARY_READ_TIMEOUT` | | `45s` | `infra/compose.yaml`이 backend에 전달. 회의 정리의 `/v1/bee/meeting-analysis` 읽기 제한. `45s`처럼 단위를 붙인다. 동기 요청이므로 AI 모델 제한보다 길게 두고, nginx `/api/` 대기 60초 안에 요청 준비와 결과 저장까지 끝날 여유를 둔다. 0 이하 또는 60초 이상이면 backend 기동에 실패한다. |
 | `VALIDATION_FAKE_ANALYZER` | | `false` | env 파일, 없으면 `false` |
 | `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 넘기지 않음 (프로필 기본값) |
 | `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | env 파일 (위 표). prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |
@@ -172,9 +175,11 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `ASSIGNMENT_RECOMMENDATION_ENABLED` | | 역할 분담 추천(#136). 기본 `false`; BE 계약 합의 후에만 켠다. compose 가 ai 에 전달한다 |
 | `ASSIGNMENT_RECOMMENDATION_MAX_BODY_BYTES`·`ASSIGNMENT_RECOMMENDATION_TIMEOUT_SECONDS`·`ASSIGNMENT_RECOMMENDATION_OUTPUT_TOKEN_LIMIT` | | 역할 추천 요청 크기·모델 시간·출력 토큰 한도. 기본 2 MiB·15초·4096; 직접 실행 환경에서 설정한다 |
 | `BEE_CHAT_ENABLED`·`BEE_CHAT_*` | | 비비 질문(#135, BEE-A01). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
+| `MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS` | | 회의 분석(AI-A08) 모델 호출 제한. 기본 `35`초, 허용 범위는 0초 초과 60초 미만이다. 잘못된 값은 502 `model_unavailable`로 처리한다. Compose가 ai에 전달한다. 모델 호출 제한과 backend `MEETING_SUMMARY_READ_TIMEOUT`을 함께 조정하고 모델 호출 쪽을 더 짧게 둔다. |
 | `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 502 `model_unavailable`. compose 가 ai 에 전달한다 — 주소는 GMS 주소가 기본, 키·모델은 빈 값이다. 키가 비고 주소가 GMS 기본 주소와 똑같으면 `GMS_KEY` 를 쓰고, 다른 주소면 호출하지 않는다(-357) |
 | `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | 요청한 모델 이름 말고도 받아들일 응답 모델 이름(쉼표). 기본 빈 값. compose 가 ai 에 전달한다 |
-| `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음. compose 가 전달하지 않는다 |
+| `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT` | | 영향 분석 모델 호출 시간(초, 숫자만 — 예 `90`, **0 초과 120 이하**)·출력 토큰 상한(추론 토큰 포함, 1~4096). 기본 `60`·`4096`. 범위를 벗어나면 ai 가 모델을 부르지 않고 모든 영향 분석이 502 `model_unavailable` 로 실패한다. compose 가 ai 에 전달한다. 시간을 올리면 backend `BEEZ_CHANGE_IMPACT_READ_TIMEOUT` 도 그보다 길게 함께 올린다(S15P31A108-402) |
+| `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 출력 옵션 이름·응답 형식·요청 크기. 기본값 있음. compose 가 전달하지 않는다 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
 | `GMS_EMBEDDING_DIMENSION` | | 기본 `1024`. backend(1024)와 같아야 합니다 |
 | `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
@@ -210,10 +215,18 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
 - 영향 분석은 주소·키 줄을 쓰지 않습니다. 주소 기본값이 GMS 주소이고, 키가 비면 ai가 그 주소에서만
   `GMS_KEY`를 씁니다. `IMPACT_LLM_ENDPOINT`를 굳이 적으면 기본값과 **글자 하나까지 같아야** 합니다. 대소문자나
   끝 `/`만 달라도 다른 주소로 보고 공용 키를 쓰지 않아 502 `model_unavailable`이 납니다.
-- 영향 분석의 모델 시간 제한은 `IMPACT_LLM_TIMEOUT_SECONDS` 기본 15초이고, backend 읽기 제한(`AI_READ_TIMEOUT`
-  20초)보다 짧아야 합니다. 같은 날 비비 질문의 `gpt-6-luna` 호출은 11.7~17.9초 걸렸습니다. 켠 뒤 영향 분석이
-  `model_timeout`으로 실패하면 `llm_usage.latency_ms`로 실제 지연을 보고, 두 값을 함께 올립니다. 이 변수는 지금
-  compose가 전달하지 않으므로 올리려면 compose에 추가해야 합니다.
+- 영향 분석의 모델 시간 제한은 `IMPACT_LLM_TIMEOUT_SECONDS` 기본 60초, 출력 상한은 `IMPACT_LLM_OUTPUT_TOKEN_LIMIT`
+  기본 4,096(허용 최대, 추론 토큰 포함)입니다. backend는 영향 분석 전용 읽기 제한 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`
+  (기본 75초)을 쓰며, 모델 시간 제한보다 길어야 합니다. 세 변수 모두 compose가 전달하므로 아래 명령의 `vals`에
+  적으면 반영됩니다(S15P31A108-402). 기본값 그대로면 쓸 필요가 없습니다. 시간을 올릴 때는 두 값을 함께 적고,
+  backend 값에는 단위를 붙입니다. 예: `IMPACT_LLM_TIMEOUT_SECONDS=90`과 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT=105s`.
+  `BEEZ_CHANGE_IMPACT_READ_TIMEOUT=105`처럼 단위를 빼면 Spring이 105ms로 읽어 공통 제한 20초가 적용됩니다.
+  `IMPACT_LLM_TIMEOUT_SECONDS`는 **최대 120초**(0 초과 120 이하)입니다. `150`처럼 넘기면 compose에는 들어가지만 ai가
+  설정을 거절해 모든 영향 분석이 502 `model_unavailable`로 실패합니다. 출력 상한도 4,096을 넘기면 같습니다.
+- 출력 상한 1,024이던 11-11에는 설계 40개 프로젝트(입력 약 1.1만 토큰)에서 영향 분석이 4번 모두 출력 1,024토큰에서 끊겨
+  실패했습니다(약 12초). 잘림은 이제 `model_unavailable`이 아니라 `model_output_truncated`로 남고, ai 로그에
+  `impact_completion … finish_reason=length` 한 줄이 WARNING으로 찍힙니다(정상 호출의 같은 줄은 INFO라 서버 로그에 안 보입니다). `model_timeout`이면 `llm_usage.latency_ms`로 실제 지연을
+  보고 모델 시간 제한과 backend 읽기 제한을 함께 올립니다.
 - **켜도 남는 실패(2026-11-10 기준)**: 보완 질문·설계 초안은 ai가 400 `validation_failed`로 거절합니다(BE가
   해시를 `sha256:` 접두어째 보냄, S15P31A108-373). 비비 질문은 모델이 답해도 ai 검증에서 거절돼 템플릿으로
   끝납니다(S15P31A108-374). 이 둘은 env로 고칠 수 없으니 설정을 다시 의심하지 않습니다.
@@ -229,8 +242,8 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
 DESIGN_DRAFTS_ENABLED=true
 BEE_CHAT_ENABLED=true
 IMPACT_LLM_MODEL=gpt-6-luna'
-  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL)=[A-Za-z0-9._-]*$' \
-    && { echo "vals 형식이 다름(위 네 이름=값만) — 바꾸지 않음"; exit 1; }
+  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL|IMPACT_LLM_TIMEOUT_SECONDS|IMPACT_LLM_OUTPUT_TOKEN_LIMIT|BEEZ_CHANGE_IMPACT_READ_TIMEOUT)=[A-Za-z0-9._-]*$' \
+    && { echo "vals 형식이 다름(아래 허용 이름=값만) — 바꾸지 않음"; exit 1; }
   keys=$(printf '%s\n' "$vals" | cut -d= -f1 | paste -sd'|')
   [ -n "$keys" ] || { echo "vals 가 비었음 — 바꾸지 않음"; exit 1; }
   [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
@@ -246,13 +259,16 @@ IMPACT_LLM_MODEL=gpt-6-luna'
 
 - `vals`에 적은 이름만 옛 줄을 지우고 끝에 새로 씁니다. 적지 않은 스위치는 그대로 둡니다(이미 켠 기능을 빼고
   돌려도 꺼지지 않습니다). 여러 번 돌려도 줄이 겹치지 않습니다.
-- `vals`에 네 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다.
+- `vals`에 허용한 일곱 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다. 위 네 스위치에 더해
+  영향 분석 한도 `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_CHANGE_IMPACT_READ_TIMEOUT`을
+  받습니다(기본값으로 충분하면 적지 않습니다). 마지막 값은 backend 설정이라 적용할 때 backend도 다시 만들어집니다.
 - 원본이 개행 없이 끝나면 한 줄을 먼저 넣습니다. 그러지 않으면 새 줄이 마지막 줄 뒤에 붙어 두 값이 함께 깨집니다.
 - 실패하면 `jenkins can read`를 찍지 않습니다. 이 줄이 보여야 반영된 것입니다.
 - 끄려면 그 줄의 값을 `false`(모델은 빈 값, `IMPACT_LLM_MODEL=`)로 바꿔 같은 명령을 돌립니다. 줄을 지우면 그
   스위치는 건드리지 않습니다.
-- 넣은 값은 **다음 배포 때** ai 컨테이너가 다시 만들어지면서 적용됩니다. 바로 적용하려면 지금 떠 있는 SHA로
-  [손으로 배포](cd.md#손으로-배포롤백)합니다(ai만 다시 만들어집니다).
+- 넣은 값은 **다음 배포 때** 컨테이너가 다시 만들어지면서 적용됩니다. 바로 적용하려면 지금 떠 있는 SHA로
+  [손으로 배포](cd.md#손으로-배포롤백)합니다(값이 바뀐 컨테이너만 다시 만들어집니다 — 보통 ai, `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`을
+  바꿨으면 backend도).
 
 적용됐는지는 컨테이너의 값(비밀 아님)과 실제 호출로 봅니다.
 

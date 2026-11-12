@@ -3,6 +3,7 @@ package com.beez.backend.meeting.service;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.meeting.dto.MeetingRef;
 import com.beez.backend.meeting.repository.MeetingRepository;
+import com.beez.backend.meeting.repository.MeetingRepository.ConflictFinding;
 import com.beez.backend.meeting.repository.MeetingRepository.TaskState;
 import com.beez.backend.meeting.service.MeetingOpenService.ConflictMeetingCommand;
 import com.beez.backend.validation.event.ConflictFindingsSaved;
@@ -78,12 +79,15 @@ class ConflictMeetingListener {
         Map<Long, TaskState> states = meetings.taskStates(event.projectId(), ids);
         for (ConflictPairs.Pair pair : ConflictPairs.select(event.taskId(), event.relatedTaskIds(), states)) {
             String summary = "'" + pair.task().title() + "' 와 '" + pair.related().title() + "' 가 서로 충돌해요";
-            String brief = brief(summary, meetings.conflictFindingMessages(event.validationId(), pair.related().id()));
+            List<ConflictFinding> findings = meetings.conflictFindings(event.projectId(), event.validationId(),
+                    pair.task().id(), pair.related().id(), event.analyzedRelatedPlans().get(pair.related().id()));
+            String brief = brief(summary, findings.stream().map(ConflictFinding::message).toList());
             List<MeetingRef> refs = new ArrayList<>();
             refs.add(new MeetingRef("TASK", String.valueOf(pair.task().id()), pair.task().title()));
             refs.add(new MeetingRef("TASK", String.valueOf(pair.related().id()), pair.related().title()));
             opener.openForConflict(new ConflictMeetingCommand(event.projectId(),
-                    List.of(pair.task().id(), pair.related().id()), summary, brief, refs, List.of()));
+                    List.of(pair.task().id(), pair.related().id()), summary, brief, refs, List.of(),
+                    ConflictGuidanceBuilder.build(event.validationId(), findings)));
         }
     }
 }

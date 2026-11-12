@@ -92,7 +92,7 @@ class DirectOwnerQuery {
             var documentRows = jdbc.sql("""
                     SELECT bd.document_id, bd.document_version_id, EXISTS (
                         SELECT 1 FROM baseline_item bi
-                        JOIN design_item_version dv ON dv.id=bi.design_item_version_id
+                        JOIN baseline_item_effective_source dv ON dv.baseline_id=bi.baseline_id AND dv.design_item_id=bi.design_item_id
                         WHERE bi.project_id=bd.project_id AND bi.baseline_id=bd.baseline_id
                           AND dv.source_document_version_id=bd.document_version_id
                     ) AS mapped
@@ -145,7 +145,7 @@ class DirectOwnerQuery {
                        ref.design_item_version_id, bi.design_item_version_id AS baseline_item_version_id,
                        bd.document_id, bd.document_version_id
                   FROM baseline_item bi
-                  JOIN design_item_version dv ON dv.id=bi.design_item_version_id
+                  JOIN baseline_item_effective_source dv ON dv.baseline_id=bi.baseline_id AND dv.design_item_id=bi.design_item_id
                   LEFT JOIN baseline_document bd ON bd.project_id=bi.project_id AND bd.baseline_id=bi.baseline_id
                                                AND bd.document_version_id=dv.source_document_version_id
                   JOIN task_plan_design_ref ref ON ref.design_item_id=bi.design_item_id

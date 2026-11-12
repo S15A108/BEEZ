@@ -2,6 +2,7 @@ package com.beez.backend.meeting.service;
 
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.designitem.support.DesignJson;
+import com.beez.backend.meeting.dto.MeetingConflictGuidance;
 import com.beez.backend.meeting.dto.MeetingRef;
 import com.beez.backend.meeting.dto.MeetingResponse;
 import com.beez.backend.meeting.repository.MeetingRepository;
@@ -42,7 +43,12 @@ public class MeetingOpenService {
 
     /** extraParticipants 는 충돌한 설계 항목의 담당 영역 팀원처럼 호출자만 아는 대상. 이 서비스는 계산하지 않는다 */
     public record ConflictMeetingCommand(long projectId, List<Long> taskIds, String conflictSummary, String briefText,
-                                         List<MeetingRef> briefRefs, List<ParticipantSeed> extraParticipants) {
+                                         List<MeetingRef> briefRefs, List<ParticipantSeed> extraParticipants,
+                                         MeetingConflictGuidance guidance) {
+        public ConflictMeetingCommand(long projectId, List<Long> taskIds, String conflictSummary, String briefText,
+                                      List<MeetingRef> briefRefs, List<ParticipantSeed> extraParticipants) {
+            this(projectId, taskIds, conflictSummary, briefText, briefRefs, extraParticipants, null);
+        }
     }
 
     public record OpenResult(boolean created, MeetingResponse meeting) {
@@ -85,7 +91,8 @@ public class MeetingOpenService {
 
         String summary = command.conflictSummary() == null || command.conflictSummary().isBlank()
                 ? null : command.conflictSummary().strip();
-        Optional<Long> id = meetings.insertMeeting(projectId, title(summary), summary, key, new ArrayList<>(taskIds));
+        String guidance = command.guidance() == null ? null : DesignJson.JSON.writeValueAsString(command.guidance());
+        Optional<Long> id = meetings.insertMeeting(projectId, title(summary), summary, key, new ArrayList<>(taskIds), guidance);
         if (id.isEmpty()) {
             // 동시에 같은 묶음을 연 요청이 먼저 커밋했다
             MeetingRow winner = meetings.findOpenByTaskSet(projectId, key).orElseThrow();

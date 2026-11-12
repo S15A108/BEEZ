@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS = 35.0
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -40,9 +42,11 @@ class Settings(BaseSettings):
     impact_llm_api_key: SecretStr | None = None
     impact_llm_model: str | None = None
     # Parse per feature so a bad impact-only setting cannot disable retrieval.
-    impact_llm_timeout_seconds: str = "15"
+    # 설계 40개 규모 실측(S15P31A108-402): 입력 약 1.1만 토큰에서 1,024 출력이 추론 토큰에 먹혀 잘렸다.
+    # 출력은 허용 상한 4,096, 시간은 그 길이를 다 써도 끝나게 60초. BE 영향 분석 읽기 제한(75초)보다 짧게 둔다.
+    impact_llm_timeout_seconds: str = "60"
     impact_llm_allowed_response_models: str = ""
-    impact_llm_output_token_limit: str = "1024"
+    impact_llm_output_token_limit: str = "4096"
     impact_llm_output_token_parameter: str = "max_completion_tokens"
     impact_llm_response_format: str = "json_object"
     impact_max_body_bytes: str = "262144"
@@ -118,6 +122,12 @@ class Settings(BaseSettings):
     # sentence against the quotes it cites (catches a flipped subject or
     # negation); "tokens": the deterministic checks only, one call.
     bee_chat_claim_verification: str = "entailment"
+
+    # Parsed per request. The model limit must stay below the backend meeting
+    # analysis read timeout and the 60-second nginx read timeout.
+    meeting_analysis_llm_timeout_seconds: str = str(
+        DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS
+    )
 
     # #136 is opt-in until the BE has agreed to pass workload snapshots and
     # handle the proposed alternative-candidate fields.

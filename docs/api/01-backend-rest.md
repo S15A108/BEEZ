@@ -137,6 +137,8 @@
 - [TSK-A05 작업 계획 리비전 이력](#tsk-a05)
 - [TSK-A06 작업 담당자 변경](#tsk-a06)
 - [TSK-A09 승인 설계로 작업 생성·배정](#tsk-a09)
+- [TSK-A10 AI 계획 수정안 생성](#tsk-a10)
+- [TSK-A11 AI 계획 수정안 승인](#tsk-a11)
 - [VAL-A01 작업 검증 접수](#val-a01)
 - [VAL-A02 검증 결과 조회](#val-a02)
 - [VAL-A03 작업 검증 이력](#val-a03)
@@ -8026,7 +8028,7 @@ HTTP `200`.
 없음.
 #### Response
 
-HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RUNNING이 있으면 409 analysis_running, 분석할 수 없는 상태는 409 proposal_not_analyzable, 기준 변경은 409 baseline_changed다. 만료 RUNNING을 FAILED(analysis_interrupted)로 닫고 새 run을 만든다. 포화는 접수 후 FAILED(analysis_capacity)로 기록한다. AI 실패에도 explicit은 보존하며, 저장 트랜잭션에서 프로젝트 잠금과 입력 지문을 재검사한다. 발행 후 분석 실행은 #227의 별도 계약이다.
+HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RUNNING이 있으면 409 analysis_running, 분석할 수 없는 상태는 409 proposal_not_analyzable, 기준 변경은 409 baseline_changed다. 만료 RUNNING을 FAILED(analysis_interrupted)로 닫고 새 run을 만든다. 포화는 접수 후 FAILED(analysis_capacity)로 기록한다. AI 실패에도 explicit은 보존하며, 저장 트랜잭션에서 프로젝트 잠금과 입력 지문을 재검사한다. AI 답이 출력 상한에 끊기면 FAILED(`model_output_truncated`)로 남겨 일반 장애(`model_unavailable`)와 가린다. 발행 후 분석은 잘림이면 첫 시도에서만 한 번 더 시도하고(코드는 그대로 기록), 두 번째도 끊기면 FAILED(`model_output_truncated`)로 닫는다. 최종 FAILED는 같은 프로젝트의 후속 발행 분석을 선행 규칙으로 멈추게 하기 때문이다. `model_timeout`·`model_unavailable`은 재시도 정책 횟수(최대 4회)대로 다시 시도한다(S15P31A108-402). AI 호출 읽기 제한은 영향 분석 전용 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`(기본 75초, AI 모델 제한 60초보다 길게)이고 실행 lease도 이 값으로 잡는다. 발행 후 분석 실행은 #227의 별도 계약이다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -8587,7 +8589,7 @@ HTTP `200`.
 - 다른 키·보존기간 경과 후에도 expected_base_baseline_id·expected_revision·expected_snapshot_hash가 모두 같고 이미 PUBLISHED면 기존 발행 baseline과 현재 제안 조회를 반환한다. 기대값 불일치는 409 version_conflict다. 후속 제안이 발행되어 현재 기준이 달라져도 기존 발행 결과를 반환하며 발행·관계·포트를 다시 실행하지 않는다. 이 분기는 현재 기준 충돌 검사보다 먼저 처리한다. D7 구현 경계는 Q03이다.
 - 현재 구현에서 requires_refresh는 제안의 base_baseline_id와 current_baseline_id의 비교값이다. 발행 직후에도 true일 수 있으며 PUBLISHED 재요청의 실패 조건으로 쓰지 않는다.
 - 새 항목 버전의 created_by는 현재 제출 리비전의 submitted_by다. submitted_token_id가 있으면 origin=AI_PROPOSED, 없으면 HUMAN이며 승인자는 approval.decided_by·baseline.published_by로 별도 기록한다. 최초 제출과 재제출의 채널이 달라도 현재 리비전 기준을 사용한다.
-- UPDATE의 source_document_version_id·source_locator는 기존 근거 원문을 보존한다. 같은 제안에서 문서가 바뀌어도 위치가 새 문서에 유효하다는 보장이 없어 자동 치환하지 않는다. 출처 교체는 명시적 입력·검증 계약을 추가해야 한다.
+- 항목 버전의 source_document_version_id·source_locator는 승인 뒤 불변이다. UPDATE도 기존 값을 복사하며 자동 치환하지 않는다. 대신 같은 발행 트랜잭션에서 새 기준의 **유효 출처**를 `baseline_item_source`에 INSERT로 기록한다(S15P31A108-406). 직전 기준의 유효 출처 문서가 이 발행으로 새 버전이 되면 옛·새 본문의 줄 diff를 구해, 인용한 줄이 글자 그대로 새 문서에 연속해 있을 때만 새 줄 번호와 `location`(끝의 `L시작-L끝` 또는 `N행`)으로 옮긴다(`REMAPPED`). 인용 줄이 수정·삭제·삽입됐거나, 같은 줄 묶음이 여러 곳이라 자리를 증명할 수 없거나, 인용 위치의 소속 제목이 바뀌었거나, 줄 범위가 없는 옛 위치이면 옮기지 않고 문서 버전만 새 버전으로 두어 `NEEDS_CONFIRMATION`으로 표시한다(옛 줄 번호는 보존). 이 발행으로 바뀌지 않은 문서에서 나온 항목은 직전 기준의 유효 출처를 그대로 이어받는다. 검증 근거 수집·영향 분석 입력·담당자 추천·문서 수정 초안·검색·설계 항목 조회는 항목 버전이 아니라 이 기준의 유효 출처를 읽는다. `NEEDS_CONFIRMATION` 항목은 검증 근거 수집에서 쓸 수 없는 근거로 보아 `source_confirmation_required`로 끝난다. 출처 위치를 정정하는 경로는 후속 작업이다.
 - 문서별 승인 API는 기준 발행 이후 신규 결정을 change_proposal_required로 거부한다. 이미 완료한 결정의 같은 입력 재요청만 기존 결과를 반환하므로 변경 제안의 문서 승인을 우회하지 않는다.
 - 최종 문서·항목 참조를 계산한 뒤 새 기준에 한 번씩 INSERT한다. 이전 기준 참조는 변경하지 않는다. UPDATE 항목 번호는 전체 버전 max+1, CREATE는 1이며 RETIRE는 retired_at을 기록하고 새 기준에서 제외한다. 과거 기준의 참조와 본문은 보존한다.
 - (BE 구현, -163) ValidationImpactPort 의 실제 구현은 `PublicationImpactAdapter` 다. 발행 트랜잭션 안에서 프로젝트 행을 먼저 잠그고(상태 보고·계획 변경·검증 반영과 같은 순서), 바뀐 항목(수정·폐기)의 변경 전 버전 **또는 그보다 옛 버전**을 validation_design_ref 에 가진 검증을 끝난 것(PASS·NEEDS_*)·도는 것(NOT_RUN·RUNNING) 모두 STALE(`DESIGN_PUBLISHED`)로 바꾸고 대기 job 은 취소한다(작업 상태·현재 계획으로 거르지 않음). 그 버전을 현재 계획이 참조하는 IN_PROGRESS 작업만 WAITING(REVALIDATION). 무효화된 검증이 delta 완료 보고의 DELTA 였고 작업이 이 발행 전부터 WAITING(REVALIDATION) 이었으면 새 기준으로 새 DELTA 검증을 서버가 접수한다(계획이 옛 버전을 참조하므로 보통 규칙으로 바로 NEEDS_INPUT). 문서만 바뀐 발행(바뀐 항목 없음)은 아무것도 하지 않는다. 미리보기는 같은 계산을 쓰기·잠금 없이 한다. 담당자 알림(REVALIDATION_REQUIRED)은 알림 모듈(-181) 연결 뒤 같은 트랜잭션에서 요청한다. 197의 PostPublishAnalysisIntake는 변경 발행을 PENDING으로, 최초 발행을 NOT_EVALUATED로 접수하며 발행 후 분석 실행은 후속 작업이다. 포트 예외·멱등 응답 저장 실패도 전체 롤백한다.
@@ -11018,6 +11020,7 @@ HTTP `202`.
 
 - ERROR 검증 중 현재 실패 attempt의 ERROR finding이 RETRY인 경우에만 같은 validation의 새 validation_run을 생성한다. 과거 실행의 RETRY finding으로 허용하지 않는다.
 - 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 409 invalid_transition이다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. FE 버튼 표시와 별개로 서버도 같은 제한을 검사한다.
+- 근거 수집 실패의 `execution_failure.retryable`이 false여도 409 `invalid_transition`을 반환한다. 예전 실행에 RETRY로 저장된 한도 오류도 원인 코드를 다시 판정한다.
 - STALE 또는 입력 변경은 새 검증을 생성해야 한다.
 - lease/attempt가 맞는 RUNNING 결과만 반영한다. 늦은 결과를 폐기하더라도 실제 비용은 기록한다.
 - 서버와 AI는 스스로 재시도하지 않는다. 이 API(와 MCP-14)를 부를 때만 새 시도를 연다 (03-ai-internal 재시도 규칙).
@@ -11578,7 +11581,7 @@ HTTP `200`.
 
 관련 요구사항: TRC-05, MCP-05  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 담당자 검토
+상태: 구현됨(S15P31A108-404)
 
 #### 인증
 
@@ -11601,9 +11604,9 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `q` | `string` | N | 검색어 |
+| `q` | `string` | N | 검색어. 요약(summary)에 들어간 글자를 대소문자 구분 없이 찾는다. 없거나 빈칸이면 보이는 기록 전부 |
 | `task_id` | `ID` | N | 작업 필터 |
-| `kind` | `DECISION\|PROGRESS\|ISSUE\|HANDOVER` | N | 기록 종류 |
+| `kind` | `DECISION\|PROGRESS\|ISSUE\|HANDOVER` | N | 기록 종류. 하나만 받는다 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -11645,6 +11648,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | `task_id`·`cursor`가 숫자가 아니거나 `kind` 값이 올바르지 않음 |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -11661,6 +11665,10 @@ HTTP `200`.
 
 - SHARED는 프로젝트 멤버에게, PRIVATE는 작성자에게만 보인다. 요약·개수에도 같은 권한을 적용한다.
 - 최신 기록 여부와 참조 설계 현재성을 따로 표시한다.
+- (BE 구현, -404) MCP `find_context`(MCP-05)와 같은 서비스·같은 규칙이다. 다른 점은 검색어가 선택이라는 것(웹 '작업 기록' 카드는 `task_id`만 보낸다)과 종류를 하나만 받는 것이다.
+- (BE 구현, -404) 최신순(id 내림차순)이고, 권한·작업·종류·검색어 조건을 건 뒤에 페이지를 자른다. 고쳐 쓴 기록은 모든 리비전이 나오고 `is_latest_revision`으로 구분한다.
+- (BE 구현, -404) 다른 프로젝트의 `task_id`로 거르면 오류 없이 0건이다. 프로젝트 멤버가 아니면 404다.
+- (BE 구현, -404) 목록 조회는 컨텍스트 조회 이력(CTX-A06)에 남기지 않는다. 상세(CTX-A03)만 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11676,7 +11684,7 @@ HTTP `200`.
 
 관련 요구사항: TRC-05, MCP-06  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 담당자 검토
+상태: 구현됨(S15P31A108-404)
 
 #### 인증
 
@@ -11756,7 +11764,6 @@ HTTP `200`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
@@ -11771,6 +11778,9 @@ HTTP `200`.
 #### 처리 규칙
 
 - SHARED는 활성 멤버, PRIVATE는 활성 멤버 중 작성자만 허용한다.
+- (BE 구현, -404) 남의 PRIVATE 기록은 403이 아니라 404다 — 기록이 있다는 것도 알리지 않는다(MCP `read_context`와 같음, -172 합의 3). 그래서 이 API는 403을 내지 않는다. 다른 프로젝트의 기록 번호도 404다.
+- (BE 구현, -404) 작성자 판정은 계정 기준이다. 에이전트로 남긴 내 PRIVATE 기록은 웹에서 내 계정으로 볼 수 있다.
+- (BE 구현, -404) 조회에 성공하면 컨텍스트 조회 이력(CTX-A06)에 `tool=CTX-A03`, `target_kind=CONTEXT_RECORD`로 한 건 남긴다. 거절된 조회는 남기지 않는다.
 - 개인 대화 원문 자동 수집이 아니라 명시적으로 제출한 기록만 반환한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -11787,7 +11797,7 @@ HTTP `200`.
 
 관련 요구사항: TRC-05, MCP-07  
 담당: BE: 변준성(저장·조회), 전진(MCP 계약) / AI: 박상은(검색·맥락) / FE: 박민용  
-상태: 담당자 검토
+상태: 담당자 검토 · BE 미구현(MCP `write_context`만 있음). 웹 작업 현황의 '기록 남기기'가 이 API를 부르므로 구현이 필요하다(-404 범위 밖, 별도 티켓)
 
 #### 인증
 
@@ -11930,7 +11940,7 @@ HTTP `201`.
 
 관련 요구사항: TRC-04·06  
 담당: BE: 변준성 / AI: 양지훈(근거 추천) / 박상은(검색) / FE: 박민용  
-상태: 담당자 검토
+상태: 담당자 검토 · BE 미구현. 화면에서 부르는 곳이 없어 지금은 필요하지 않다(-404 확인)
 
 #### 인증
 
@@ -12839,11 +12849,16 @@ HTTP `200`.
 | `origin` | `BEE_CONFLICT\|HUMAN` | Y | 연 주체 |
 | `task_ids` | `ID[]` | Y | 충돌한 작업(오름차순) |
 | `conflict_summary` | `string` | N | 비비가 정리한 충돌 한 줄 |
+| `conflict_guidance` | `object` | N | 자동 충돌 회의 개설 당시의 검증 근거. 구조화된 근거가 있는 회의의 상세 응답에 포함한다. |
 | `status` | `OPEN\|CLOSED` | Y | 회의 상태 |
 | `closed_at` | `Time` | N | 끝낸 시각 |
 | `closed_by` | `ID` | N | 끝낸 팀장 계정 |
 | `participants` | [Participant[]](00-common.md#schema-participant) | Y | 참여자 |
 | `created_at` | `Time` | Y | 생성 시각 |
+
+`conflict_guidance.validation_id`는 회의를 열게 한 검증이다. `tasks[]`에는 화면에 표시할 순서대로 작업 ID, 당시 제목, 확인 가능한 계획 리비전 ID와 번호를 담는다. `conflicts[]`에는 저장된 충돌 이유와 다음 행동, 관련 설계 항목·버전, 확인 가능한 원문 문서·버전·위치를 담는다. `differences[]`의 `path`, `first_value`, `second_value`는 그 두 계획의 변경안에서 확인된 차이다. 비교할 값이 없거나 같아도 같은 항목을 두 작업이 변경하려는 충돌은 성립할 수 있다.
+
+회의에서 작업 범위나 담당을 나눴다면 연결된 작업의 계획을 수정하고 다시 검증한다. 공통 문서의 변경에 합의했다면 회의 대화에 결정을 기록하고 비비 정리를 확인한다. 문서 변경을 포함한 회의 종료로 제안이 생기고, 팀장이 이를 승인·발행하면 새 문서 버전이 승인 기준에 반영된다. 구조화 설계 항목의 변경과 작업 영향 처리는 CHG-A09의 발행 규칙을 따른다.
 
 ```json
 {
@@ -15651,3 +15666,44 @@ HTTP `200`.
 [공통 규약·권한·담당자 목록](00-common.md)
 
 ---
+
+<a id="tsk-a10"></a>
+
+## TSK-A10. AI 계획 수정안 생성
+
+S15P31A108-400. 현재 작업 담당자인 사람만 호출한다. 작업·계획·검증은 서버가 조회하며 클라이언트가 수정된 계획을 보내지 않는다. 세션 인증과 일반 웹 CSRF 규칙을 따른다.
+
+### POST `/api/projects/{id}/tasks/{task_id}/plan-revision-proposals`
+
+요청 본문 `{}`. 현재 계획의 `NEEDS_INPUT` 또는 `NEEDS_REVIEW` 검증에 `FIX_PLAN` 항목이 있어야 한다. `DELTA`와 실행 오류는 대상이 아니다. 승인 문서를 검색하고 내부 [AI-A15](03-ai-internal.md#ai-a15)를 호출하여 **계획과 분리된 제안만 저장**한다.
+
+HTTP `200` 응답:
+
+| 필드 | 설명 |
+| --- | --- |
+| `id` | 저장된 제안 ID |
+| `baseline_id`, `source_validation_id` | 제안이 근거로 삼은 기준 설계와 검증 |
+| `expected_revision_no`, `expected_lock_version` | 원본 계획 번호와 작업 잠금 버전 |
+| `before_plan`, `proposed_plan` | 전체 `TaskPlanInput`. 목표·범위·접근 방법·완료 기준 이외 필드는 동일 |
+| `changes` | `{field, reason, finding_ids[]}`. 실제 변경된 칸을 빠짐없이 설명 |
+| `evidence` | `{field, document_id, document_type, document_version_id, version_no, location, quote}` 배열. 저장 원문과 대조한 인용 |
+| `expires_at` | 생성 시점부터 30분 뒤의 만료 시각 |
+
+초안 생성(TSK-A08)의 동시 호출·시간당 횟수 제한을 공유한다. 제안 생성 후 원본이나 기준이 바뀌었으면 저장하지 않고 `409 proposal_stale`을 반환한다. 변경할 내용이 없으면 `409 proposal_not_needed`, 문서가 부족하면 `409 insufficient_documents`, 변경 이유·인용 검증 실패는 `502 ai_invalid_output`이다. 문서 검색 및 AI 연결 오류는 기존 초안 생성 오류 계약을 따른다.
+
+<a id="tsk-a11"></a>
+
+## TSK-A11. AI 계획 수정안 승인
+
+### POST `/api/projects/{id}/tasks/{task_id}/plan-revision-proposals/{proposal_id}/apply`
+
+요청 본문 `{}`. 화면에서 변경 전후를 보여 주고 **승인하고 재검증**을 명시적으로 누른 때 호출한다. 서버가 저장한 제안만 적용할 수 있다.
+
+HTTP `200` 응답은 `{task: TaskDetail, validation: Validation}`이다. 새 리비전과 재검증 접수를 한 트랜잭션으로 처리하며, 접수 실패 시 리비전도 저장하지 않는다. 검증 결과는 `RUNNING`이거나 규칙 검사로 즉시 결정된 상태일 수 있다.
+
+- 현재 담당자이며 제안을 생성한 계정만 승인할 수 있다.
+- 원본 계획, 작업 잠금 버전, 현재 검증 및 검증 잠금 버전, 기준 설계가 같고 유효기간 안이어야 한다. 불일치·만료는 `409 proposal_stale`이다.
+- 같은 제안에 대한 반복 승인은 이미 접수한 검증을 반환한다. 응답을 잃었을 때 같은 제안 ID로 재시도한다.
+- 취소는 호출하지 않는다. 유효기간이 지난 미적용 제안은 적용할 수 없다.
+
+구현 경계와 근거 수집 오류의 별도 경로는 [설계 문서](../design/task-plan-revision-proposals-S15P31A108-400.md)를 참고한다.

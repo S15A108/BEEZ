@@ -3,6 +3,7 @@ package com.beez.backend.meeting;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.doAnswer;
 
 import com.beez.backend.ai.AiClient;
@@ -10,6 +11,7 @@ import com.beez.backend.changeproposal.dto.ProposalDtos.DocumentChange;
 import com.beez.backend.changeproposal.dto.ProposalDtos.Input;
 import com.beez.backend.changeproposal.service.ProposalCommandService;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.document.service.DocumentIndexWorker;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.meeting.dto.MeetingRef;
 import com.beez.backend.meeting.service.MeetingOpenService;
@@ -18,7 +20,9 @@ import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import java.io.IOException;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +42,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import tools.jackson.databind.JsonNode;
@@ -48,6 +53,10 @@ import tools.jackson.databind.ObjectMapper;
  * 핵심: 팀장·참여자만, 제안은 회의당 1건, 정리가 오래됐으면 회의를 열어 둔 채 제안을 만들지 않고, 종료로 문서·기준은 바뀌지 않는다.
  */
 @Import(MeetingCloseIntegrationTest.Support.class)
+@TestPropertySource(properties = {
+        "beez.document.embedding-profile=meeting-close-test",
+        "beez.document.embedding-model=meeting-close-test-model"
+})
 class MeetingCloseIntegrationTest extends IntegrationTestSupport {
     static final String ORIGIN = "http://localhost:5173";
     static final String TEXT = "# 초대\r\n초대는 3일 뒤 만료된다.\r\n링크는 한 번만 쓸 수 있다.\r\n마지막 줄\r\n";
@@ -78,6 +87,7 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
     @Autowired ObjectMapper json;
     @Autowired MeetingOpenService opener;
     @Autowired MemoryStorage storage;
+    @Autowired DocumentIndexWorker indexWorker;
     @MockitoSpyBean ProposalCommandService proposalCommands;
     @MockitoBean AiClient ai;
     TaskApiSupport api;
@@ -250,6 +260,154 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT change_proposal_id FROM meeting WHERE id=?", Long.class, meeting)).isEqualTo(Long.parseLong(proposalId));
     }
 
+    @Test void conflictDecisionPublishesTheCommonDocumentAfterApprovalAndCanBeRevalidated() {
+        String projectPath = "/api/projects/" + project;
+        String documentPath = projectPath + "/documents/" + document;
+        storage.objects.put("fixture.md", TEXT.getBytes(StandardCharsets.UTF_8));
+        JsonNode oldBaseline = successfulBody(api.get(projectPath + "/baselines/current", member), 200);
+
+        // Use a real rules-based collision to open this meeting. Only the first task's initial PASS is fixture data.
+        JsonNode first = createChangingTask(projectPath, "초대 링크 작업", member);
+        long firstPass = api.passValidation(first.path("id").asLong());
+        expect(api.post(projectPath + "/tasks/" + first.path("id").asString() + "/state-events", json.writeValueAsString(Map.of(
+                "event", "START", "plan_revision_id", planId(first), "expected_lock_version", first.path("lock_version").asInt(),
+                "validation_id", Long.toString(firstPass))), member), 200, null);
+        JsonNode second = createChangingTask(projectPath, "초대 만료 작업", leader);
+        JsonNode conflict = validateTask(projectPath, second, leader);
+        assertThat(conflict.path("status").asString()).isEqualTo("NEEDS_REVIEW");
+        assertThat(conflict.at("/findings/0/kind").asString()).isEqualTo("CONFLICT");
+        assertThat(conflict.at("/findings/0/related_task_id").asString()).isEqualTo(first.path("id").asString());
+        meeting = jdbc.queryForObject("SELECT meeting_id FROM meeting_task WHERE task_id=?", Long.class, second.path("id").asLong());
+        assertThat(successfulBody(api.get(meetingPath() + "/entries", member), 200).at("/items/0/kind").asString())
+                .isEqualTo("CONFLICT_BRIEF");
+
+        e1 = sendMeetingEntry("만료는 7일이 좋겠어요.", member);
+        e2 = sendMeetingEntry("동의합니다. 7일로 통일해요.", leader);
+        aiReturns(List.of(change(2, "초대는 3일 뒤 만료된다.\n", "초대는 7일 뒤 만료된다.")));
+        JsonNode closed = successfulBody(close(leader, summarize(e2), "publish-meeting-close"), 200);
+        assertThat(closed.at("/meeting/status").asString()).isEqualTo("CLOSED");
+        String proposalPath = projectPath + "/change-proposals/" + closed.path("change_proposal_id").asString();
+        JsonNode proposal = successfulBody(api.get(proposalPath, leader), 200).path("proposal");
+        long draft = proposal.at("/documents/0/proposed_document_version_id").asLong();
+        assertThat(proposal.path("status").asString()).isEqualTo("PROPOSED");
+        assertThat(proposal.path("meeting_id").asLong()).isEqualTo(meeting);
+        assertThat(jdbc.queryForMap("SELECT status,content_text FROM document_version WHERE id=?", draft))
+                .containsEntry("status", "DRAFT").containsEntry("content_text", APPLIED);
+        assertThat(successfulBody(api.get(projectPath + "/baselines/current", member), 200)).isEqualTo(oldBaseline);
+        assertThat(successfulBody(api.get(documentPath, member), 200).at("/version/content").asString()).isEqualTo(TEXT);
+
+        String approveBody = json.writeValueAsString(Map.of("expected_base_baseline_id", proposal.path("base_baseline_id").asString(),
+                "expected_revision", proposal.path("revision").asInt(), "expected_snapshot_hash", proposal.path("snapshot_hash").asString(),
+                "impact_override_reason", "문서 변경의 영향 범위를 팀장이 확인했습니다."));
+        expect(api.postWithHeaders(proposalPath + "/approve", approveBody, member,
+                "Origin", ORIGIN, "Idempotency-Key", "publish-meeting-member"), 403, null);
+        expect(api.postWithHeaders(proposalPath + "/approve", approveBody, leader,
+                "Origin", ORIGIN, "Idempotency-Key", "publish-meeting-pending-index"), 409, "analysis_not_completed");
+        stubDocumentIndexing();
+        assertThat(indexWorker.runOnce()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT index_status FROM document_processing WHERE document_version_id=?", String.class, draft))
+                .isEqualTo("READY");
+
+        JsonNode approved = successfulBody(api.postWithHeaders(proposalPath + "/approve", approveBody, leader,
+                "Origin", ORIGIN, "Idempotency-Key", "publish-meeting-approved"), 200);
+        assertThat(approved.at("/proposal/status").asString()).isEqualTo("PUBLISHED");
+        JsonNode currentBaseline = successfulBody(api.get(projectPath + "/baselines/current", member), 200);
+        assertThat(currentBaseline.path("version_no").asInt()).isEqualTo(2);
+        assertThat(currentBaseline.path("id")).isEqualTo(approved.at("/baseline/id"));
+        assertThat(currentBaseline.at("/documents/0/document_version_id").asLong()).isEqualTo(draft);
+        assertThat(currentBaseline.path("items")).isEqualTo(oldBaseline.path("items"));
+        assertThat(successfulBody(api.get(projectPath + "/baselines/1", member), 200)).isEqualTo(oldBaseline);
+        JsonNode currentDocument = successfulBody(api.get(documentPath, member), 200).path("version");
+        assertThat(currentDocument.path("id").asLong()).isEqualTo(draft);
+        assertThat(currentDocument.path("status").asString()).isEqualTo("APPROVED");
+        assertThat(currentDocument.path("content").asString()).isEqualTo(APPLIED);
+        assertThat(documentFile(documentPath, 2)).isEqualTo(APPLIED);
+        assertThat(documentFile(documentPath, 1)).isEqualTo(TEXT);
+
+        // Document-only publication preserves the previous validation; a fresh request checks the new baseline.
+        String oldValidationPath = projectPath + "/validations/" + conflict.path("id").asString();
+        assertThat(successfulBody(api.get(oldValidationPath, leader), 200).path("status").asString()).isEqualTo("NEEDS_REVIEW");
+        JsonNode rechecked = validateTask(projectPath, second, leader);
+        assertThat(rechecked.path("id")).isNotEqualTo(conflict.path("id"));
+        assertThat(rechecked.path("baseline_id")).isEqualTo(currentBaseline.path("id"));
+        assertThat(rechecked.path("status").asString()).isEqualTo("NEEDS_REVIEW");
+        assertThat(rechecked.at("/findings/0/kind").asString()).isEqualTo("CONFLICT");
+    }
+
+    private JsonNode createChangingTask(String projectPath, String title, long account) {
+        String refs = json.writeValueAsString(List.of(Map.of("design_item_id", api.designItemId("REQ-001").toString(),
+                "design_item_version_id", api.currentVersionId("REQ-001").toString(), "relation", "CHANGES",
+                "proposed_content", Map.of("description", "초대 만료 기간을 바꾼다"))));
+        return successfulBody(api.post(projectPath + "/tasks", api.planJson(title, refs, "[]")
+                .replace("\"no_contract_change\": true", "\"no_contract_change\": false"), account), 201);
+    }
+
+    private String planId(JsonNode task) {
+        return task.at("/current_plan_revision/id").asString();
+    }
+
+    private JsonNode validateTask(String projectPath, JsonNode task, long account) {
+        return successfulBody(api.post(projectPath + "/tasks/" + task.path("id").asString() + "/validations",
+                json.writeValueAsString(Map.of("plan_revision_id", planId(task), "expected_lock_version", task.path("lock_version").asInt())), account), 200);
+    }
+
+    private JsonNode successfulBody(HttpResponse<String> response, int status) {
+        expect(response, status, null);
+        return body(response);
+    }
+
+    private long sendMeetingEntry(String text, long account) {
+        return successfulBody(api.postWithHeaders(meetingPath() + "/entries", json.writeValueAsString(Map.of("text", text)), account,
+                "Origin", ORIGIN), 201).path("id").asLong();
+    }
+
+    private String documentFile(String documentPath, int versionNo) {
+        HttpResponse<String> response = api.get(documentPath + "/versions/" + versionNo + "/file", member);
+        expect(response, 200, null);
+        return response.body();
+    }
+
+    private void stubDocumentIndexing() {
+        doAnswer(call -> {
+            Map<String, Object> input = call.getArgument(0);
+            String text = (String) input.get("content");
+            assertThat(text).isEqualTo(APPLIED);
+            var locator = Map.of("type", "text_lines", "start_line", 1, "end_line", 4);
+            int codePoints = text.codePointCount(0, text.length());
+            var span = Map.of("block_id", "meeting-document", "start_offset", 0, "end_offset", codePoints, "locator", locator);
+            var chunk = Map.of("chunk_key", "meeting-chunk", "chunk_no", 0, "document_version_id", input.get("document_version_id"),
+                    "text", text, "embedding_text", text, "source_spans", List.of(span), "context_refs", List.of(),
+                    "token_count", codePoints, "locator", locator);
+            var manifest = Map.of("project_id", input.get("project_id"), "document_version_id", input.get("document_version_id"),
+                    "content_hash", input.get("content_hash").toString().replaceFirst("^sha256:", ""),
+                    "text_hash", input.get("text_hash").toString().replaceFirst("^sha256:", ""),
+                    "normalization_version", input.get("normalization_profile"), "parser_profile", "markdown-v1",
+                    "parser_version", "fixture-v1", "chunker_version", "fixture-v1", "expected_chunk_keys", List.of("meeting-chunk"),
+                    "chunking_profile", Map.of("profile_id", input.get("chunking_profile_id"), "tokenizer_id", "fixture-v1",
+                            "max_tokens", 600, "include_headings", false, "include_table_headers", false, "max_chunks", 1024));
+            var result = new LinkedHashMap<String, Object>();
+            for (String field : List.of("project_id", "document_version_id", "request_key", "text_hash", "normalization_profile", "chunking_profile_id")) {
+                result.put(field, input.get(field));
+            }
+            result.put("contract_version", "document-chunks-v1");
+            result.put("parser_version", "fixture-v1");
+            result.put("manifest", manifest);
+            result.put("diagnostics", List.of());
+            result.put("excluded_ranges", List.of());
+            result.put("chunks", List.of(chunk));
+            return Map.of("result", result, "origin", "PARSER", "usage", List.of());
+        }).when(ai).documentChunks(anyMap());
+        doAnswer(call -> {
+            Map<String, Object> input = call.getArgument(0);
+            int dimension = ((Number) input.get("dimension")).intValue();
+            var vector = new ArrayList<>(Collections.nCopies(dimension, 0.0));
+            vector.set(0, 1.0);
+            return Map.of("origin", "MODEL", "usage", List.of(), "result",
+                    Map.of("model", input.get("model"), "dimension", dimension, "embedding_profile_id", input.get("embedding_profile_id"),
+                            "purpose", input.get("purpose"), "vectors", List.of(Map.of("key", "meeting-chunk", "embedding", vector))));
+        }).when(ai).documentEmbeddings(anyMap());
+    }
+
     @Test void notifiesTheTaskOwnersExceptTheLeaderAndRecordsTheActivity() throws Exception {
         long summary = summarize(e2);
         var out = body(close(leader, summary, "close-n"));
@@ -391,6 +549,8 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         var activity = jdbc.queryForMap("SELECT change_proposal_id FROM activity_event WHERE event_type='MEETING_CLOSED' AND project_id=?", project);
         assertThat(activity.get("change_proposal_id")).isNull();
         assertThat(storage.objects).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT current_baseline_id FROM project WHERE id=?", Long.class, project)).isEqualTo(baseline);
+        assertThat(jdbc.queryForObject("SELECT content_text FROM document_version WHERE id=?", String.class, version)).isEqualTo(TEXT);
     }
 
     @Test void aResultOverTheSubmissionLimitIsRejectedAndTheMeetingStaysOpen() throws Exception {

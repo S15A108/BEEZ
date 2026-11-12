@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 접수 (VAL-A01·MCP-11) | 입력을 고정하고 규칙을 검사한다. 의미 분석이 필요하면 시도 1의 실행(run)과 큐 작업(job)을 만든다 | 규칙만으로 끝나면 200 + 확정 상태. 의미 분석이면 202 + `RUNNING` |
 | 꺼냄 (워커) | 큐 작업 하나를 리스(기본 120초)로 잡는다. `FOR UPDATE SKIP LOCKED`라 여러 워커가 같은 작업을 잡지 않는다 | 작업 `LEASED` |
-| AI 호출 | DB 트랜잭션 밖에서 부른다. 처리 예산(`execution_budget_ms`, 기본 15초)을 요청에 싣는다 | 연결 시간 초과 3초, 읽기 시간 초과 20초 (리스보다 짧다) |
+| AI 호출 | DB 트랜잭션 밖에서 부른다. 처리 예산(`execution_budget_ms`, 기본 30초)을 요청에 싣는다 | 연결 시간 초과 기본 3초, 검증 전용 읽기 시간 초과 기본 40초. [환경변수](../infra/env.md)로 조정한다 |
 | 반영 | 프로젝트 행을 잠그고, 아직 `RUNNING`·같은 시도·같은 리스·리스 유효기간 안·입력 불변인지 확인한 뒤 한 트랜잭션으로 저장한다 | `PASS`·`NEEDS_INPUT`·`NEEDS_REVIEW`·`ERROR`, 입력이 바뀌었으면 `STALE` |
 | 조회 (VAL-A02·A03·MCP-13·TSK-A03) | 새 실행을 만들지 않는다 | `RUNNING`이면 같은 ID로 다시 조회 (화면은 1.5초 간격) |
 | 재시도 (VAL-A04·MCP-14) | `ERROR`이고 현재 시도의 오류가 모두 `RETRY`일 때만 같은 검증의 다음 시도를 연다 | 202 + `RUNNING`, `current_attempt`+1 |
@@ -29,9 +29,11 @@
 
 실패는 HTTP 오류가 아니라 검증 결과로 돌려준다. 검증이 `ERROR`가 되고 `error_code`와 오류 항목(`kind=ERROR`)이 붙는다. 코드표와 처리 방법(`resolution`)은 [00-common 6절](../api/00-common.md#validation-execution-errors)이 기준이다.
 
-- `RETRY`: 같은 입력으로 다시 돌리면 나아질 수 있는 실패다. `ai_timeout`·`ai_unavailable`·`ai_invalid_output`·`evidence_fetch_failed`·`validation_lease_expired`·`validation_worker_interrupted`·`validation_execution_failed`가 여기에 든다. 재시도 버튼이 보인다.
-- `HUMAN_REVIEW`: 근거 부족·지원하지 않는 내용(부분 분석)이다. 사람이 보완한 뒤 새 검증을 요청해야 하고, 재시도는 거절한다.
+- `RETRY`: 같은 입력으로 다시 돌리면 나아질 수 있는 실패다. `ai_timeout`·`ai_unavailable`·`ai_invalid_output`·`evidence_fetch_failed`·일시적인 `evidence_collection_failed`·`validation_lease_expired`·`validation_worker_interrupted`·`validation_execution_failed`가 여기에 든다. 재시도 버튼이 보인다.
+- `HUMAN_REVIEW`: 근거 부족·지원하지 않는 내용(부분 분석) 또는 입력 한도 등 사람이 확인해야 할 수집 실패다. 담당자가 원인을 보완한 뒤 새 검증을 요청한다.
 - 서버도 AI도 스스로 재시도하지 않는다. 같은 입력으로 실제 검증 AI를 부르는 횟수는 새 검증과 재시도를 합쳐 3번까지다(VAL-A01 처리 규칙).
+
+S15P31A108-400에서 모델을 부르기 전 검색 범위·원문 확보가 불완전한 실패는 `evidence_collection_failed`와 `execution_failure` 원인 목록을 반환한다. 화면은 일시적 수집 실패에만 재시도를 표시한다. 입력 한도와 같이 사람이 확인할 원인이 하나라도 있으면 원인과 수동 보완을 안내한다. [계획 수정안·수집 실패 분리](task-plan-revision-proposals-S15P31A108-400.md)를 참고한다.
 - AI 응답(성공·오류 본문)으로 사용량을 받으면 그 실행에 남긴다(비용 조회에 잡힌다). 판정을 버린 늦은 결과도 같다. 응답을 받지 못하면 모델이 이미 돌았어도 사용량을 받을 수 없어 비용 조회에서 빠진다. 횟수 제한에 세는지는 오류 종류로 갈린다(`AiValidationAnalyzer` 분류 → `ValidationRepository.countedModelAttempts`).
   - 읽기 시간 초과(`SocketTimeoutException`·`HttpTimeoutException`) → `ai_timeout`, 실행 `TIMEOUT` → 사용량이 없어도 **센다**(요청이 AI에 닿았다고 본다).
   - 그 밖의 통신 오류(연결 거부·연결 시간 초과, 응답을 기다리다 끊김 같은 `SocketException` 등) → `ai_unavailable`, 실행 `ERROR` → 사용량이 없으면 **세지 않는다**. 요청이 AI에 닿은 뒤 끊긴 경우도 연결 실패와 구분할 수 없어 같이 빠진다(4절).

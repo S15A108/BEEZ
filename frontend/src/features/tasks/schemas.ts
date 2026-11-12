@@ -201,3 +201,29 @@ export const planDraftResponseSchema = z.object({
   baseline_id: common.idSchema,
 })
 export type PlanDraft = z.infer<typeof planDraftResponseSchema>
+
+// S15P31A108-400: 제안은 서버에 보관하며 승인 전에는 작업 계획을 바꾸지 않는다.
+export const planRevisionProposalSchema = z.object({
+  id: common.idSchema,
+  baseline_id: common.idSchema,
+  source_validation_id: common.idSchema,
+  expected_revision_no: z.number().int(),
+  expected_lock_version: z.number().int(),
+  before_plan: common.taskPlanInputSchema,
+  proposed_plan: common.taskPlanInputSchema,
+  changes: z
+    .object({
+      field: planDraftFieldSchema,
+      reason: z.string(),
+      finding_ids: common.idSchema.array(),
+    })
+    .array(),
+  evidence: draftSourceSchema.extend({ field: planDraftFieldSchema }).array(),
+  expires_at: common.timeSchema,
+})
+export type PlanRevisionProposal = z.infer<typeof planRevisionProposalSchema>
+
+export const applyPlanRevisionProposalResponseSchema = z.object({
+  task: common.taskDetailSchema,
+  validation: common.validationSchema,
+})

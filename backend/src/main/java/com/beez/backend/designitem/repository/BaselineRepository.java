@@ -61,6 +61,21 @@ public class BaselineRepository {
                 .params(Map.of("baseline", baseline, "project", project, "item", item, "version", version)).update();
     }
 
+    /**
+     * 이 기준에서의 설계 항목 유효 출처를 기록한다(S15P31A108-406). 행이 없으면 항목 버전의 출처가 그대로 유효 출처다.
+     * baseline_item 행이 먼저 있어야 한다.
+     */
+    public void insertItemSource(long baseline, long project, long item, long documentVersion, String locatorJson,
+                                 String status, long remappedFrom) {
+        jdbc.sql("""
+                INSERT INTO baseline_item_source(baseline_id,project_id,design_item_id,source_document_version_id,
+                  source_locator,source_status,remapped_from_document_version_id)
+                VALUES(:baseline,:project,:item,:version,cast(:locator AS jsonb),:status,:from)
+                """).param("baseline", baseline).param("project", project).param("item", item)
+                .param("version", documentVersion).param("locator", locatorJson).param("status", status)
+                .param("from", remappedFrom).update();
+    }
+
     /** A version's index is ready when its current attempt published every chunk with an embedding for the profile. */
     private static final String READY_INDEX = """
             SELECT 1 FROM document_processing p JOIN document_index_manifest m USING(document_version_id)

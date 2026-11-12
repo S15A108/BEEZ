@@ -103,10 +103,24 @@ public class AnalysisResultApplier {
     /** An incomplete search cannot establish PASS, even when the model was never called. */
     @Transactional
     public void applyInputIncomplete(JobLease lease, String message, long durationMs) {
+        applyInputIncomplete(lease, List.of(), durationMs);
+    }
+
+    @Transactional
+    public void applyInputIncomplete(JobLease lease, List<String> reasonCodes, long durationMs) {
         Optional<Current> active = current(lease, Mode.RESULT, Map.of(), durationMs);
         if (active.isEmpty()) return;
-        fail(lease, active.get().validation(), active.get().runId(), "ai_evidence_insufficient", "ERROR", message,
-                "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", null, durationMs, Map.of());
+        var detail = EvidenceCollectionFailure.detail(reasonCodes);
+        boolean retryable = Boolean.TRUE.equals(detail.get("retryable"));
+        fail(lease, active.get().validation(), active.get().runId(), EvidenceCollectionFailure.CODE, "ERROR",
+                (String) detail.get("message"), retryable ? "RETRY" : "HUMAN_REVIEW",
+                retryable ? "검색·문서 준비 상태를 확인하고 근거 수집부터 다시 시도해 주세요."
+                        : reasonCodes.contains("source_confirmation_required") && !reasonCodes.contains("source_evidence_unavailable")
+                        ? "문서가 바뀐 설계 항목의 출처 위치를 확인·정정한 뒤 새 검증을 요청해 주세요."
+                        : reasonCodes.contains("source_evidence_unavailable")
+                        ? "승인 문서와 출처 위치·인용 범위를 보완한 뒤 새 검증을 요청해 주세요."
+                        : "원인을 확인하고 계획·검색 범위를 보완한 뒤 새 검증을 요청해 주세요.",
+                null, durationMs, Map.of(EvidenceCollectionFailure.KEY, detail));
     }
 
     /** Recheck searched inputs under the project lock before applying model output. */
@@ -274,8 +288,12 @@ public class AnalysisResultApplier {
             documentIds.add(document);
         }
         if (!versions.isEmpty()) {
-            var rows = jdbc.sql("select id,source_document_version_id from design_item_version where id in (:ids) order by id for share")
+            // The effective source of the analyzed baseline (baseline_item_source), not the item version's own source.
+            jdbc.sql("select id from design_item_version where id in (:ids) order by id for share")
                     .param("ids", versions).query().listOfRows();
+            var rows = jdbc.sql("select source_document_version_id from baseline_item_effective_source "
+                            + "where baseline_id=:baseline and design_item_version_id in (:ids)")
+                    .param("baseline", analyzedBaseline).param("ids", versions).query().listOfRows();
             rows.stream().map(row -> id(row.get("source_document_version_id")))
                     .filter(java.util.Objects::nonNull).forEach(documentIds::add);
         }
@@ -456,7 +474,7 @@ public class AnalysisResultApplier {
         validations.finish(v.id(), status, summary);
         activities.finishedBySystem(v, status);
         // 저장된 결과일 때만 나간다(앞의 늦은 결과·입력 변경·리스 만료 분기는 이미 return). 회의 개설은 커밋 뒤 리스너가 맡는다
-        ValidationConflictMeetings.publish(publisher, v, findings);
+        ValidationConflictMeetings.publish(publisher, v, findings, objects(request.get("related_plans")));
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
@@ -580,6 +598,12 @@ public class AnalysisResultApplier {
      */
     private void fail(JobLease lease, ValidationRow v, long runId, String errorCode, String runStatus, String message,
                       String resolution, String nextAction, String model, long durationMs, Map<String, Object> diagnostics) {
+        if ("evidence_fetch_failed".equals(errorCode)) {
+            errorCode = EvidenceCollectionFailure.CODE;
+            var classified = new LinkedHashMap<>(diagnostics);
+            classified.put(EvidenceCollectionFailure.KEY, EvidenceCollectionFailure.detail(List.of("evidence_fetch_failed")));
+            diagnostics = classified;
+        }
         validations.finishRun(runId, runStatus, errorCode + ": " + message, model, durationMs, diagnostics.get("usage"));
         validations.insertFinding(v.id(), FindingRow.error(runId, message, resolution, nextAction));
         Map<String, Object> summary = responses.summary(v.summary());

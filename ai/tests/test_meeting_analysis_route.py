@@ -75,7 +75,8 @@ def api(monkeypatch, http_client):
     yield http_client, state
 
 
-def test_meeting_route_calls_model_and_returns_feature_usage(api):
+def test_meeting_route_calls_model_and_returns_feature_usage(api, monkeypatch):
+    monkeypatch.delenv("MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS", raising=False)
     client, state = api
     response = client.post(
         "/v1/bee/meeting-analysis",
@@ -88,9 +89,13 @@ def test_meeting_route_calls_model_and_returns_feature_usage(api):
     assert result["result"]["decisions"] == ["응답 구조 유지"]
     assert result["usage"][0]["feature"] == "MEETING_ANALYSIS"
     assert state["calls"][0].context.request_key == "meeting-review-1"
+    assert state["calls"][0].timeout_seconds == 35.0
 
 
-def test_summary_route_accepts_backend_snapshot_and_returns_document_change(api):
+def test_summary_route_accepts_backend_snapshot_and_returns_document_change(
+    api, monkeypatch
+):
+    monkeypatch.setenv("MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS", "42.5")
     client, state = api
     body = request_body()
     body.update(
@@ -124,6 +129,24 @@ def test_summary_route_accepts_backend_snapshot_and_returns_document_change(api)
         == state["output"]["document_changes"]
     )
     assert response.json()["usage"][0]["failed"] is False
+    assert state["calls"][0].timeout_seconds == 42.5
+
+
+@pytest.mark.parametrize("value", ["", "invalid", "0", "-1", "nan", "inf", "60", "90"])
+def test_invalid_meeting_model_timeout_fails_before_calling_provider(
+    api, monkeypatch, value
+):
+    monkeypatch.setenv("MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS", value)
+    client, state = api
+    response = client.post(
+        "/v1/bee/meeting-analysis",
+        json=request_body(),
+        headers={"Authorization": "Bearer internal"},
+    )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "model_unavailable"
+    assert "usage" not in response.json()
+    assert not state["calls"]
 
 
 def design_source(location):

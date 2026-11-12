@@ -827,6 +827,14 @@ export const validationSchema = z
     created_at: timeSchema,
     finished_at: timeSchema.optional(),
     error_code: z.string().optional(),
+    execution_failure: z
+      .object({
+        type: z.literal('EVIDENCE_COLLECTION_FAILED'),
+        reason_codes: z.string().array(),
+        retryable: z.boolean(),
+        message: z.string(),
+      })
+      .optional(),
     policy_analysis: z
       .object({
         policy_assessments: z.array(
@@ -1164,6 +1172,45 @@ export const meetingEntrySchema = z.object({
 })
 export type MeetingEntry = z.infer<typeof meetingEntrySchema>
 
+export const meetingConflictGuidanceSchema = z.object({
+  validation_id: idSchema,
+  tasks: z
+    .object({
+      task_id: idSchema,
+      title: z.string(),
+      plan_revision_id: idSchema.optional(),
+      revision_no: z.number().int().positive().optional(),
+    })
+    .array(),
+  conflicts: z
+    .object({
+      message: z.string(),
+      next_action: z.string().optional(),
+      design_item: z
+        .object({
+          id: idSchema,
+          version_id: idSchema,
+          key: z.string(),
+          title: z.string(),
+          document_id: idSchema.optional(),
+          document_version_id: idSchema.optional(),
+          location: z.string().optional(),
+        })
+        .optional(),
+      differences: z
+        .object({
+          path: z.string(),
+          first_value: z.string().optional(),
+          second_value: z.string().optional(),
+        })
+        .array(),
+    })
+    .array(),
+})
+export type MeetingConflictGuidance = z.infer<
+  typeof meetingConflictGuidanceSchema
+>
+
 export const meetingSchema = z.object({
   id: idSchema,
   project_id: idSchema,
@@ -1173,6 +1220,7 @@ export const meetingSchema = z.object({
   origin: z.enum(['BEE_CONFLICT', 'HUMAN']).optional(),
   task_ids: idSchema.array().optional(),
   conflict_summary: z.string().optional(),
+  conflict_guidance: meetingConflictGuidanceSchema.optional(),
   status: z.enum(['OPEN', 'CLOSED']).optional(),
   closed_at: timeSchema.optional(),
   closed_by: idSchema.optional(),

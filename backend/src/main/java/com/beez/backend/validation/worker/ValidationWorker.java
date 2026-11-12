@@ -133,7 +133,7 @@ public class ValidationWorker {
                 // An unrelated publication need not invalidate the accepted plan. The assembler
                 // uses the current baseline; result application rechecks that exact search snapshot.
                 if (!searchInput.searchComplete()) {
-                    applier.applyInputIncomplete(lease, "검색 또는 원문 근거 범위가 불완전합니다", System.currentTimeMillis() - started);
+                    applier.applyInputIncomplete(lease, searchInput.searchIncompleteReasons(), System.currentTimeMillis() - started);
                     return true;
                 }
                 request = searchInput.request();
@@ -147,6 +147,11 @@ public class ValidationWorker {
             }
         } catch (RuntimeException e) {
             log.warn("validation {} 요청 조립 실패: {}", lease.validationId(), e.toString());
+            if (e instanceof com.beez.backend.common.api.ApiException input
+                    && java.util.Set.of("design_reference_limit", "unresolved_limit").contains(input.getCode())) {
+                applier.applyInputIncomplete(lease, List.of(input.getCode()), System.currentTimeMillis() - started);
+                return true;
+            }
             applier.applyFailure(lease, "evidence_fetch_failed", "분석 입력이나 검색 근거를 확인하지 못했습니다",
                     System.currentTimeMillis() - started);
             return true;

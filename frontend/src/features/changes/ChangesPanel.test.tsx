@@ -1331,6 +1331,62 @@ it('문서만 바꾸는 제안에는 영향 분석 버튼을 두지 않는다 (S
   ).not.toBeInTheDocument()
 })
 
+it('문서만 바꾸는 승인 화면은 문서 버전 발행과 직접 확인 사유를 안내한다', async () => {
+  useScenario('unevaluated')
+  await stubDocumentProposal(false)
+  const base = await changesApi.approvalPreview('101', '71')
+  let release: (value: typeof base) => void = () => undefined
+  vi.spyOn(changesApi, 'approvalPreview').mockImplementationOnce(
+    () => new Promise((done) => (release = done)),
+  )
+  const detail = await changesApi.get('101', '71')
+  const approve = vi.spyOn(changesApi, 'approve').mockResolvedValue({
+    proposal: detail.proposal,
+    baseline: await documentsApi.baseline('101'),
+  })
+
+  const user = await openApprove()
+  expect(
+    screen.getByText(/새 문서 버전이 공용 문서함에 발행돼요/),
+  ).toHaveTextContent('설계 항목과 기존 작업 상태·검증 결과는 유지돼요.')
+  expect(
+    screen.queryByText(/진행 중 작업은 .*재검증.*으로 바뀌어요/),
+  ).not.toBeInTheDocument()
+  release({
+    ...base,
+    baseline_items: [],
+    validations_to_stale: [],
+    tasks_to_wait: [],
+  })
+
+  const reason = await screen.findByLabelText('문서 변경 승인 사유')
+  expect(screen.getByText('문서 변경을 직접 확인해 주세요')).toBeInTheDocument()
+  expect(
+    screen.getByText(/문서 본문만 바꾸는 제안은 AI 영향 분석 대상이 아니에요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('AI 영향 분석이 끝나지 않았어요'),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '영향 다시 분석' }),
+  ).not.toBeInTheDocument()
+  const publish = screen.getByRole('button', {
+    name: '사유 남기고 기준 v2 발행',
+  })
+  expect(publish).toBeDisabled()
+  await user.type(reason, '회의에서 합의한 변경 문안을 직접 확인함')
+  await user.click(publish)
+  await waitFor(() =>
+    expect(approve).toHaveBeenCalledWith(
+      '101',
+      '71',
+      expect.objectContaining({
+        impact_override_reason: '회의에서 합의한 변경 문안을 직접 확인함',
+      }),
+    ),
+  )
+})
+
 it('항목과 문서가 함께 든 제안은 확인된 관계를 볼 수 있게 분석 버튼을 둔다 (S15P31A108-359)', async () => {
   const user = userEvent.setup()
   const base = await stubDocumentProposal(true)

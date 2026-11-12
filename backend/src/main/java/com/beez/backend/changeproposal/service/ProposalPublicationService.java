@@ -44,11 +44,14 @@ public class ProposalPublicationService {
     private final ImpactApprovalGate gate;
     private final ChangeNotifications notifications;
     private final ActivityRecorder activities;
+    private final BaselineSourceCarrier sources;
     public ProposalPublicationService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository proposals,
             PublicationRepository repository, ProposalQueryService queries, PublishPlanner planner, BaselineRepository baselines,
             DesignItemRepository items, DesignCommandService commands, RelationStorageService relations,
             ValidationImpactPort impacts, PostPublishAnalysisIntake intake, ProposalValidator validator,
-            ImpactApprovalGate gate, ChangeNotifications notifications, ActivityRecorder activities) {
+            ImpactApprovalGate gate, ChangeNotifications notifications, ActivityRecorder activities,
+            BaselineSourceCarrier sources) {
+        this.sources=sources;
         this.notifications=notifications;
         this.activities=activities;
         this.access=access; this.projects=projects; this.proposals=proposals; this.repository=repository; this.queries=queries;
@@ -96,6 +99,7 @@ public class ProposalPublicationService {
         for (var doc : plan.documents()) baselines.insertDocumentRef(baseline,project,id(doc,"document_id"),
                 changedDocuments.getOrDefault(id(doc,"document_id"),id(doc,"id")));
         var changedItems=new HashSet<Long>(); var impactItems=new ArrayList<ChangedItem>();
+        var inBaseline=new HashSet<Long>();
         for (var change : plan.changes()) {
             var item=change.change(); var before=change.before();
             if ("RETIRE".equals(item.operation())) {
@@ -116,16 +120,23 @@ public class ProposalPublicationService {
                 itemId=id(before,"design_item_id"); changedItems.add(itemId);
                 repository.supersedeItem(id(before,"id"));
             }
-            // Preserve the cited immutable source and locator. A changed document does not prove the old locator
-            // identifies the same passage in its new version; source replacement requires an explicit contract.
+            // Preserve the cited immutable source and locator on the item version. A changed document does not prove the old
+            // locator identifies the same passage in its new version, so the item version stays immutable and the source
+            // for this baseline is recorded separately by BaselineSourceCarrier (baseline_item_source, S15P31A108-406).
             Long source=before==null || before.get("source_document_version_id")==null ? null : id(before,"source_document_version_id");
             long version=repository.insertVersion(itemId,change.versionNo(),change.title(),item.schemaVersion(),item.proposedContent(),
                     source,before==null ? null : before.get("source_locator"),origin,author);
-            baselines.insertItemRef(baseline,project,itemId,version);
+            baselines.insertItemRef(baseline,project,itemId,version); inBaseline.add(itemId);
             if (before!=null) impactItems.add(new ChangedItem(itemId,id(before,"id"),version,"UPDATE"));
         }
-        for (var item : plan.existingItems()) if (!changedItems.contains(id(item,"design_item_id")))
-            baselines.insertItemRef(baseline,project,id(item,"design_item_id"),id(item,"id"));
+        for (var item : plan.existingItems()) if (!changedItems.contains(id(item,"design_item_id"))) {
+            baselines.insertItemRef(baseline,project,id(item,"design_item_id"),id(item,"id")); inBaseline.add(id(item,"design_item_id"));
+        }
+        // 항목 버전의 출처는 그대로 두고, 이 기준에서의 유효 출처(문서가 바뀌었으면 새 줄 위치)를 따로 기록한다(-406).
+        var targetVersions=new HashMap<Long,Long>();
+        for (var doc : plan.documents()) targetVersions.put(id(doc,"document_id"),
+                changedDocuments.getOrDefault(id(doc,"document_id"),id(doc,"id")));
+        sources.carry(project,plan.previousBaselineId(),baseline,inBaseline,targetVersions);
         if (!impactItems.isEmpty()) relations.apply(caller,project,new RelationChangeRequest(baseline,proposal,
                 impactItems.stream().map(ChangedItem::designItemId).toList(),"변경 제안 승인·발행",List.of()));
         var impact=plan.impact();

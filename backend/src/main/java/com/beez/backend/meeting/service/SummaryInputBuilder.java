@@ -52,6 +52,7 @@ class SummaryInputBuilder {
 
     /** request_key(약 100바이트)와 JSON 구분자·후행 필드를 위한 여유 */
     private static final int SLACK_BYTES = 2_048;
+    private static final int MAX_AI_ENTRY_CHARS = 100_000;
 
     /**
      * @param payload 요청 본문(request_key 제외 — 호출마다 새로 붙인다)
@@ -78,7 +79,7 @@ class SummaryInputBuilder {
 
     /** previousSummary·feedback 은 수정 요청(MTG-A12)일 때만 */
     Built build(CallerContext caller, long projectId, long meetingId, long throughEntryId,
-                Map<String, Object> previousSummary, String feedback) {
+                Map<String, Object> previousSummary, String feedback, String conflictGuidance) {
         List<String> notes = new ArrayList<>();
         long budget = limits.maxRequestBytes() - SLACK_BYTES;
 
@@ -115,7 +116,8 @@ class SummaryInputBuilder {
         long reservedBytes = 0;
         long reserve = Math.min(limits.recentEntriesReserveBytes(), remaining);
         for (; next < newest.size(); next++) {
-            Map<String, Object> view = entryView(newest.get(next));
+            long available = reserved.isEmpty() ? remaining : Math.min(remaining - reservedBytes, reserve - reservedBytes);
+            Map<String, Object> view = entryView(newest.get(next), conflictGuidance, available);
             long size = bytes(view) + 1;
             if (!reserved.isEmpty() && reservedBytes + size > reserve) break;
             if (reservedBytes + size > remaining) break;
@@ -179,7 +181,7 @@ class SummaryInputBuilder {
         // ⑤ 남는 만큼 나머지 기록(최근 것부터 이어서)
         List<Map<String, Object>> older = new ArrayList<>();         // 최근 것부터
         for (; next < newest.size(); next++) {
-            Map<String, Object> view = entryView(newest.get(next));
+            Map<String, Object> view = entryView(newest.get(next), conflictGuidance, remaining);
             long size = bytes(view) + 1;
             if (size > remaining) break;
             remaining -= size;
@@ -216,7 +218,7 @@ class SummaryInputBuilder {
         return JSON.writeValueAsString(value).getBytes(StandardCharsets.UTF_8).length;
     }
 
-    private static Map<String, Object> entryView(EntryRow row) {
+    private static Map<String, Object> entryView(EntryRow row, String conflictGuidance, long available) {
         var view = new LinkedHashMap<String, Object>();
         view.put("id", Ids.str(row.id()));
         view.put("meeting_id", Ids.str(row.meetingId()));
@@ -228,6 +230,14 @@ class SummaryInputBuilder {
         if (row.authorName() != null) view.put("author_name", row.authorName());
         if (row.refs() != null) view.put("refs", JSON.readValue(row.refs(), new TypeReference<List<MeetingRef>>() { }));
         view.put("created_at", row.createdAt().toString());
+        // Give the model the opening evidence within its existing entry contract and byte budget.
+        if ("CONFLICT_BRIEF".equals(row.kind()) && conflictGuidance != null) {
+            String text = row.body() + "\n\n회의 개설 때 검증한 작업과 변경 내용:\n" + conflictGuidance;
+            if (text.length() <= MAX_AI_ENTRY_CHARS) {
+                view.put("text", text);
+                if (bytes(view) + 1 > available) view.put("text", row.body());
+            }
+        }
         return view;
     }
 
@@ -241,7 +251,9 @@ class SummaryInputBuilder {
         view.put("status", row.get("status"));
         view.put("schema_version", row.get("schema_version"));
         view.put("content", JSON.readValue(row.get("content").toString(), Object.class));
-        if (row.get("source_document_version_id") != null && row.get("source_document_id") != null) {
+        // 문서가 바뀌어 인용 줄을 옮기지 못한 항목의 옛 줄 번호는 새 문서에서 틀린 위치다 — 출처를 보내지 않는다(-406).
+        if (row.get("source_document_version_id") != null && row.get("source_document_id") != null
+                && !"NEEDS_CONFIRMATION".equals(row.get("source_status"))) {
             var source = new LinkedHashMap<String, Object>();
             source.put("document_id", row.get("source_document_id").toString());
             source.put("document_version_id", row.get("source_document_version_id").toString());

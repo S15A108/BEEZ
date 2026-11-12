@@ -13,5 +13,12 @@ public record ValidationResponse(String id, String taskId, String planRevisionId
                                  List<ValidationDesignRefResponse> designRefs,
                                  List<RelatedTaskRefResponse> relatedTaskRefs, List<FindingResponse> findings,
                                  boolean cacheHit, Instant createdAt, Instant finishedAt, String errorCode,
-                                 Map<String, Object> policyAnalysis) {
+                                 Map<String, Object> policyAnalysis, Map<String, Object> executionFailure) {
+    public ValidationResponse(String id, String taskId, String planRevisionId, String baselineId, String status,
+            String trigger, String staleReason, int currentAttempt, List<ValidationDesignRefResponse> designRefs,
+            List<RelatedTaskRefResponse> relatedTaskRefs, List<FindingResponse> findings, boolean cacheHit,
+            Instant createdAt, Instant finishedAt, String errorCode, Map<String, Object> policyAnalysis) {
+        this(id, taskId, planRevisionId, baselineId, status, trigger, staleReason, currentAttempt, designRefs,
+                relatedTaskRefs, findings, cacheHit, createdAt, finishedAt, errorCode, policyAnalysis, null);
+    }
 }

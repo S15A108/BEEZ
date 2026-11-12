@@ -309,12 +309,14 @@ public class ImpactContextQuery {
                 select di.id as item_id, di.key, di.kind, v.id as version_id, v.version_no, v.schema_version, v.title,
                        cast(v.content as text) as content, dv.document_id, dv.id as document_version_id,
                        dv.version_no as document_version_no,
-                       case when dv.id is not null then cast(v.source_locator as text) else null end as source_locator
+                       case when dv.id is not null and es.source_status is distinct from 'NEEDS_CONFIRMATION'
+                            then cast(es.source_locator as text) else null end as source_locator
                   from baseline_item bi
                   join design_item di on di.id = bi.design_item_id and di.project_id = bi.project_id
                   join design_item_version v on v.id = bi.design_item_version_id and v.design_item_id = di.id
+                  join baseline_item_effective_source es on es.baseline_id = bi.baseline_id and es.design_item_id = bi.design_item_id
                   left join baseline_document bd on bd.project_id = bi.project_id and bd.baseline_id = bi.baseline_id
-                                                 and bd.document_version_id = v.source_document_version_id
+                                                 and bd.document_version_id = es.source_document_version_id
                   left join document_version dv on dv.id = bd.document_version_id and dv.document_id = bd.document_id
                                                and (dv.status = 'APPROVED' or (:historical and dv.status = 'SUPERSEDED'))
                  where bi.project_id = :project and bi.baseline_id = :baseline and di.id in (:items)

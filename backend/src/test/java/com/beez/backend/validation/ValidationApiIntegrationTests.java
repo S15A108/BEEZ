@@ -76,6 +76,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
     @Autowired
     StartGate startGate;
 
+    @Autowired
+    com.beez.backend.changeproposal.service.BaselineSourceCarrier sourceCarrier;
+
     @MockitoBean
     ValidationAnalyzer analyzer;
 
@@ -1382,6 +1385,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         JsonNode incomplete = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
         assertThat(incomplete.get("status").asText()).isEqualTo("ERROR");
         assertThat(incomplete.get("findings").get(0).get("resolution").asText()).isEqualTo("HUMAN_REVIEW");
+        assertThat(incomplete.at("/execution_failure/type").asText()).isEqualTo("EVIDENCE_COLLECTION_FAILED");
+        assertThat(incomplete.at("/execution_failure/reason_codes").toString()).contains("source_evidence_unavailable");
+        assertThat(incomplete.at("/execution_failure/retryable").asBoolean()).isFalse();
 
         // The second task references only the restorable source. A numeric ID in the
         // model's citation must still be stored in the canonical request form.
@@ -1425,6 +1431,100 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         JsonNode stored = v.get("findings").get(0).get("sources").get(0);
         assertThat(stored.get("document_id").isNumber()).isFalse();        // 요청에 넣은 출처 그대로 (문자열 ID)
         assertThat(stored.get("document_id").asText()).isEqualTo(String.valueOf(doc));
+    }
+
+
+    /**
+     * S15P31A108-406 문서를 바꾸는 변경이 발행된 뒤에도 그 문서에서 나온 설계 항목을 참조하는 검증이 AI 분석 단계까지 간다.
+     * 이전에는 항목이 옛 문서 버전을 가리켜 근거 수집이 source_evidence_unavailable(재시도 불가 ERROR)로 끝났다.
+     */
+    @Test
+    void worker_afterTheSourceDocumentChanged_reachesTheAnalyzerForMovedLinesAndStopsAtAChangedCitation() throws Exception {
+        Long doc = api.jdbc.sql("insert into document (project_id, type, title, created_by) values (:p, 'API_SPEC', 'API 명세', :a) returning id")
+                .param("p", projectId).param("a", leader).query(Long.class).single();
+        Long docV1 = documentVersion(doc, 1, "인증 API\n로그인 요청\n로그인 응답\n", "APPROVED");
+        Long v1 = versionWithSource("API-01", 2, docV1,
+                "{\"location\":\"인증 API / L2-L2\",\"type\":\"text_lines\",\"start_line\":2,\"end_line\":2}");
+        Long v2 = versionWithSource("API-02", 2, docV1,
+                "{\"location\":\"인증 API / L3-L3\",\"type\":\"text_lines\",\"start_line\":3,\"end_line\":3}");
+        api.publish(2, Map.of("API-01", v1, "API-02", v2));
+        long previous = api.jdbc.sql("select current_baseline_id from project where id=:p").param("p", projectId).query(Long.class).single();
+        api.jdbc.sql("insert into baseline_document(baseline_id,project_id,document_id,document_version_id) values(:b,:p,:d,:v)")
+                .param("b", previous).param("p", projectId).param("d", doc).param("v", docV1).update();
+
+        // 문서가 v1 → v2 로 발행된다: 맨 앞에 한 줄이 생겨 요청 줄은 밀리고, 응답 줄은 수정된다.
+        Long docV2 = documentVersion(doc, 2, "머리말\n인증 API\n로그인 요청\n로그인 응답 수정\n", "APPROVED");
+        api.jdbc.sql("update document_version set status='SUPERSEDED' where id=:v").param("v", docV1).update();
+        long next = api.jdbc.sql("insert into baseline(project_id,version_no,published_by) values(:p,3,:a) returning id")
+                .param("p", projectId).param("a", leader).query(Long.class).single();
+        api.jdbc.sql("insert into baseline_document select :n,project_id,document_id,document_version_id from baseline_document where baseline_id=:o and document_id<>:d")
+                .param("n", next).param("o", previous).param("d", doc).update();
+        api.jdbc.sql("insert into baseline_document(baseline_id,project_id,document_id,document_version_id) values(:n,:p,:d,:v)")
+                .param("n", next).param("p", projectId).param("d", doc).param("v", docV2).update();
+        api.jdbc.sql("insert into baseline_item select :n,project_id,design_item_id,design_item_version_id from baseline_item where baseline_id=:o")
+                .param("n", next).param("o", previous).update();
+        api.jdbc.sql("update project set current_baseline_id=:n where id=:p").param("n", next).param("p", projectId).update();
+        var items = new java.util.HashSet<>(api.jdbc.sql("select design_item_id from baseline_item where baseline_id=:n")
+                .param("n", next).query(Long.class).list());
+        sourceCarrier.carry(projectId, previous, next, items, Map.of(doc, docV2));
+        long item1 = api.designItemId("API-01"), item2 = api.designItemId("API-02");
+        assertThat(api.jdbc.sql("select source_status from baseline_item_source where baseline_id=:n and design_item_id=:i")
+                .param("n", next).param("i", item1).query(String.class).single()).isEqualTo("REMAPPED");
+        assertThat(api.jdbc.sql("select source_status from baseline_item_source where baseline_id=:n and design_item_id=:i")
+                .param("n", next).param("i", item2).query(String.class).single()).isEqualTo("NEEDS_CONFIRMATION");
+
+        // 인용 줄이 바뀐 항목: 모델을 부르지 않고, 문서 위치 확인이 필요하다는 사유로 끝난다(재시도 불가).
+        String movedRef = "[{\"design_item_id\":\"" + item1 + "\",\"design_item_version_id\":\"" + v1 + "\",\"relation\":\"IMPLEMENTS\"}]";
+        String changedRef = "[{\"design_item_id\":\"" + item2 + "\",\"design_item_version_id\":\"" + v2 + "\",\"relation\":\"IMPLEMENTS\"}]";
+        long[] blocked = createTask(planJson("changed", changedRef, true, null), member);
+        long blockedId = body(accept(blocked, member), 202).get("id").asLong();
+        assertThat(worker.runOnce()).isTrue();
+        org.mockito.Mockito.verifyNoInteractions(analyzer);
+        JsonNode failed = body(api.get("/api/projects/" + projectId + "/validations/" + blockedId, member), 200);
+        assertThat(failed.get("status").asText()).isEqualTo("ERROR");
+        assertThat(failed.at("/execution_failure/reason_codes").toString()).contains("source_confirmation_required")
+                .doesNotContain("source_evidence_unavailable");
+        assertThat(failed.at("/execution_failure/retryable").asBoolean()).isFalse();
+
+        // 줄이 그대로 있는 항목: 옮겨 둔 새 위치로 근거를 읽어 AI 분석 단계까지 간다.
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
+        doAnswer(inv -> {
+            Map<String, Object> req = inv.getArgument(0);
+            sent.set(req);
+            return aiResponse(req, List.of(), List.of());
+        }).when(analyzer).analyze(any());
+        long[] ok = createTask(planJson("moved", movedRef, true, null), member);
+        long okId = body(accept(ok, member), 202).get("id").asLong();
+        assertThat(worker.runOnce()).isTrue();
+        org.mockito.Mockito.verify(analyzer).analyze(any());
+        JsonNode analyzed = body(api.get("/api/projects/" + projectId + "/validations/" + okId, member), 200);
+        assertThat(analyzed.has("execution_failure")).isFalse();
+        assertThat(analyzed.get("status").asText()).isNotEqualTo("ERROR");
+        Map<String, Object> item = null;
+        for (Object o : (List<?>) sent.get().get("approved_items")) {
+            Map<String, Object> candidate = (Map<String, Object>) o;
+            if (String.valueOf(v1).equals(String.valueOf(candidate.get("id")))) item = candidate;
+        }
+        assertThat((Map<String, Object>) item.get("source")).containsEntry("document_version_id", String.valueOf(docV2))
+                .containsEntry("location", "인증 API / L3-L3");
+        assertThat((List<Map<String, Object>>) sent.get().get("evidence")).anySatisfy(e -> {
+            assertThat(e).containsEntry("design_item_version_id", String.valueOf(v1)).containsEntry("text", "로그인 요청\n");
+            assertThat((Map<String, Object>) e.get("locator")).containsEntry("start_line", 3).containsEntry("end_line", 3);
+        });
+    }
+
+    private Long documentVersion(Long doc, int versionNo, String text, String status) throws Exception {
+        String hash = "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        Long version = api.jdbc.sql("""
+                        insert into document_version (document_id, version_no, status, storage_key, content_hash, content_text, approved_at)
+                        values (:d, :n, :s, :k, :h, :text, now()) returning id
+                        """)
+                .param("d", doc).param("n", versionNo).param("s", status).param("k", "doc/" + doc + "/chg-v" + versionNo)
+                .param("h", hash).param("text", text).query(Long.class).single();
+        api.jdbc.sql("insert into document_processing(document_version_id,status,text_hash) values(:v,'COMPLETED',:hash)")
+                .param("v", version).param("hash", hash).update();
+        return version;
     }
 
     /** 원문 출처가 있는 새 승인 버전. locatorJson 이 null 이면 위치 없이 문서 버전만 */

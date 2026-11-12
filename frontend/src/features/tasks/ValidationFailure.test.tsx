@@ -41,3 +41,72 @@ it('모르는 오류 코드나 코드가 없으면 코드를 보이지 않고 �
   rerender(<ValidationFailure needsHumanReview={false} />)
   expect(screen.getByText(outcome)).toBeInTheDocument()
 })
+
+it('근거 수집 실패는 구체적인 원인과 재시도를 안내하고 계획 보완을 요구하지 않는다', () => {
+  render(
+    <ValidationFailure
+      errorCode="evidence_collection_failed"
+      needsHumanReview={false}
+      collectionFailure={{
+        message: '근거 수집을 완료하지 못했어요.',
+        retryable: true,
+        reason_codes: ['evidence_fetch_failed'],
+      }}
+    />,
+  )
+  expect(
+    screen.getByRole('list', { name: '근거 수집 실패 원인' }),
+  ).toHaveTextContent('근거를 가져오는 중 연결 또는 처리 오류가 발생했어요.')
+  expect(screen.getByText(/근거 수집을 다시 시도해 주세요/)).toBeInTheDocument()
+  expect(screen.queryByText(/보완한 뒤/)).not.toBeInTheDocument()
+})
+
+it('입력 한계가 섞이면 과거 재시도 표시 대신 원인과 수동 검토 경로를 안내한다', () => {
+  render(
+    <ValidationFailure
+      needsHumanReview
+      collectionFailure={{
+        message: '근거 수집을 완료하지 못했어요.',
+        retryable: true,
+        reason_codes: [
+          'search_results_truncated',
+          'source_evidence_unavailable',
+          'unknown_code',
+        ],
+      }}
+    />,
+  )
+  expect(screen.getByRole('list')).toHaveTextContent(
+    '검색 결과가 많아 일부 근거가 빠졌어요.',
+  )
+  expect(screen.getByRole('list')).toHaveTextContent(
+    '근거 문서의 원문·출처 위치·발췌 범위를 확인해야 해요.',
+  )
+  expect(screen.getByText(/담당자와 계획·참조 범위/)).toHaveTextContent(
+    '원문 근거를 보완한 뒤 새 검증을 요청해 주세요.',
+  )
+  expect(screen.getByRole('list')).toHaveTextContent(
+    '근거 수집 실패의 상세 원인을 확인할 수 없어 담당자의 확인이 필요해요.',
+  )
+  expect(screen.queryByText(/근거 수집을 다시 시도해 주세요/)).toBeNull()
+  expect(screen.queryByText(/잠시 후 다시 확인/)).toBeNull()
+  expect(screen.queryByText(/unknown_code/)).toBeNull()
+})
+
+it('문서가 바뀌어 출처 확인이 필요한 사유를 사람 말로 안내한다', () => {
+  render(
+    <ValidationFailure
+      needsHumanReview
+      collectionFailure={{
+        message: '출처 위치를 확인하지 못했어요.',
+        retryable: false,
+        reason_codes: ['source_confirmation_required'],
+      }}
+    />,
+  )
+  expect(screen.getByRole('list')).toHaveTextContent(
+    '문서가 바뀌어 설계 항목이 인용한 원문 위치를 확인해야 해요.',
+  )
+  expect(screen.queryByText(/source_confirmation_required/)).toBeNull()
+  expect(screen.queryByText(/근거 수집을 다시 시도해 주세요/)).toBeNull()
+})

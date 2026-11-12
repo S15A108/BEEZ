@@ -1,13 +1,16 @@
 package com.beez.backend.impactanalysis;
 
+import com.beez.backend.ai.AiClient;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.access.ProjectLogRedaction;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.config.BeezProperties;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository.Claim;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -26,14 +29,27 @@ public class PublishedAnalysisProcessor {
 
     public PublishedAnalysisProcessor(PublishedAnalysisRepository repository, ImpactAnalysisCoordinator coordinator,
             ImpactContextQuery contexts, ExplicitImpactCalculator rules, JdbcClient jdbc,
-            PlatformTransactionManager transactions, BeezProperties properties) {
+            PlatformTransactionManager transactions, BeezProperties properties,
+            @Value(AiClient.CHANGE_IMPACT_READ_TIMEOUT) Duration impactReadTimeout) {
         this.repository = repository;
         this.coordinator = coordinator;
         this.contexts = contexts;
         this.rules = rules;
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(transactions);
-        this.leaseSeconds = Math.max(60, properties.ai().readTimeout().plus(properties.ai().connectTimeout()).toSeconds() + 60);
+        // 영향 분석 전용 읽기 제한(AiClient 와 같은 값)으로 잡아, 긴 정상 분석 중에 lease 가 끝나 중단으로 읽히지 않게 한다 (S15P31A108-402)
+        this.leaseSeconds = AiClient.changeImpactLeaseSeconds(properties.ai(), impactReadTimeout);
+    }
+
+    /**
+     * 자동 재시도할 AI 실패. 일시 장애(시간 초과·연결 실패)는 재시도 정책의 횟수(최대 4회)대로 다시 시도한다.
+     * 출력 상한 잘림(model_output_truncated)은 첫 시도에서만 한 번 더 시도한다. 추론 길이가 매번 달라 다음 시도는 들어갈 수 있지만,
+     * 같은 상한으로 계속 끊기면 시도마다 입력 전체 비용만 나간다(11-11 잘림 4회 반복). 최종 FAILED 는 같은 프로젝트의
+     * 후속 발행 분석을 멈추게 하므로(PublishedAnalysisOrderingSql.PREDECESSORS_READY) 첫 잘림에 바로 닫지 않는다 (S15P31A108-402, #286 리뷰).
+     */
+    static boolean retryableAiFailure(String code, int attempt) {
+        if ("model_output_truncated".equals(code)) return attempt == 1;
+        return Set.of("model_timeout", "model_unavailable").contains(code);
     }
 
     public void process(long id) {
@@ -62,7 +78,7 @@ public class PublishedAnalysisProcessor {
             receivedModel = outcome.model();
             if (outcome.status() == ImpactAnalysisCoordinator.Status.AI_FAILED) {
                 String code = outcome.errorCode() == null ? "model_unavailable" : outcome.errorCode();
-                fail(claim, code, Set.of("model_timeout", "model_unavailable").contains(code), outcome.usage(), outcome.usageStatus().name(),
+                fail(claim, code, retryableAiFailure(code, claim.attempt()), outcome.usage(), outcome.usageStatus().name(),
                         outcome.model());
                 return;
             }
