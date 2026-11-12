@@ -27,6 +27,7 @@ class AiClientTest {
     private final AtomicReference<String> body = new AtomicReference<>();
     private final AtomicReference<String> protocol = new AtomicReference<>();
     private final AtomicReference<String> upgrade = new AtomicReference<>();
+    private volatile Duration responseDelay = Duration.ZERO;
     private volatile int status = 200;
     private volatile String response = "{\"origin\":\"MODEL\",\"result\":{},\"usage\":[]}";
 
@@ -39,6 +40,13 @@ class AiClientTest {
             upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            try {
+                Thread.sleep(responseDelay);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                exchange.close();
+                return;
+            }
             byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
@@ -100,6 +108,19 @@ class AiClientTest {
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
         assertThatThrownBy(() -> slow.documentChunks(input))
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+    }
+
+    @Test void validationCanFinishAfterTheSharedReadTimeout() {
+        responseDelay = Duration.ofMillis(800);
+        var ai = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
+                "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
+                Duration.ofSeconds(3), Duration.ofMillis(300)), null));
+        var input = Map.<String, Object>of("execution_budget_ms", 30000);
+
+        assertThat(ai.validate(input)).containsEntry("origin", "MODEL");
+        assertThat(path.get()).isEqualTo("/v1/validate");
+        assertThatThrownBy(() -> ai.documentChunks(input))
+                .hasRootCauseInstanceOf(java.net.http.HttpTimeoutException.class);
     }
 
     /** 영향 분석은 공통 읽기 제한(20초)이 아니라 AI 모델 제한(60초)보다 긴 전용 제한을 쓴다. 공통값이면 정상 분석을 먼저 끊는다 (S15P31A108-402). */

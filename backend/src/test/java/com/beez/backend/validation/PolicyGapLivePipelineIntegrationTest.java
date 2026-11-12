@@ -28,7 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 /** Opt-in synthetic PostgreSQL + real search, embedding and FastAPI/GMS validation. */
 @EnabledIfEnvironmentVariable(named = "BEEZ_POLICY_LIVE_AI_URL", matches = "http://127\\.0\\.0\\.1:[0-9]+")
 @TestPropertySource(properties = {"beez.validation.worker-enabled=false", "beez.validation.policy-analysis-enabled=true",
-        "beez.validation.execution-budget-ms=60000", "beez.validation.provider=gms",
+        "beez.validation.execution-budget-ms=60000", "beez.validation.read-timeout=75s", "beez.validation.provider=gms",
         "beez.document.embedding-profile=gms-small-1024-v1", "beez.document.embedding-model=text-embedding-3-small",
         "beez.ai.connect-timeout=5s", "beez.ai.read-timeout=75s"})
 class PolicyGapLivePipelineIntegrationTest extends IntegrationTestSupport {

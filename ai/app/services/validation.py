@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 import time
 from dataclasses import replace
@@ -25,6 +26,7 @@ from app.services.policy_validation import (
 
 MAX_INPUT_BYTES = 200_000
 MAX_BUDGET_MS = 60_000
+logger = logging.getLogger(__name__)
 # Accept only an explicitly undecided policy line, not an inference from a
 # missing search result or text with qualifiers such as "미정이 아니다".
 UNDECIDED_POLICY_LINE = re.compile(
@@ -185,6 +187,22 @@ class InvalidInput(Exception):
     """Structurally parseable input is outside the supported business contract."""
 
 
+class _ModelOutputRuleError(ValueError):
+    """Rejection with a fixed message safe to write to the log."""
+
+
+def _log_output_rejection(body: ValidateRequest, reason: str) -> None:
+    validation_id = (
+        body.validation_id if re.fullmatch(r"[0-9]{1,19}", body.validation_id) else None
+    )
+    logger.warning(
+        "task validation answer rejected: %s (validation_id=%s attempt=%s)",
+        reason,
+        validation_id,
+        body.attempt,
+    )
+
+
 def _unique(values: list[str]) -> bool:
     return len(values) == len(set(values))
 
@@ -342,21 +360,21 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
     unassessed = [entry.check_key for entry in result.unassessed]
     all_keys = completed + unassessed
     if not _unique(all_keys) or set(all_keys) != checks.keys():
-        raise ValueError("invalid check coverage")
+        raise _ModelOutputRuleError("invalid check coverage")
     if (result.analysis_status == "COMPLETE") != (not unassessed):
-        raise ValueError("invalid coverage status")
+        raise _ModelOutputRuleError("invalid coverage status")
     if body.unresolved and not unassessed:
-        raise ValueError("unresolved scope cannot be marked fully assessed")
+        raise _ModelOutputRuleError("unresolved scope cannot be marked fully assessed")
     validate_policy_result(body, result, UNDECIDED_POLICY_LINE)
     items = {item.id: item for item in body.approved_items}
     plans = {plan.id: plan for plan in body.related_plans}
     evidence = {entry.evidence_id: entry for entry in body.evidence}
     for finding in result.findings:
         if finding.check_key not in completed:
-            raise ValueError("finding for unassessed check")
+            raise _ModelOutputRuleError("finding for unassessed check")
         check = checks[finding.check_key]
         if (finding.design_item_id is None) != (finding.design_item_version_id is None):
-            raise ValueError("incomplete design reference")
+            raise _ModelOutputRuleError("incomplete design reference")
         if finding.design_item_version_id is not None:
             item = items.get(finding.design_item_version_id)
             if (
@@ -364,11 +382,11 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
                 or item.design_item_id != finding.design_item_id
                 or item.id not in check.design_item_version_ids
             ):
-                raise ValueError("unknown design reference")
+                raise _ModelOutputRuleError("unknown design reference")
         if finding.related_task_id is not None and finding.related_task_id not in {
             plans[pid].task_id for pid in check.related_plan_revision_ids
         }:
-            raise ValueError("unknown related task")
+            raise _ModelOutputRuleError("unknown related task")
         # A supplied source is only allowed when it belongs to the particular
         # check's approved item/evidence or a rule tied to its item or task.
         cited_versions = (
@@ -412,7 +430,7 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
                 )
         finding_sources = {_source_key(src) for src in finding.sources}
         if not finding_sources <= sources or not _unique(finding.evidence_ids):
-            raise ValueError("unknown source")
+            raise _ModelOutputRuleError("unknown source")
         for evidence_id in finding.evidence_ids:
             entry = evidence.get(evidence_id)
             if (
@@ -426,12 +444,12 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
                 )
                 or _source_key(entry.source) not in finding_sources
             ):
-                raise ValueError("unknown evidence")
+                raise _ModelOutputRuleError("unknown evidence")
         if (
             finding.kind in {"MISSING_INPUT", "MISSING_POLICY"}
             and finding.severity != "BLOCKING"
         ):
-            raise ValueError("invalid missing finding severity")
+            raise _ModelOutputRuleError("invalid missing finding severity")
         # Manual approved content and related plans may have no document
         # source, but comparisons must at least identify their input object.
         if (
@@ -451,7 +469,7 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
                 and body.completion_delta
             )
         ):
-            raise ValueError("comparison finding has no input reference")
+            raise _ModelOutputRuleError("comparison finding has no input reference")
         # A document that omits a policy does not prove the policy is missing.
         # Allow only a cited excerpt explicitly stating that it is undecided.
         if finding.kind == "MISSING_POLICY" and not any(
@@ -461,7 +479,7 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
             if (entry := evidence.get(evidence_id)) is not None
             and finding.design_item_version_id is not None
         ):
-            raise ValueError("policy absence is not established")
+            raise _ModelOutputRuleError("policy absence is not established")
     return result
 
 
@@ -515,7 +533,7 @@ def add_followup_suggestions(result: ValidateResult) -> ValidateResult:
             or "\x00" in suggestion
             or len(suggestion.encode("utf-16-le")) // 2 > 4000
         ):
-            raise ValueError("invalid suggested action")
+            raise _ModelOutputRuleError("invalid suggested action")
         findings.append(finding.model_copy(update={"suggested_action": suggestion}))
     return result.model_copy(update={"findings": findings})
 
@@ -631,8 +649,14 @@ async def analyze(
     )
     try:
         async with asyncio.timeout(body.execution_budget_ms / 1000):
-            response = await client.generate(request)
+            try:
+                response = await client.generate(request)
+            except LLMError as exc:
+                if exc.code == "invalid_output":
+                    _log_output_rejection(body, "invalid provider response or JSON")
+                raise
             if not response.usage:
+                _log_output_rejection(body, "missing model usage")
                 raise response.invalid_output_error()
             try:
                 raw = (
@@ -641,8 +665,15 @@ async def analyze(
                     else response.result
                 )
                 result = add_followup_suggestions(validate_output(raw, body))
-            except (ValueError, TypeError, ValidationError) as exc:
-                raise response.invalid_output_error() from exc
+            except (ValueError, TypeError) as exc:
+                if isinstance(exc, _ModelOutputRuleError):
+                    reason = str(exc)
+                elif isinstance(exc, ValidationError):
+                    reason = "invalid response schema"
+                else:
+                    reason = "invalid response content"
+                _log_output_rejection(body, reason)
+                raise response.invalid_output_error() from None
             if time.monotonic() >= deadline:
                 raise LLMError(
                     "model_timeout",

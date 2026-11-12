@@ -130,8 +130,9 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
 | `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
-| `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
-| `VALIDATION_BUDGET_MS` | | `15000`. `AI_READ_TIMEOUT` 보다 짧게 | 기본값 |
+| `VALIDATION_BUDGET_MS` | | `30000` | `infra/compose.yaml`이 backend에 전달. AI에 보내는 검증 실행 예산(ms, 1000~60000). 검증 전용 읽기 제한보다 짧게 둔다. 서버 env 파일에 이전 값 `15000`이 남아 있다면 기본값을 쓰려면 제거한다. |
+| `VALIDATION_READ_TIMEOUT` | | `40s` | `infra/compose.yaml`이 backend에 전달. 검증 워커의 `/v1/validate` 읽기 제한. 단위를 붙여 쓴다(예 `50s`). 근거 검색 임베딩은 공통 `AI_READ_TIMEOUT`을 쓴다. 검증은 비동기라 nginx 읽기 제한을 거치지 않는다. |
+| `VALIDATION_LEASE_SECONDS` | | `120` | `infra/compose.yaml`이 backend에 전달. 근거 수집, AI 연결·읽기, 결과 저장에 필요한 시간(초)을 포함한다. 읽기 제한을 늘릴 때 리스 여유도 확인한다. |
 | `VALIDATION_FAKE_ANALYZER` | | `false` | env 파일, 없으면 `false` |
 | `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 넘기지 않음 (프로필 기본값) |
 | `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | env 파일 (위 표). prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |

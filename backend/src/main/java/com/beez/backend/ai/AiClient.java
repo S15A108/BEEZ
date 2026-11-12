@@ -64,8 +64,10 @@ public class AiClient {
             "${beez.change-impact.read-timeout:" + DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS + "s}";
     static final Duration DEFAULT_CHANGE_IMPACT_READ_TIMEOUT =
             Duration.ofSeconds(Long.parseLong(DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS));
+    private static final int DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS = 40;
 
     private final RestClient rest;
+    private final RestClient validationRest;
     private final RestClient questionRest;
     private final RestClient draftRest;
     private final RestClient assignmentRest;
@@ -111,6 +113,14 @@ public class AiClient {
                 taskPlanReadTimeout, developmentContextReadTimeout, DEFAULT_CHANGE_IMPACT_READ_TIMEOUT);
     }
 
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
+                    Duration taskBreakdownReadTimeout, Duration reviewWorkerReadTimeout, Duration taskPlanReadTimeout,
+                    Duration developmentContextReadTimeout, Duration changeImpactReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, reviewWorkerReadTimeout,
+                taskPlanReadTimeout, developmentContextReadTimeout, changeImpactReadTimeout,
+                Duration.ofSeconds(DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS));
+    }
+
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
@@ -120,9 +130,15 @@ public class AiClient {
                     @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout,
                     @Value("${beez.task-plan-draft.read-timeout:40s}") Duration taskPlanReadTimeout,
                     @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout,
-                    @Value(CHANGE_IMPACT_READ_TIMEOUT) Duration changeImpactReadTimeout) {
+                    @Value(CHANGE_IMPACT_READ_TIMEOUT) Duration changeImpactReadTimeout,
+                    @Value("${beez.validation.read-timeout:" + DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS + "s}")
+                    Duration validationReadTimeout) {
         BeezProperties.Ai ai = props.ai();
+        if (validationReadTimeout.isZero() || validationReadTimeout.isNegative()) {
+            throw new IllegalArgumentException("beez.validation.read-timeout must be positive");
+        }
         this.rest = client(ai, ai.readTimeout());
+        this.validationRest = client(ai, validationReadTimeout);
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
@@ -198,7 +214,7 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> validate(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/validate").body(input).retrieve().body(java.util.Map.class);
+        return validationRest.post().uri("/v1/validate").body(input).retrieve().body(java.util.Map.class);
     }
 
     /** 이후 lead/review/embeddings 호출이 공통으로 쓸 RestClient. */
