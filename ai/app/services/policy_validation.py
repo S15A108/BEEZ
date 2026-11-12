@@ -13,6 +13,10 @@ POLICY_CHECK_KEY = "policy-gap-v1"
 POLICY_CHECK_KIND = "POLICY_ALIGNMENT"
 
 
+class ModelOutputRuleError(ValueError):
+    """A rejected model answer with a fixed reason safe to log."""
+
+
 def _unique(values):
     return len(values) == len(set(values))
 
@@ -68,16 +72,16 @@ def validate_policy_result(
                 for f in result.findings
             )
         ):
-            raise ValueError("policy output without policy check")
+            raise ModelOutputRuleError("policy output without policy check")
         return
     if len(checks) != 1 or checks[0].key != POLICY_CHECK_KEY:
-        raise ValueError("invalid policy check")
+        raise ModelOutputRuleError("invalid policy check")
     check = checks[0]
     if result.policy_assessments is None or result.policy_assessments_truncated is None:
-        raise ValueError("missing policy assessments")
+        raise ModelOutputRuleError("missing policy assessments")
     assessments = result.policy_assessments
     if not _unique([assessment.need_id for assessment in assessments]):
-        raise ValueError("duplicate policy need")
+        raise ModelOutputRuleError("duplicate policy need")
     policy_unassessed = [
         entry for entry in result.unassessed if entry.check_key == POLICY_CHECK_KEY
     ]
@@ -92,12 +96,12 @@ def validate_policy_result(
             or result.no_policy_requirements_evidence is None
             or not _plan_quote(result.no_policy_requirements_evidence, body)
         ):
-            raise ValueError("empty policy assessment without plan evidence")
+            raise ModelOutputRuleError("empty policy assessment without plan evidence")
     elif (
         result.no_policy_requirements_reason is not None
         or result.no_policy_requirements_evidence is not None
     ):
-        raise ValueError("contradictory empty policy explanation")
+        raise ModelOutputRuleError("contradictory empty policy explanation")
 
     items = {item.id: item for item in body.approved_items}
     evidence = {entry.evidence_id: entry for entry in body.evidence}
@@ -109,14 +113,14 @@ def validate_policy_result(
             or not assessment.topic.strip()
             or not assessment.explanation.strip()
         ):
-            raise ValueError("empty policy assessment field")
+            raise ModelOutputRuleError("empty policy assessment field")
         if not _plan_quote(assessment.plan_evidence, body):
-            raise ValueError("policy plan quote not in input")
+            raise ModelOutputRuleError("policy plan quote not in input")
         versions = assessment.design_item_version_ids
         if not _unique(versions) or not set(versions) <= allowed_versions:
-            raise ValueError("policy version outside check")
+            raise ModelOutputRuleError("policy version outside check")
         if not _unique(assessment.evidence_ids):
-            raise ValueError("duplicate policy evidence")
+            raise ModelOutputRuleError("duplicate policy evidence")
         for reference in assessment.approved_content_refs:
             item = items.get(reference.design_item_version_id)
             if (
@@ -124,19 +128,21 @@ def validate_policy_result(
                 or reference.design_item_version_id not in versions
                 or not _content_quote(item, reference)
             ):
-                raise ValueError("policy content reference outside input")
+                raise ModelOutputRuleError("policy content reference outside input")
         for eid in assessment.evidence_ids:
             entry = evidence.get(eid)
             if entry is None or entry.design_item_version_id not in versions:
-                raise ValueError("policy evidence outside input")
+                raise ModelOutputRuleError("policy evidence outside input")
         if assessment.state in {"SUPPORTED", "CONTRADICTORY"} and not (
             assessment.approved_content_refs or assessment.evidence_ids
         ):
-            raise ValueError("policy assessment has no approved evidence")
+            raise ModelOutputRuleError("policy assessment has no approved evidence")
         if assessment.state == "EXPLICITLY_UNDECIDED" and not any(
             undecided.search(evidence[eid].text) for eid in assessment.evidence_ids
         ):
-            raise ValueError("undecided policy lacks explicit original evidence")
+            raise ModelOutputRuleError(
+                "undecided policy lacks explicit original evidence"
+            )
 
     if (
         result.policy_assessments_truncated
@@ -145,18 +151,18 @@ def validate_policy_result(
         len(policy_unassessed) != 1
         or policy_unassessed[0].reason != "EVIDENCE_INSUFFICIENT"
     ):
-        raise ValueError("incomplete policy analysis marked assessed")
+        raise ModelOutputRuleError("incomplete policy analysis marked assessed")
 
     matched = set()
     fingerprints = set()
     for finding in result.findings:
         if finding.check_key != POLICY_CHECK_KEY:
             if finding.policy_need_id is not None or finding.conflicting_design_refs:
-                raise ValueError("policy finding outside policy check")
+                raise ModelOutputRuleError("policy finding outside policy check")
             continue
         assessment = by_need.get(finding.policy_need_id)
         if assessment is None:
-            raise ValueError("policy finding has unknown need")
+            raise ModelOutputRuleError("policy finding has unknown need")
         allowed_kinds = {
             "EXPLICITLY_UNDECIDED": {"MISSING_POLICY"},
             "CONTRADICTORY": {"MISMATCH", "CONFLICT"},
@@ -165,12 +171,12 @@ def validate_policy_result(
             finding.kind not in allowed_kinds
             or finding.design_item_version_id not in assessment.design_item_version_ids
         ):
-            raise ValueError("policy finding disagrees with assessment")
+            raise ModelOutputRuleError("policy finding disagrees with assessment")
         if not set(finding.evidence_ids) <= set(assessment.evidence_ids):
-            raise ValueError("policy finding evidence outside assessment")
+            raise ModelOutputRuleError("policy finding evidence outside assessment")
         conflicts = finding.conflicting_design_refs or []
         if (finding.kind == "CONFLICT") != bool(conflicts):
-            raise ValueError("policy conflict needs both approved items")
+            raise ModelOutputRuleError("policy conflict needs both approved items")
         seen_versions = {finding.design_item_version_id}
         for reference in conflicts:
             item = items.get(reference.design_item_version_id)
@@ -181,26 +187,30 @@ def validate_policy_result(
                 not in assessment.design_item_version_ids
                 or reference.design_item_version_id in seen_versions
             ):
-                raise ValueError("invalid conflicting policy reference")
+                raise ModelOutputRuleError("invalid conflicting policy reference")
             seen_versions.add(reference.design_item_version_id)
             if not _unique(reference.evidence_ids) or not set(
                 reference.evidence_ids
             ) <= set(finding.evidence_ids):
-                raise ValueError("conflicting policy evidence not cited")
+                raise ModelOutputRuleError("conflicting policy evidence not cited")
             if any(
                 evidence[eid].design_item_version_id != reference.design_item_version_id
                 for eid in reference.evidence_ids
             ):
-                raise ValueError("conflicting policy evidence has wrong version")
+                raise ModelOutputRuleError(
+                    "conflicting policy evidence has wrong version"
+                )
             valid_paths = {
                 tuple(ref.path)
                 for ref in assessment.approved_content_refs
                 if ref.design_item_version_id == reference.design_item_version_id
             }
             if any(tuple(path) not in valid_paths for path in reference.content_paths):
-                raise ValueError("conflicting policy content path not assessed")
+                raise ModelOutputRuleError(
+                    "conflicting policy content path not assessed"
+                )
             if not reference.evidence_ids and not reference.content_paths:
-                raise ValueError("conflicting policy has no evidence")
+                raise ModelOutputRuleError("conflicting policy has no evidence")
         primary = finding.design_item_version_id
         if not any(
             evidence[eid].design_item_version_id == primary
@@ -209,7 +219,7 @@ def validate_policy_result(
             ref.design_item_version_id == primary
             for ref in assessment.approved_content_refs
         ):
-            raise ValueError("primary policy has no evidence")
+            raise ModelOutputRuleError("primary policy has no evidence")
         fingerprint = (
             finding.policy_need_id,
             finding.kind,
@@ -217,7 +227,7 @@ def validate_policy_result(
             tuple(sorted(seen_versions)),
         )
         if fingerprint in fingerprints:
-            raise ValueError("duplicate policy finding")
+            raise ModelOutputRuleError("duplicate policy finding")
         fingerprints.add(fingerprint)
         matched.add(finding.policy_need_id)
     if POLICY_CHECK_KEY in result.checked_keys:
@@ -227,4 +237,4 @@ def validate_policy_result(
             if a.state in {"EXPLICITLY_UNDECIDED", "CONTRADICTORY"}
         }
         if not required <= matched:
-            raise ValueError("assessed policy problem has no finding")
+            raise ModelOutputRuleError("assessed policy problem has no finding")

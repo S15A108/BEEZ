@@ -138,6 +138,7 @@ public class AiClient {
             throw new IllegalArgumentException("beez.validation.read-timeout must be positive");
         }
         this.rest = client(ai, ai.readTimeout());
+        // 검증 워커의 예산에 맞춰 전용 제한을 적용한다. 공통 읽기 제한을 조정해도 검증 호출에는 영향을 주지 않는다.
         this.validationRest = client(ai, validationReadTimeout);
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
