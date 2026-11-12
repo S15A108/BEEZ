@@ -1381,9 +1381,10 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         org.mockito.Mockito.verifyNoInteractions(analyzer);
         JsonNode incomplete = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
         assertThat(incomplete.get("status").asText()).isEqualTo("ERROR");
-        assertThat(incomplete.get("findings").get(0).get("resolution").asText()).isEqualTo("RETRY");
+        assertThat(incomplete.get("findings").get(0).get("resolution").asText()).isEqualTo("HUMAN_REVIEW");
         assertThat(incomplete.at("/execution_failure/type").asText()).isEqualTo("EVIDENCE_COLLECTION_FAILED");
         assertThat(incomplete.at("/execution_failure/reason_codes").toString()).contains("source_evidence_unavailable");
+        assertThat(incomplete.at("/execution_failure/retryable").asBoolean()).isFalse();
 
         // The second task references only the restorable source. A numeric ID in the
         // model's citation must still be stored in the canonical request form.

@@ -1,3 +1,5 @@
+import { canRetryEvidenceCollection } from '@/features/validations/evidenceCollectionFailure'
+
 // 검증 실행 오류 코드(00-common '검증 실행 오류·상태 매핑')를 사람 말로. 모르는 코드는 보이지 않는다.
 const reasons: Record<string, string> = {
   ai_evidence_insufficient: '근거가 부족해 일부 내용을 검사하지 못했어요.',
@@ -22,9 +24,16 @@ const collectionReasons: Record<string, string> = {
   search_results_truncated: '검색 결과가 많아 일부 근거가 빠졌어요.',
   design_candidate_limit:
     '확인할 설계 항목이 많아 일부 후보를 가져오지 못했어요.',
+  design_reference_limit:
+    '계획에 연결한 설계 참조가 한도를 넘었어요. 작업을 나누거나 참조 범위를 조정해 주세요.',
   related_task_limit: '관련 작업이 많아 일부 작업의 근거를 가져오지 못했어요.',
-  source_evidence_unavailable: '문서 원문에서 확인할 근거를 가져오지 못했어요.',
+  unresolved_limit:
+    '미결 질문이나 개발 맥락이 한도를 넘었어요. 담당자와 필요한 입력 범위를 정리해 주세요.',
+  source_evidence_unavailable:
+    '근거 문서의 원문·출처 위치·발췌 범위를 확인해야 해요.',
   evidence_fetch_failed: '근거를 가져오는 중 연결 또는 처리 오류가 발생했어요.',
+  unknown_collection_failure:
+    '근거 수집 실패의 상세 원인을 확인할 수 없어 담당자의 확인이 필요해요.',
 }
 
 // 검증 롤백(docs/design/11-validation-rollback.md): 실패한 실행의 결과는 작업에 반영하지 않고 작업 상태도 바꾸지 않는다.
@@ -43,11 +52,21 @@ export function ValidationFailure({
   }
 }) {
   const reason = errorCode && reasons[errorCode]
+  const collectionRetryable =
+    collectionFailure?.retryable &&
+    canRetryEvidenceCollection(collectionFailure.reason_codes ?? [])
   const causes = [
     ...new Set(
-      collectionFailure?.reason_codes
-        ?.map((code) => collectionReasons[code])
-        .filter(Boolean) ?? [],
+      collectionFailure
+        ? (collectionFailure.reason_codes?.length
+            ? collectionFailure.reason_codes
+            : ['unknown_collection_failure']
+          ).map((code) =>
+            Object.hasOwn(collectionReasons, code)
+              ? collectionReasons[code]
+              : collectionReasons.unknown_collection_failure,
+          )
+        : [],
     ),
   ]
   return (
@@ -71,7 +90,9 @@ export function ValidationFailure({
       )}
       <p className="text-xs text-muted-foreground">
         {collectionFailure
-          ? `${collectionFailure.message} ${collectionFailure.retryable ? '근거 수집을 다시 시도해 주세요.' : '잠시 후 다시 확인해 주세요.'}`
+          ? collectionRetryable
+            ? `${collectionFailure.message} 근거 수집을 다시 시도해 주세요.`
+            : '담당자와 계획·참조 범위 또는 원문 근거를 보완한 뒤 새 검증을 요청해 주세요.'
           : `${reason ? `${reason} ` : ''}이번 실행 결과는 반영하지 않았고 작업 상태도 그대로예요.`}
       </p>
     </div>

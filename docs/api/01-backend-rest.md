@@ -11020,6 +11020,7 @@ HTTP `202`.
 
 - ERROR 검증 중 현재 실패 attempt의 ERROR finding이 RETRY인 경우에만 같은 validation의 새 validation_run을 생성한다. 과거 실행의 RETRY finding으로 허용하지 않는다.
 - 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 409 invalid_transition이다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. FE 버튼 표시와 별개로 서버도 같은 제한을 검사한다.
+- 근거 수집 실패의 `execution_failure.retryable`이 false여도 409 `invalid_transition`을 반환한다. 예전 실행에 RETRY로 저장된 한도 오류도 원인 코드를 다시 판정한다.
 - STALE 또는 입력 변경은 새 검증을 생성해야 한다.
 - lease/attempt가 맞는 RUNNING 결과만 반영한다. 늦은 결과를 폐기하더라도 실제 비용은 기록한다.
 - 서버와 AI는 스스로 재시도하지 않는다. 이 API(와 MCP-14)를 부를 때만 새 시도를 연다 (03-ai-internal 재시도 규칙).

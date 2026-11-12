@@ -116,10 +116,16 @@ public class ValidationRetryService {
                     "실패한 검증만 다시 실행할 수 있습니다 (현재 " + v.status() + ")");
         }
         List<String> resolutions = validations.currentErrorResolutions(v.id());
-        boolean legacyCollectionFailure = EvidenceCollectionFailure.legacy(
-                String.valueOf(responses.summary(v.summary()).get(ValidationResponses.SUMMARY_ERROR_CODE)),
+        var failureSummary = responses.summary(v.summary());
+        var collectionFailure = EvidenceCollectionFailure.fromStored(
+                String.valueOf(failureSummary.get(ValidationResponses.SUMMARY_ERROR_CODE)),
+                failureSummary.get(EvidenceCollectionFailure.KEY),
                 validations.findings(v.id()).stream().filter(f -> "ERROR".equals(f.kind())).map(f -> f.message()).toList());
-        if (!legacyCollectionFailure && (resolutions.isEmpty() || resolutions.stream().anyMatch(r -> !"RETRY".equals(r)))) {
+        if (collectionFailure != null && !Boolean.TRUE.equals(collectionFailure.get("retryable"))) {
+            throw new ApiException(HttpStatus.CONFLICT, "invalid_transition",
+                    "같은 입력의 근거 수집은 다시 실행할 수 없습니다. 원인을 확인하고 계획·검색 범위를 보완한 뒤 새 검증을 요청하세요");
+        }
+        if (resolutions.isEmpty() || resolutions.stream().anyMatch(r -> !"RETRY".equals(r))) {
             throw new ApiException(HttpStatus.CONFLICT, "invalid_transition",
                     "이 실패는 다시 실행해도 해결되지 않습니다. 근거·지원 범위를 보완한 뒤 새 검증을 요청하세요");
         }

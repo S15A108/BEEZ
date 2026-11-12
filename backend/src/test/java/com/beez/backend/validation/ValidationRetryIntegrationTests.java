@@ -33,7 +33,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import tools.jackson.databind.JsonNode;
@@ -592,7 +595,7 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void incompleteSearchHasTypedCauseAndRetriesWithoutAskingForPlanEdits() throws Exception {
+    void truncatedSearchHasTypedCauseAndRequiresReviewInsteadOfRetryingIdenticalInput() throws Exception {
         long[] t = passableTask("A");
         long id = body(accept(t, member), 202).get("id").asLong();
         doAnswer(inv -> new HybridDocumentCandidateSearch.Result(
@@ -603,17 +606,17 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         var failed = validation(id);
         assertThat(failed.get("error_code").asText()).isEqualTo("evidence_collection_failed");
         assertThat(failed.at("/execution_failure/reason_codes").toString()).contains("search_results_truncated");
-        assertThat(failed.at("/findings/0/resolution").asText()).isEqualTo("RETRY");
+        assertThat(failed.at("/findings/0/resolution").asText()).isEqualTo("HUMAN_REVIEW");
+        assertThat(failed.at("/execution_failure/retryable").asBoolean()).isFalse();
         org.mockito.Mockito.verifyNoInteractions(analyzer);
         assertThat(api.jdbc.sql("select current_plan_revision_id from task where id=:t").param("t", t[0]).query(Long.class).single()).isEqualTo(t[1]);
-        searchWorks();
-        var retry = body(retry(id, 1, member), 202);
-        assertThat(retry.has("execution_failure")).isFalse();
-        assertThat(retry.get("status").asText()).isEqualTo("RUNNING");
+        assertError(retry(id, 1, member), 409, "invalid_transition");
+        assertThat(validation(id).get("current_attempt").asInt()).isEqualTo(1);
+        assertThat(count("select count(*) from validation_run where validation_id = " + id)).isEqualTo(1);
     }
 
     @Test
-    void legacyCollectionFailurePreviouslyMarkedHumanReviewCanBeRetried() throws Exception {
+    void legacyIncompleteRangeDoesNotAssumeAnUnknownCauseIsTransient() throws Exception {
         long[] t = passableTask("A");
         long id = body(accept(t, member), 202).get("id").asLong();
         searchFails();
@@ -623,11 +626,99 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         api.jdbc.sql("update validation_finding set resolution='HUMAN_REVIEW',message='검색 또는 원문 근거 범위가 불완전합니다' where validation_id=:v and kind='ERROR'")
                 .param("v", id).update();
         assertThat(validation(id).at("/execution_failure/type").asText()).isEqualTo("EVIDENCE_COLLECTION_FAILED");
-        searchWorks();
+        assertThat(validation(id).at("/execution_failure/retryable").asBoolean()).isFalse();
+        assertError(retry(id, 1, member), 409, "invalid_transition");
+        assertThat(api.jdbc.sql("select current_plan_revision_id from task where id=:t").param("t", t[0]).query(Long.class).single()).isEqualTo(t[1]);
+    }
+
+    @Test
+    void legacyFetchFailureStillRetriesWithoutTypedDiagnostics() throws Exception {
+        long[] t = passableTask("legacy transient");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        searchFails();
+        assertThat(worker.runOnce()).isTrue();
+        api.jdbc.sql("update validation set summary=(summary-'execution_failure') || '{\"error_code\":\"evidence_fetch_failed\"}'::jsonb where id=:v")
+                .param("v", id).update();
+        assertThat(validation(id).at("/execution_failure/retryable").asBoolean()).isTrue();
         var retried = body(retry(id, 1, member), 202);
         assertThat(retried.has("execution_failure")).isFalse();
         assertThat(retried.get("current_attempt").asInt()).isEqualTo(2);
+        org.mockito.Mockito.verifyNoInteractions(analyzer);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"evidence_fetch_failed", "source_evidence_unavailable", "search_query_too_long",
+            "search_query_limit", "design_candidate_limit", "related_task_limit",
+            "evidence_fetch_failed,search_query_limit", "evidence_fetch_failed,unknown-internal-cause", ""})
+    void incompleteCollectionClassifiesCausesAndGuardsRetry(String causes) throws Exception {
+        long[] t = passableTask("collection classification");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        var reasons = causes.isEmpty() ? List.<String>of() : List.of(causes.split(","));
+        JobLease lease = repository.lease(120).orElseThrow();
+        applier.applyInputIncomplete(lease, reasons, 1);
+        boolean transientFailure = "evidence_fetch_failed".equals(causes);
+        var failed = validation(id);
+        assertThat(failed.at("/execution_failure/retryable").asBoolean()).isEqualTo(transientFailure);
+        assertThat(failed.at("/findings/0/resolution").asText()).isEqualTo(transientFailure ? "RETRY" : "HUMAN_REVIEW");
+        org.mockito.Mockito.verifyNoInteractions(analyzer);
         assertThat(api.jdbc.sql("select current_plan_revision_id from task where id=:t").param("t", t[0]).query(Long.class).single()).isEqualTo(t[1]);
+        assertThat(retry(id, 1, member).statusCode()).isEqualTo(transientFailure ? 202 : 409);
+        assertThat(validation(id).get("current_attempt").asInt()).isEqualTo(transientFailure ? 2 : 1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"search_query_too_long", "source_evidence_unavailable",
+            "evidence_fetch_failed,search_results_truncated", "evidence_fetch_failed,unknown-internal-cause", ""})
+    void historicalTypedRetryCannotReopenPermanentMixedOrUnknownCauses(String causes) throws Exception {
+        long[] t = passableTask("historical classification");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        searchFails();
+        assertThat(worker.runOnce()).isTrue();
+        var reasons = causes.isEmpty() ? List.<String>of() : List.of(causes.split(","));
+        var stored = Map.of("type", "EVIDENCE_COLLECTION_FAILED", "reason_codes", reasons, "retryable", true);
+        api.jdbc.sql("update validation set summary=summary || cast(:detail as jsonb) where id=:v")
+                .param("detail", JSON.writeValueAsString(Map.of("execution_failure", stored))).param("v", id).update();
+        assertThat(validation(id).at("/findings/0/resolution").asText()).isEqualTo("RETRY");
+        assertThat(validation(id).at("/execution_failure/retryable").asBoolean()).isFalse();
+        assertError(retry(id, 1, member), 409, "invalid_transition");
+        assertThat(validation(id).get("current_attempt").asInt()).isEqualTo(1);
+        assertThat(count("select count(*) from validation_run where validation_id = " + id)).isEqualTo(1);
+        org.mockito.Mockito.verifyNoInteractions(analyzer);
+    }
+
+    @Test
+    void transientCodesDoNotOverrideStoredFalseOrHumanReviewFinding() throws Exception {
+        long[] t = passableTask("human review wins");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        searchFails();
+        assertThat(worker.runOnce()).isTrue();
+        api.jdbc.sql("update validation set summary=jsonb_set(summary,'{execution_failure,retryable}','false'::jsonb) where id=:v")
+                .param("v", id).update();
+        assertThat(validation(id).at("/execution_failure/retryable").asBoolean()).isFalse();
+        assertError(retry(id, 1, member), 409, "invalid_transition");
+        api.jdbc.sql("update validation set summary=jsonb_set(summary,'{execution_failure,retryable}','true'::jsonb) where id=:v")
+                .param("v", id).update();
+        api.jdbc.sql("update validation_finding set resolution='HUMAN_REVIEW' where validation_id=:v and kind='ERROR'")
+                .param("v", id).update();
+        assertError(retry(id, 1, member), 409, "invalid_transition");
+        assertThat(validation(id).get("current_attempt").asInt()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"design_reference_limit", "unresolved_limit"})
+    void workerPreservesStructuralInputLimitsInsteadOfLabellingThemFetchFailures(String cause) throws Exception {
+        long[] t = passableTask("structural limit");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        doThrow(new ApiException(HttpStatus.CONFLICT, cause, "검증 입력 범위 초과"))
+                .when(search).search(any(), org.mockito.ArgumentMatchers.eq(projectId), any(),
+                        org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(100));
+        assertThat(worker.runOnce()).isTrue();
+        var failed = validation(id);
+        assertThat(failed.at("/execution_failure/reason_codes/0").asText()).isEqualTo(cause);
+        assertThat(failed.at("/execution_failure/retryable").asBoolean()).isFalse();
+        assertThat(failed.at("/findings/0/resolution").asText()).isEqualTo("HUMAN_REVIEW");
+        assertError(retry(id, 1, member), 409, "invalid_transition");
+        org.mockito.Mockito.verifyNoInteractions(analyzer);
     }
 
     @Test

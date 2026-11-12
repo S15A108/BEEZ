@@ -113,6 +113,11 @@ const relationLabel = {
 } as const
 
 const taskSteps = ['계획 작성', '계획 검증', '작업 시작', '완료 보고']
+const planInputCollectionReasons = new Set([
+  'search_query_too_long',
+  'search_query_limit',
+  'design_reference_limit',
+])
 // 지난 단계 아래 상태 글(캔버스 PNL-05-v2-tasks: 계획 작성 완료 · 계획 검증 통과 · 작업 시작 지금)
 const stepDoneText = ['완료', '통과', '완료', '완료']
 // 목록의 상태 타일과 머리글(캔버스 PNL-05-v2-tasks, 11-05 결정). TSK-A02에 개수·검색 파라미터가 없어 불러온 목록으로 센다.
@@ -367,6 +372,16 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
         ? task.validation
         : undefined
   const view = result ? toValidationView(result) : undefined
+  const collectionNeedsReview =
+    !!view?.collectionFailure &&
+    !view.collectionFailure.retryable &&
+    result?.plan_revision_id === task?.current_plan_revision.id
+  // 계획 입력 한도는 새 리비전이 필요하다. 문서·출처·프로젝트 맥락은 외부에서 보완한 뒤 같은 계획을 새로 검증할 수 있다.
+  const collectionNeedsPlanChange =
+    collectionNeedsReview &&
+    view?.collectionFailure?.reason_codes.some((code) =>
+      planInputCollectionReasons.has(code),
+    )
   const policyAnalysis = view?.policyAnalysis
   const needsHumanReview = view?.needsHumanReview
   const delta =
@@ -425,7 +440,9 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
           ? staleReasonText(result.stale_reason)
           : result?.status === 'ERROR'
             ? view?.collectionFailure
-              ? '근거를 수집하지 못했어요. 수집을 재시도한 뒤 검증 결과를 확인해 주세요.'
+              ? view.collectionFailure.retryable
+                ? '근거를 수집하지 못했어요. 수집을 재시도한 뒤 검증 결과를 확인해 주세요.'
+                : '담당자와 팀장이 계획의 범위·설계 참조·원문 근거를 확인한 뒤 새로 검증해 주세요.'
               : needsHumanReview
                 ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
                 : retryLimited
@@ -809,7 +826,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             onOpenDocument={(id) => openPane('documents', id)}
                           />
                         )}
-                      {isOwner && active && (
+                      {isOwner && active && !collectionNeedsPlanChange && (
                         <Button
                           variant={primary === 'validate' ? 'default' : 'link'}
                           size={primary === 'validate' ? 'default' : 'sm'}
@@ -832,7 +849,11 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                           }
                         >
                           {primary === 'validate' && <ClipboardCheck />}
-                          {primary === 'validate' ? '계획 검증' : '다시 검증'}
+                          {collectionNeedsReview
+                            ? '보완 후 새 검증'
+                            : primary === 'validate'
+                              ? '계획 검증'
+                              : '다시 검증'}
                         </Button>
                       )}
                       {isOwner &&
@@ -1220,6 +1241,31 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             needsHumanReview={!!needsHumanReview}
                             collectionFailure={view?.collectionFailure}
                           />
+                          {view?.collectionFailure &&
+                            !view.collectionFailure.retryable && (
+                              <div className="flex flex-wrap gap-2">
+                                {isOwner && active && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={action.busy}
+                                    onClick={() => {
+                                      setFormTask(current)
+                                      setEditing('edit')
+                                    }}
+                                  >
+                                    계획·참조 범위 검토
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openPane('documents')}
+                                >
+                                  근거 문서 확인
+                                </Button>
+                              </div>
+                            )}
                           {isOwner && view?.retryable && !retryLimited && (
                             <Button
                               size="sm"
@@ -1247,7 +1293,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                       {attemptLimitReached && (
                         <p role="alert" className="text-sm text-destructive">
                           {view?.collectionFailure
-                            ? '근거 수집 재시도 횟수를 모두 썼어요. 수집 상태를 팀에 알려 주세요.'
+                            ? '이 입력으로 AI 검증할 수 있는 횟수를 모두 썼어요.'
                             : getErrorCodeMessage('validation_attempt_limit')}
                         </p>
                       )}

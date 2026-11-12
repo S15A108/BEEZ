@@ -62,13 +62,8 @@ public class ValidationResponses {
                 ? (Map<String, Object>) value : null;
         Map<String, Object> executionFailure = null;
         if ("ERROR".equals(v.status())) {
-            Object failure = summary(v.summary()).get(EvidenceCollectionFailure.KEY);
-            if (EvidenceCollectionFailure.CODE.equals(errorCode) || EvidenceCollectionFailure.legacy(errorCode,
-                    findings.stream().filter(f -> "ERROR".equals(f.kind())).map(FindingResponse::message).toList())) {
-                List<String> reasons = failure instanceof Map<?, ?> detail && detail.get("reason_codes") instanceof List<?> codes
-                        ? codes.stream().filter(String.class::isInstance).map(String.class::cast).toList() : List.of();
-                executionFailure = EvidenceCollectionFailure.detail(reasons);
-            }
+            executionFailure = EvidenceCollectionFailure.fromStored(errorCode, summary(v.summary()).get(EvidenceCollectionFailure.KEY),
+                    findings.stream().filter(f -> "ERROR".equals(f.kind())).map(FindingResponse::message).toList());
         }
         return new ValidationResponse(Ids.str(v.id()), Ids.str(v.taskId()), Ids.str(v.planRevisionId()),
                 Ids.str(responseBaseline(v)), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,

@@ -88,7 +88,7 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .contains("llm-validate-" + validation + "-attempt-1-call-1");
     }
 
-    @Test void truncatedSearchClosesRunForRetryWithoutCallingAi() throws Exception {
+    @Test void truncatedSearchClosesRunForHumanReviewWithoutCallingAi() throws Exception {
         when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(), true, false));
         var task = api.post("/api/projects/" + project + "/tasks",
@@ -108,7 +108,7 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         assertThat(api.jdbc.sql("select status from validation where id=:v")
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
         assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
-                .param("v", validation).query(String.class).single()).isEqualTo("RETRY");
+                .param("v", validation).query(String.class).single()).isEqualTo("HUMAN_REVIEW");
         assertThat(api.jdbc.sql("select summary::text from validation where id=:v").param("v", validation).query(String.class).single())
                 .contains("EVIDENCE_COLLECTION_FAILED", "search_results_truncated");
         assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")

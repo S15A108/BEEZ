@@ -8,7 +8,7 @@
 
 화면은 수정되는 칸마다 변경 전후, 수정 이유, 해결하려는 검증 항목과 문서 인용을 보여 준다. **승인하고 재검증**을 눌렀을 때만 새 리비전을 만들고 검증을 접수한다. 취소는 원래 계획을 유지한다. 기존 수동 편집과 MCP 계획 저장 경로는 유지한다.
 
-검색·원문 확보 실패는 계획 내용의 위반으로 취급하지 않는다. 검증은 `ERROR`로 끝나고, 화면은 실패 원인과 **다시 시도**를 제공한다. 이 경우 계획 수정안 생성이나 사람의 계획 보완을 요구하지 않는다. 실제 내용의 근거 부족이나 정책 판단이 필요한 결과는 기존 검토 흐름을 따른다.
+검색·원문 확보가 불완전하면 검증은 원인 코드와 함께 `ERROR`로 끝난다. 일시적인 수집 실패에는 **근거 수집 재시도**를 안내한다. 검색 질의 길이, 후보 개수 등 입력 한도가 원인이면 담당자가 원인을 확인하고 계획이나 수집 범위를 보완한 뒤 새 검증을 요청한다. AI 계획 수정안은 검증에서 `FIX_PLAN`으로 확인한 항목을 대상으로 한다.
 
 ## 제안과 승인 경계
 
@@ -23,14 +23,14 @@
 
 ## 근거 수집 실패 계약
 
-검증 응답의 선택 필드 `execution_failure`는 `type: EVIDENCE_COLLECTION_FAILED`, `reason_codes`, `retryable: true`, 사용자용 `message`를 포함한다. 새 실패 코드는 `evidence_collection_failed`이며 발견 항목의 해결 동작은 `RETRY`다.
+검증 응답의 선택 필드 `execution_failure`는 `type: EVIDENCE_COLLECTION_FAILED`, `reason_codes`, 불리언 `retryable`, 사용자용 `message`를 포함한다. 실패 코드는 `evidence_collection_failed`다. 원인이 일시적 조회 실패인 `evidence_fetch_failed`일 때 `retryable: true`와 `RETRY`를 반환한다. 검색·후보·관련 작업의 한도, 승인 원문의 출처나 범위를 확인할 수 없는 `source_evidence_unavailable`, 알 수 없는 원인 중 하나라도 포함되면 `retryable: false`와 `HUMAN_REVIEW`를 사용한다.
 
-공개 원인 코드는 검색 질의 길이·개수 제한, 검색 결과 잘림, 설계 후보·관련 작업 개수 제한, 원문 확보 실패로 한정한다. 예외 문자열이나 내부 저장 경로는 공개하지 않는다. 원인을 기록하지 않은 과거 결과에는 구체 원인을 추측하지 않는다.
+공개 원인은 검색 질의 길이·개수 제한, 검색 결과 잘림, 설계 참조·후보·관련 작업·미해결 질문 개수 제한, 원문 확보 실패다. 구체 원인을 확인할 수 없으면 `unknown_collection_failure`로 표시한다.
 
-과거 `evidence_fetch_failed`와 정확한 수집 실패 문구를 가진 `ai_evidence_insufficient` 결과는 호환 처리한다. 일반적인 `ai_evidence_insufficient`나 실제 `HUMAN_REVIEW` 결과를 모두 재시도로 바꾸지 않는다. 재시도 시 이전 실행의 실패 진단을 지워 새 시도의 결과와 섞이지 않게 한다.
+과거 `evidence_fetch_failed`는 재시도할 수 있다. 정확한 수집 실패 문구를 가진 과거 `ai_evidence_insufficient`는 수집 실패 안내를 표시하고 원인을 수동으로 확인하게 한다. 재시도 시 이전 실행의 실패 진단을 지워 새 시도의 결과와 섞이지 않게 한다.
 
 ## API
 
-공개 API는 [TSK-A10](../api/01-backend-rest.md#tsk-a10)·[TSK-A11](../api/01-backend-rest.md#tsk-a11), 내부 AI 계약은 [AI-A15](../api/03-ai-internal.md#ai-a15)를 따른다. 초안 생성의 기존 동시 호출·시간당 사용량 제한과 문서 검색·원문 검증을 재사용한다.
+공개 API는 [TSK-A10](../api/01-backend-rest.md#tsk-a10)·[TSK-A11](../api/01-backend-rest.md#tsk-a11), 내부 AI 계약은 [AI-A15](../api/03-ai-internal.md#ai-a15)를 따른다. 초안과 수정안 생성은 동시 호출·시간당 사용량 제한을 공유한다. 한도를 넘으면 기존 `draft_limit_exceeded`와 초안 생성 횟수 안내가 표시된다. 문서 검색과 원문 검증도 초안 생성과 같은 경로를 사용한다.
 
 현재 계획과 검증 결과는 토큰 예산에 맞춰 잘라내지 않는다. 전체 원본을 담을 수 없거나 유효한 문서 근거가 들어가지 않으면 생성에 실패한다. 문서 발췌·설계 문맥은 항목 단위로 줄일 수 있다. 모델 실행은 최대 30초로 제한하며 BE 읽기 제한의 기본값은 40초다.

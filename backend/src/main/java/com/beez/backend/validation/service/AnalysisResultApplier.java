@@ -111,8 +111,13 @@ public class AnalysisResultApplier {
         Optional<Current> active = current(lease, Mode.RESULT, Map.of(), durationMs);
         if (active.isEmpty()) return;
         var detail = EvidenceCollectionFailure.detail(reasonCodes);
+        boolean retryable = Boolean.TRUE.equals(detail.get("retryable"));
         fail(lease, active.get().validation(), active.get().runId(), EvidenceCollectionFailure.CODE, "ERROR",
-                (String) detail.get("message"), "RETRY", "검색·문서 준비 상태를 확인하고 근거 수집부터 다시 시도해 주세요.",
+                (String) detail.get("message"), retryable ? "RETRY" : "HUMAN_REVIEW",
+                retryable ? "검색·문서 준비 상태를 확인하고 근거 수집부터 다시 시도해 주세요."
+                        : reasonCodes.contains("source_evidence_unavailable")
+                        ? "승인 문서와 출처 위치·인용 범위를 보완한 뒤 새 검증을 요청해 주세요."
+                        : "원인을 확인하고 계획·검색 범위를 보완한 뒤 새 검증을 요청해 주세요.",
                 null, durationMs, Map.of(EvidenceCollectionFailure.KEY, detail));
     }
 
