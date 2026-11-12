@@ -36,6 +36,7 @@ public class ValidationInputAssembler {
     private static final int MAX_QUERIES = 10;
     private static final int MAX_UNRESOLVED = 100;
     private static final int MAX_UNRESOLVED_TEXT = 2000;
+    private static final String PACKET_SELECTION_TRUNCATED_PREFIX = "SELECTION_TRUNCATED: ";
     // AI-A02 allows 200 KB; reserve space for JSON formatting and the snapshot hash.
     private static final int MAX_SEARCH_CONTEXT_REQUEST_BYTES = 180_000;
     private static final Pattern API_PATH = Pattern.compile("/(?=[\\p{L}\\p{N}_{])[\\p{L}\\p{N}_{}./-]+");
@@ -399,8 +400,7 @@ public class ValidationInputAssembler {
             if (packetBaseline.longValue() != baselineId) throw incomplete("stale_context_packet");
             if (!(packet.get("unresolved") instanceof List<?> entries)
                     || !(packet.get("constraints") instanceof List<?> packetConstraints)) throw incomplete("invalid_context_packet");
-            if (entries.size() > MAX_UNRESOLVED || unresolved.size() + entries.size() > MAX_UNRESOLVED
-                    || packetConstraints.size() > MAX_UNRESOLVED) {
+            if (entries.size() > MAX_UNRESOLVED || packetConstraints.size() > MAX_UNRESOLVED) {
                 throw incomplete("unresolved_limit");
             }
             for (Object entry : packetConstraints) {
@@ -413,7 +413,10 @@ public class ValidationInputAssembler {
                 if (!(entry instanceof String question) || question.isBlank() || question.length() > MAX_UNRESOLVED_TEXT) {
                     throw incomplete("invalid_context_packet");
                 }
-                unresolved.add("context_packet:" + packetId + " " + question);
+                // The stored packet records its selection cap. Validation collects evidence independently.
+                if (!question.startsWith(PACKET_SELECTION_TRUNCATED_PREFIX)) {
+                    unresolved.add("context_packet:" + packetId + " " + question);
+                }
             }
             if (unresolved.size() > MAX_UNRESOLVED) throw incomplete("unresolved_limit");
         }
