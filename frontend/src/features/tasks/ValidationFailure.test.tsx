@@ -92,3 +92,21 @@ it('입력 한계가 섞이면 과거 재시도 표시 대신 원인과 수동 �
   expect(screen.queryByText(/잠시 후 다시 확인/)).toBeNull()
   expect(screen.queryByText(/unknown_code/)).toBeNull()
 })
+
+it('문서가 바뀌어 출처 확인이 필요한 사유를 사람 말로 안내한다', () => {
+  render(
+    <ValidationFailure
+      needsHumanReview
+      collectionFailure={{
+        message: '출처 위치를 확인하지 못했어요.',
+        retryable: false,
+        reason_codes: ['source_confirmation_required'],
+      }}
+    />,
+  )
+  expect(screen.getByRole('list')).toHaveTextContent(
+    '문서가 바뀌어 설계 항목이 인용한 원문 위치를 확인해야 해요.',
+  )
+  expect(screen.queryByText(/source_confirmation_required/)).toBeNull()
+  expect(screen.queryByText(/근거 수집을 다시 시도해 주세요/)).toBeNull()
+})
