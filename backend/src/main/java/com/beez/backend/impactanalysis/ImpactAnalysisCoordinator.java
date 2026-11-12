@@ -93,7 +93,9 @@ public class ImpactAnalysisCoordinator {
     }
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private static final Set<String> AI_CODES = Set.of("model_timeout", "model_unavailable",
+    // model_output_truncated: 출력 상한에 닿아 끊김. model_unavailable 로 접으면 장애로 보여 발행 후 분석이 같은 상한으로
+    // 재시도만 반복했다. 그대로 남겨 원인을 가리고, 자동 재시도 대상(model_timeout·model_unavailable)에서 뺀다 (S15P31A108-402)
+    private static final Set<String> AI_CODES = Set.of("model_timeout", "model_unavailable", "model_output_truncated",
             "invalid_ai_input", "invalid_output", "validation_failed", "invalid_internal_token");
     private static final Set<String> STALE_CODES = Set.of("baseline_changed", "baseline_inconsistent",
             "baseline_missing", "proposal_not_analyzable", "analysis_input_missing", "analysis_input_changed",

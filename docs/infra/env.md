@@ -210,10 +210,14 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
 - 영향 분석은 주소·키 줄을 쓰지 않습니다. 주소 기본값이 GMS 주소이고, 키가 비면 ai가 그 주소에서만
   `GMS_KEY`를 씁니다. `IMPACT_LLM_ENDPOINT`를 굳이 적으면 기본값과 **글자 하나까지 같아야** 합니다. 대소문자나
   끝 `/`만 달라도 다른 주소로 보고 공용 키를 쓰지 않아 502 `model_unavailable`이 납니다.
-- 영향 분석의 모델 시간 제한은 `IMPACT_LLM_TIMEOUT_SECONDS` 기본 15초이고, backend 읽기 제한(`AI_READ_TIMEOUT`
-  20초)보다 짧아야 합니다. 같은 날 비비 질문의 `gpt-6-luna` 호출은 11.7~17.9초 걸렸습니다. 켠 뒤 영향 분석이
-  `model_timeout`으로 실패하면 `llm_usage.latency_ms`로 실제 지연을 보고, 두 값을 함께 올립니다. 이 변수는 지금
-  compose가 전달하지 않으므로 올리려면 compose에 추가해야 합니다.
+- 영향 분석의 모델 시간 제한은 `IMPACT_LLM_TIMEOUT_SECONDS` 기본 60초, 출력 상한은 `IMPACT_LLM_OUTPUT_TOKEN_LIMIT`
+  기본 4,096(허용 최대, 추론 토큰 포함)입니다. backend는 영향 분석 전용 읽기 제한 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`
+  (기본 75초)을 쓰며, 모델 시간 제한보다 길어야 합니다. 세 변수 모두 compose가 전달하므로 서버 env 파일에 한 줄 쓰면
+  반영됩니다(S15P31A108-402). 기본값 그대로면 쓸 필요가 없습니다.
+- 출력 상한 1,024이던 11-11에는 설계 40개 프로젝트(입력 약 1.1만 토큰)에서 영향 분석이 4번 모두 출력 1,024토큰에서 끊겨
+  실패했습니다(약 12초). 잘림은 이제 `model_unavailable`이 아니라 `model_output_truncated`로 남고, ai 로그에
+  `impact_completion … finish_reason=length` 한 줄이 찍힙니다. `model_timeout`이면 `llm_usage.latency_ms`로 실제 지연을
+  보고 모델 시간 제한과 backend 읽기 제한을 함께 올립니다.
 - **켜도 남는 실패(2026-11-10 기준)**: 보완 질문·설계 초안은 ai가 400 `validation_failed`로 거절합니다(BE가
   해시를 `sha256:` 접두어째 보냄, S15P31A108-373). 비비 질문은 모델이 답해도 ai 검증에서 거절돼 템플릿으로
   끝납니다(S15P31A108-374). 이 둘은 env로 고칠 수 없으니 설정을 다시 의심하지 않습니다.

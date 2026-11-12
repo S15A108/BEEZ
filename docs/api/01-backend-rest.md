@@ -8028,7 +8028,7 @@ HTTP `200`.
 없음.
 #### Response
 
-HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RUNNING이 있으면 409 analysis_running, 분석할 수 없는 상태는 409 proposal_not_analyzable, 기준 변경은 409 baseline_changed다. 만료 RUNNING을 FAILED(analysis_interrupted)로 닫고 새 run을 만든다. 포화는 접수 후 FAILED(analysis_capacity)로 기록한다. AI 실패에도 explicit은 보존하며, 저장 트랜잭션에서 프로젝트 잠금과 입력 지문을 재검사한다. 발행 후 분석 실행은 #227의 별도 계약이다.
+HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RUNNING이 있으면 409 analysis_running, 분석할 수 없는 상태는 409 proposal_not_analyzable, 기준 변경은 409 baseline_changed다. 만료 RUNNING을 FAILED(analysis_interrupted)로 닫고 새 run을 만든다. 포화는 접수 후 FAILED(analysis_capacity)로 기록한다. AI 실패에도 explicit은 보존하며, 저장 트랜잭션에서 프로젝트 잠금과 입력 지문을 재검사한다. AI 답이 출력 상한에 끊기면 FAILED(`model_output_truncated`)로 남겨 일반 장애(`model_unavailable`)와 가린다. 발행 후 분석도 같은 코드로 실패하며, 같은 상한으로는 다시 끊기므로 자동 재시도하지 않는다(재시도는 `model_timeout`·`model_unavailable`만, S15P31A108-402). AI 호출 읽기 제한은 영향 분석 전용 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`(기본 75초, AI 모델 제한 60초보다 길게)이고 실행 lease도 이 값으로 잡는다. 발행 후 분석 실행은 #227의 별도 계약이다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |

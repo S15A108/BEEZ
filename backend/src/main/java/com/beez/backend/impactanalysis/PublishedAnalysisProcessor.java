@@ -1,13 +1,16 @@
 package com.beez.backend.impactanalysis;
 
+import com.beez.backend.ai.AiClient;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.access.ProjectLogRedaction;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.config.BeezProperties;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository.Claim;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -26,14 +29,16 @@ public class PublishedAnalysisProcessor {
 
     public PublishedAnalysisProcessor(PublishedAnalysisRepository repository, ImpactAnalysisCoordinator coordinator,
             ImpactContextQuery contexts, ExplicitImpactCalculator rules, JdbcClient jdbc,
-            PlatformTransactionManager transactions, BeezProperties properties) {
+            PlatformTransactionManager transactions, BeezProperties properties,
+            @Value(AiClient.CHANGE_IMPACT_READ_TIMEOUT) Duration impactReadTimeout) {
         this.repository = repository;
         this.coordinator = coordinator;
         this.contexts = contexts;
         this.rules = rules;
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(transactions);
-        this.leaseSeconds = Math.max(60, properties.ai().readTimeout().plus(properties.ai().connectTimeout()).toSeconds() + 60);
+        // 영향 분석 전용 읽기 제한(AiClient 와 같은 값)으로 잡아, 긴 정상 분석 중에 lease 가 끝나 중단으로 읽히지 않게 한다 (S15P31A108-402)
+        this.leaseSeconds = Math.max(60, AiClient.changeImpactReadTimeout(properties.ai(), impactReadTimeout).plus(properties.ai().connectTimeout()).toSeconds() + 60);
     }
 
     public void process(long id) {

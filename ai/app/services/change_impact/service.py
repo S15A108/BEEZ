@@ -61,7 +61,7 @@ class ImpactModelConfig:
     allowed_response_models: tuple[str, ...] = ()
     max_input_bytes: int = 262144
     max_items_per_list: int = 100
-    output_token_limit: int = 1024
+    output_token_limit: int = 4096
     output_token_parameter: str = "max_completion_tokens"
     response_format_mode: str = "json_object"
 
@@ -123,6 +123,8 @@ class ImpactAnalysisService:
             response_format=_response_format(config.response_format_mode),
             model_options={config.output_token_parameter: config.output_token_limit},
             allowed_response_models=config.allowed_response_models,
+            # 호출마다 finish_reason·추론 토큰을 로그 한 줄로 남겨, 출력 상한 잘림(length)을 다른 실패와 가린다 (S15P31A108-402)
+            diagnostics="impact",
         )
         response = await self._client.generate(request)
         try:

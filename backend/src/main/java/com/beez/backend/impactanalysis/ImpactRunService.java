@@ -1,13 +1,16 @@
 package com.beez.backend.impactanalysis;
 
 import static com.beez.backend.designitem.support.DesignJson.*;
+import com.beez.backend.ai.AiClient;
 import com.beez.backend.common.access.*;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.config.BeezProperties;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.service.DesignCommandService;
+import java.time.Duration;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.*;
@@ -32,10 +35,12 @@ public class ImpactRunService {
 
     public ImpactRunService(ProjectAccessChecker access, DesignProjectRepository projects, DesignCommandService commands,
             ImpactContextQuery contexts, ExplicitImpactCalculator rules, ImpactAnalysisCoordinator coordinator,
-            ImpactRunRepository runs, ImpactRunExecutor executor, PlatformTransactionManager transactions, BeezProperties properties) {
+            ImpactRunRepository runs, ImpactRunExecutor executor, PlatformTransactionManager transactions, BeezProperties properties,
+            @Value(AiClient.CHANGE_IMPACT_READ_TIMEOUT) Duration impactReadTimeout) {
         this.access=access; this.projects=projects; this.commands=commands; this.contexts=contexts; this.rules=rules;
         this.coordinator=coordinator; this.runs=runs; this.executor=executor; this.tx=new TransactionTemplate(transactions);
-        this.leaseSeconds=Math.max(60, properties.ai().readTimeout().plus(properties.ai().connectTimeout()).toSeconds()+60);
+        // 영향 분석 전용 읽기 제한(AiClient 와 같은 값)으로 잡아, 긴 정상 분석 중에 lease 가 끝나 중단으로 읽히지 않게 한다 (S15P31A108-402)
+        this.leaseSeconds=Math.max(60, AiClient.changeImpactReadTimeout(properties.ai(), impactReadTimeout).plus(properties.ai().connectTimeout()).toSeconds()+60);
     }
 
     private record Accepted(Result result, Long newRun) {}

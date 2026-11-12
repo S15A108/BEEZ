@@ -107,7 +107,7 @@ def test_success_returns_candidate_and_usage_with_unique_call_key(api):
     assert payload["result"]["candidates"][0]["validation_id"] == "601"
     assert payload["usage"][0]["feature"] == "CHANGE_IMPACT"
     assert payload["usage"][0]["input_tokens"] == 12
-    assert provider.requests[0].timeout_seconds == 15.0
+    assert provider.requests[0].timeout_seconds == 60.0
     again = client.post("/v1/impact", json=body(), headers=headers)
     assert payload["usage"][0]["request_key"] != again.json()["usage"][0]["request_key"]
 

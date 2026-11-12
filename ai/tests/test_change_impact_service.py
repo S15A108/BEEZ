@@ -129,7 +129,7 @@ def test_candidate_uses_only_input_records_and_preserves_call_usage():
     assert response.usage[0].project_id == "101"
     assert not response.usage[0].failed
     assert provider.requests[0].response_format == {"type": "json_object"}
-    assert provider.requests[0].model_options == {"max_completion_tokens": 1024}
+    assert provider.requests[0].model_options == {"max_completion_tokens": 4096}
     assert json.loads(provider.requests[0].messages[1].content)["proposal_id"] == "71"
 
 
