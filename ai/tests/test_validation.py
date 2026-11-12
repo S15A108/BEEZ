@@ -131,7 +131,10 @@ class Provider:
         self.calls.append(request)
         if self.error:
             raise self.error
-        return ProviderResponse(json.dumps(self.result), request.model, 11, 7)
+        content = (
+            self.result if isinstance(self.result, str) else json.dumps(self.result)
+        )
+        return ProviderResponse(content, request.model, 11, 7)
 
 
 @pytest.mark.asyncio
@@ -544,21 +547,30 @@ async def test_comparison_finding_must_reference_input_object():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "fault",
+    ("fault", "reason"),
     [
-        "omitted",
-        "duplicated",
-        "unknown_source",
-        "unknown_evidence",
-        "foreign_task",
-        "partial_claim",
-        "unproven_policy",
+        ("omitted", "invalid check coverage"),
+        ("duplicated", "invalid check coverage"),
+        ("unknown_source", "unknown source"),
+        ("unknown_evidence", "unknown evidence"),
+        ("foreign_task", "unknown related task"),
+        ("partial_claim", "invalid coverage status"),
+        ("unproven_policy", "policy absence is not established"),
+        ("schema", "invalid response schema"),
+        ("json", "invalid provider response or JSON"),
     ],
 )
-async def test_bad_model_output_fails_with_usage(fault):
+async def test_bad_model_output_fails_with_usage_and_logs_safe_reason(
+    fault, reason, caplog
+):
     body = fixture_request()
+    body["plan_revision"]["plan"]["goal"] = "private plan text"
     result = result_for(body)
-    if fault == "omitted":
+    if fault == "json":
+        result = "private model text outside JSON"
+    elif fault == "schema":
+        result["private model field"] = "private model text"
+    elif fault == "omitted":
         result["checked_keys"].pop()
     elif fault == "duplicated":
         result["checked_keys"].append(result["checked_keys"][0])
@@ -569,7 +581,7 @@ async def test_bad_model_output_fails_with_usage(fault):
             "check_key": "design-api-login",
             "kind": "MISMATCH",
             "severity": "BLOCKING",
-            "message": "다름",
+            "message": "private model text",
             "sources": [],
             "evidence_ids": [],
             "suggested_action": "확인",
@@ -590,7 +602,10 @@ async def test_bad_model_output_fails_with_usage(fault):
         if fault == "unproven_policy":
             finding["kind"] = "MISSING_POLICY"
         result["findings"].append(finding)
-    with pytest.raises(LLMError) as caught:
+    with (
+        caplog.at_level("WARNING", logger="app.services.validation"),
+        pytest.raises(LLMError) as caught,
+    ):
         await analyze(
             ValidateRequest.model_validate(body),
             LLMClient(Provider(result)),
@@ -598,6 +613,15 @@ async def test_bad_model_output_fails_with_usage(fault):
         )
     assert caught.value.code == "invalid_output"
     assert len(caught.value.usage) == 1 and caught.value.usage[0].failed
+    records = [
+        record for record in caplog.records if record.name == "app.services.validation"
+    ]
+    assert len(records) == 1
+    assert records[0].getMessage() == (
+        f"task validation answer rejected: {reason} (validation_id=601 attempt=1)"
+    )
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text
 
 
 def test_invalid_check_reference_and_unknown_schema_are_rejected_before_call():
@@ -703,6 +727,7 @@ def test_http_auth_input_and_output_error_mapping(monkeypatch):
                 "/v1/validate", json=fixture_request(), headers=headers
             )
             assert response.status_code == 502
+            assert response.json()["error"]["code"] == "model_unavailable"
             assert response.json()["usage"][0]["failed"] is True
     finally:
         app.dependency_overrides.clear()

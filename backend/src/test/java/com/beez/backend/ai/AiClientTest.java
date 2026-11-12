@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 import com.beez.backend.config.BeezProperties;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
@@ -14,6 +15,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -27,6 +30,7 @@ class AiClientTest {
     private final AtomicReference<String> body = new AtomicReference<>();
     private final AtomicReference<String> protocol = new AtomicReference<>();
     private final AtomicReference<String> upgrade = new AtomicReference<>();
+    private volatile Duration responseDelay = Duration.ZERO;
     private volatile int status = 200;
     private volatile String response = "{\"origin\":\"MODEL\",\"result\":{},\"usage\":[]}";
 
@@ -39,6 +43,13 @@ class AiClientTest {
             upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            try {
+                Thread.sleep(responseDelay);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                exchange.close();
+                return;
+            }
             byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
@@ -54,7 +65,8 @@ class AiClientTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"/v1/document-reviews", "/v1/document-chunks", "/v1/embeddings", "/v1/impact",
-            "/v1/document-revision-blocks", "/v1/document-revisions", "/v1/bee/assignments", "/v1/bee/task-breakdown"})
+            "/v1/document-revision-blocks", "/v1/document-revisions", "/v1/bee/assignments", "/v1/bee/task-breakdown",
+            "/v1/bee/meeting-analysis", "/v1/meeting-revisions"})
     void postsAuthenticatedJsonAndReadsEnvelope(String endpoint) {
         var input = Map.<String, Object>of("document_id", "194", "content", "검토할 문서");
         Map<String, Object> result = switch (endpoint) {
@@ -65,6 +77,8 @@ class AiClientTest {
             case "/v1/document-revisions" -> client.documentRevision(input);
             case "/v1/bee/assignments" -> client.assignmentRecommendations(input);
             case "/v1/bee/task-breakdown" -> client.taskBreakdown(input);
+            case "/v1/bee/meeting-analysis" -> client.meetingAnalysis(input);
+            case "/v1/meeting-revisions" -> client.meetingRevision(input);
             default -> client.documentEmbeddings(input);
         };
         assertThat(path.get()).isEqualTo(endpoint);
@@ -100,6 +114,63 @@ class AiClientTest {
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
         assertThatThrownBy(() -> slow.documentChunks(input))
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+    }
+
+    @Test void validationCanFinishAfterTheSharedReadTimeout() {
+        responseDelay = Duration.ofMillis(800);
+        var ai = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
+                "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
+                Duration.ofSeconds(3), Duration.ofMillis(300)), null));
+        var input = Map.<String, Object>of("execution_budget_ms", 30000);
+
+        assertThat(ai.validate(input)).containsEntry("origin", "MODEL");
+        assertThat(path.get()).isEqualTo("/v1/validate");
+        assertThatThrownBy(() -> ai.documentChunks(input))
+                .hasRootCauseInstanceOf(HttpTimeoutException.class);
+    }
+
+    @Test void meetingSummaryCanFinishAfterTheSharedReadTimeout() {
+        responseDelay = Duration.ofMillis(800);
+        var ai = new AiClient(stubProperties(Duration.ofMillis(300)));
+        var input = Map.<String, Object>of("mode", "SUMMARY");
+
+        assertThat(ai.meetingAnalysis(input)).containsEntry("origin", "MODEL");
+        assertThat(path.get()).isEqualTo("/v1/bee/meeting-analysis");
+        assertThatThrownBy(() -> ai.documentChunks(input)).hasRootCauseInstanceOf(HttpTimeoutException.class);
+    }
+
+    @Test void meetingSummaryReadTimeoutOverrideOnlyAffectsMeetingAnalysis() {
+        responseDelay = Duration.ofMillis(800);
+        var input = Map.<String, Object>of("mode", "SUMMARY");
+
+        meetingSummaryContext("300ms").run(context -> {
+            assertThat(context).hasNotFailed();
+            var ai = context.getBean(AiClient.class);
+            assertThat(ai.meetingRevision(input)).containsEntry("origin", "MODEL");
+            assertThat(ai.documentChunks(input)).containsEntry("origin", "MODEL");
+            assertThatThrownBy(() -> ai.meetingAnalysis(input)).hasRootCauseInstanceOf(HttpTimeoutException.class);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"-1s", "0s", "60s", "61s"})
+    void rejectsMeetingSummaryTimeoutOutsideSynchronousRequestBudget(String timeout) {
+        meetingSummaryContext(timeout).run(context -> assertThat(context.getStartupFailure())
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .rootCause().hasMessageContaining("beez.meeting.summary.read-timeout"));
+    }
+
+    private ApplicationContextRunner meetingSummaryContext(String timeout) {
+        return new ApplicationContextRunner()
+                .withInitializer(context -> context.getBeanFactory().setConversionService(ApplicationConversionService.getSharedInstance()))
+                .withBean(BeezProperties.class, () -> stubProperties(Duration.ofSeconds(3)))
+                .withUserConfiguration(AiClient.class)
+                .withPropertyValues("beez.meeting.summary.read-timeout=" + timeout);
+    }
+
+    private BeezProperties stubProperties(Duration readTimeout) {
+        return new BeezProperties(null, new BeezProperties.Ai(
+                "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token", Duration.ofSeconds(3), readTimeout), null);
     }
 
     /** 영향 분석은 공통 읽기 제한(20초)이 아니라 AI 모델 제한(60초)보다 긴 전용 제한을 쓴다. 공통값이면 정상 분석을 먼저 끊는다 (S15P31A108-402). */
