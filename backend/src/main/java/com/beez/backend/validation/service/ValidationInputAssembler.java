@@ -177,7 +177,12 @@ public class ValidationInputAssembler {
         request.put("input_snapshot_hash", snapshotHash(request, baselineId));
         boolean complete = searchesComplete && !relatives.truncated() && evidence.unavailableVersionIds().isEmpty();
         if (relatives.truncated()) incompleteReasons.add("related_task_limit");
-        if (!evidence.unavailableVersionIds().isEmpty()) incompleteReasons.add("source_evidence_unavailable");
+        // A moved document whose cited passage changed (NEEDS_CONFIRMATION) is reported separately from a source that is
+        // simply not recoverable, so the reader knows the location needs a person's confirmation (S15P31A108-406).
+        if (evidence.unavailableVersionIds().stream().anyMatch(id -> !evidence.needsConfirmationVersionIds().contains(id))) {
+            incompleteReasons.add("source_evidence_unavailable");
+        }
+        if (!evidence.needsConfirmationVersionIds().isEmpty()) incompleteReasons.add("source_confirmation_required");
         return new Result(request, baselineId, Map.copyOf(relatedSnapshots), complete, "UNKNOWN",
                 evidence.unavailableVersionIds(), List.copyOf(incompleteReasons));
     }
@@ -283,11 +288,12 @@ public class ValidationInputAssembler {
                 select i.id as item_id,i.key,i.kind,v.id as version_id,v.version_no,v.status,
                        v.schema_version,v.content::text as content,v.content_hash,
                        dv.id as source_version_id,d.id as source_document_id,dv.version_no as source_version_no,
-                       v.source_locator::text as source_locator
+                       es.source_locator::text as source_locator
                   from baseline_item bi
                   join design_item i on i.id=bi.design_item_id and i.project_id=bi.project_id
                   join design_item_version v on v.id=bi.design_item_version_id and v.design_item_id=i.id
-                  left join document_version dv on dv.id=v.source_document_version_id
+                  join baseline_item_effective_source es on es.baseline_id=bi.baseline_id and es.design_item_id=bi.design_item_id
+                  left join document_version dv on dv.id=es.source_document_version_id
                   left join document d on d.id=dv.document_id and d.project_id=bi.project_id
                  where bi.project_id=:project and bi.baseline_id=:baseline and i.id in (:ids)
                  order by i.id
@@ -326,9 +332,11 @@ public class ValidationInputAssembler {
                 select distinct bd.document_version_id
                   from baseline_document bd
                   join baseline_item bi on bi.project_id=bd.project_id and bi.baseline_id=bd.baseline_id
+                  join baseline_item_effective_source es on es.baseline_id=bi.baseline_id
+                       and es.design_item_id=bi.design_item_id
+                       and es.source_document_version_id=bd.document_version_id
                   join design_item_version v on v.id=bi.design_item_version_id
                        and v.design_item_id=bi.design_item_id
-                       and v.source_document_version_id=bd.document_version_id
                  where bd.project_id=:project and bd.baseline_id=:baseline
                    and bd.document_version_id in (:ids) and v.status='APPROVED'
                 """).param("project", projectId).param("baseline", baselineId).param("ids", versionIds)
@@ -366,9 +374,9 @@ public class ValidationInputAssembler {
                         (select bd.document_version_id from baseline_document bd
                           where bd.project_id=:project and bd.baseline_id=:baseline)
                      or q.document_version_id in
-                        (select v.source_document_version_id from baseline_item bi
-                          join design_item_version v on v.id=bi.design_item_version_id
-                            and v.design_item_id=bi.design_item_id
+                        (select es.source_document_version_id from baseline_item bi
+                          join baseline_item_effective_source es on es.baseline_id=bi.baseline_id
+                            and es.design_item_id=bi.design_item_id
                           where bi.project_id=:project and bi.baseline_id=:baseline
                             and bi.design_item_id in (:ids)))
                  order by q.id limit 101

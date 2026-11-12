@@ -34,18 +34,20 @@ public class BeeRepository {
 
     /**
      * 이 baseline 의 승인(APPROVED) 설계 항목을 AI 요청 모양으로(키 순, 최대 limit). 승인 상태가 아닌 버전은 baseline 에 있어도 제외한다.
-     * 출처(source)는 항목이 만들어진 문서 버전이라 현재 baseline 의 문서 버전보다 오래된 것일 수 있다 — 계약이 그대로 받는다.
+     * 출처(source)는 그 baseline 에서의 유효 출처다(baseline_item_effective_source): 문서가 바뀐 baseline 은 옮긴 줄 위치를 쓰고,
+     * 옮기지 못한 항목(NEEDS_CONFIRMATION)은 보내지 않는다.
      */
     public List<Map<String, Object>> approvedItems(long projectId, long baselineId, int limit) {
         var rows = jdbc.sql("""
                         select i.id as item_id, i.key, i.kind, v.id as version_id, v.version_no, v.status,
                                v.schema_version, v.content::text as content,
                                dv.id as source_version_id, d.id as source_document_id, dv.version_no as source_version_no,
-                               v.source_locator::text as source_locator
+                               es.source_locator::text as source_locator, es.source_status
                           from baseline_item bi
                           join design_item i on i.id = bi.design_item_id and i.project_id = bi.project_id
                           join design_item_version v on v.id = bi.design_item_version_id and v.design_item_id = i.id
-                          left join document_version dv on dv.id = v.source_document_version_id
+                          join baseline_item_effective_source es on es.baseline_id = bi.baseline_id and es.design_item_id = bi.design_item_id
+                          left join document_version dv on dv.id = es.source_document_version_id
                           left join document d on d.id = dv.document_id and d.project_id = bi.project_id
                          where bi.project_id = :p and bi.baseline_id = :b and v.status = 'APPROVED'
                          order by i.key, i.id
@@ -63,7 +65,9 @@ public class BeeRepository {
             item.put("status", row.get("status"));
             item.put("schema_version", row.get("schema_version"));
             item.put("content", DesignJson.JSON.readValue(row.get("content").toString(), new TypeReference<Map<String, Object>>() { }));
-            if (row.get("source_document_id") != null && row.get("source_locator") != null) {
+            // 문서가 바뀌어 인용 줄을 옮기지 못한 항목의 출처는 보내지 않는다(-406).
+            if (row.get("source_document_id") != null && row.get("source_locator") != null
+                    && !"NEEDS_CONFIRMATION".equals(row.get("source_status"))) {
                 Map<String, Object> locator = DesignJson.JSON.readValue(row.get("source_locator").toString(),
                         new TypeReference<Map<String, Object>>() { });
                 String location = Objects.toString(locator.get("location"), "");

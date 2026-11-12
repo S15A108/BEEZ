@@ -305,8 +305,9 @@ public class ProposalRepository {
         // Only direct references. Version-bound graph/rule/AI candidates belong to #188/#197.
         return jdbc.sql("""
                 WITH affected AS (
-                  SELECT b.design_item_id FROM baseline_item b JOIN design_item_version v ON v.id=b.design_item_version_id
-                  LEFT JOIN document_version d ON d.id=v.source_document_version_id
+                  SELECT b.design_item_id FROM baseline_item b
+                  JOIN baseline_item_effective_source es ON es.baseline_id=b.baseline_id AND es.design_item_id=b.design_item_id
+                  LEFT JOIN document_version d ON d.id=es.source_document_version_id
                   WHERE b.project_id=:project AND b.baseline_id=:baseline
                     AND (b.design_item_id IN (:items) OR d.document_id IN (:documents))
                 ), candidates AS (
@@ -324,8 +325,8 @@ public class ProposalRepository {
                     AND r.design_item_id IN (SELECT design_item_id FROM affected)
                   UNION
                   SELECT 'DOCUMENT',d.document_id,b.design_item_id,NULL::bigint FROM baseline_item b
-                  JOIN design_item_version v ON v.id=b.design_item_version_id
-                  JOIN document_version d ON d.id=v.source_document_version_id
+                  JOIN baseline_item_effective_source es ON es.baseline_id=b.baseline_id AND es.design_item_id=b.design_item_id
+                  JOIN document_version d ON d.id=es.source_document_version_id
                   JOIN baseline_document bd ON bd.baseline_id=b.baseline_id AND bd.document_version_id=d.id
                   WHERE b.project_id=:project AND b.baseline_id=:baseline AND b.design_item_id IN (SELECT design_item_id FROM affected)
                 ) SELECT * FROM candidates ORDER BY type,id,via LIMIT :limit
