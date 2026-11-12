@@ -42,10 +42,13 @@ public class PublishedAnalysisProcessor {
     }
 
     /**
-     * 자동 재시도할 AI 실패. 일시 장애(시간 초과·연결 실패)만 다시 시도한다. 출력 상한 잘림(model_output_truncated)은 같은 상한으로
-     * 다시 끊기고 시도마다 입력 전체 비용이 나가므로 재시도하지 않는다(11-11 잘림 4회 반복, S15P31A108-402).
+     * 자동 재시도할 AI 실패. 일시 장애(시간 초과·연결 실패)는 재시도 정책의 횟수(최대 4회)대로 다시 시도한다.
+     * 출력 상한 잘림(model_output_truncated)은 첫 시도에서만 한 번 더 시도한다. 추론 길이가 매번 달라 다음 시도는 들어갈 수 있지만,
+     * 같은 상한으로 계속 끊기면 시도마다 입력 전체 비용만 나간다(11-11 잘림 4회 반복). 최종 FAILED 는 같은 프로젝트의
+     * 후속 발행 분석을 멈추게 하므로(PublishedAnalysisOrderingSql.PREDECESSORS_READY) 첫 잘림에 바로 닫지 않는다 (S15P31A108-402, #286 리뷰).
      */
-    static boolean retryableAiFailure(String code) {
+    static boolean retryableAiFailure(String code, int attempt) {
+        if ("model_output_truncated".equals(code)) return attempt == 1;
         return Set.of("model_timeout", "model_unavailable").contains(code);
     }
 
@@ -75,7 +78,7 @@ public class PublishedAnalysisProcessor {
             receivedModel = outcome.model();
             if (outcome.status() == ImpactAnalysisCoordinator.Status.AI_FAILED) {
                 String code = outcome.errorCode() == null ? "model_unavailable" : outcome.errorCode();
-                fail(claim, code, retryableAiFailure(code), outcome.usage(), outcome.usageStatus().name(),
+                fail(claim, code, retryableAiFailure(code, claim.attempt()), outcome.usage(), outcome.usageStatus().name(),
                         outcome.model());
                 return;
             }
