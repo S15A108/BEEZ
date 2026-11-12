@@ -31,6 +31,8 @@ const collectionReasons: Record<string, string> = {
     '미결 질문이나 개발 맥락이 한도를 넘었어요. 담당자와 필요한 입력 범위를 정리해 주세요.',
   source_evidence_unavailable:
     '근거 문서의 원문·출처 위치·발췌 범위를 확인해야 해요.',
+  source_confirmation_required:
+    '문서가 바뀌어 설계 항목이 인용한 원문 위치를 확인해야 해요. 해당 항목의 출처 위치를 정정한 뒤 새 검증을 요청해 주세요.',
   evidence_fetch_failed: '근거를 가져오는 중 연결 또는 처리 오류가 발생했어요.',
   unknown_collection_failure:
     '근거 수집 실패의 상세 원인을 확인할 수 없어 담당자의 확인이 필요해요.',

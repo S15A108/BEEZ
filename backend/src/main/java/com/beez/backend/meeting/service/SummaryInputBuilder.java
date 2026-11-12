@@ -251,7 +251,9 @@ class SummaryInputBuilder {
         view.put("status", row.get("status"));
         view.put("schema_version", row.get("schema_version"));
         view.put("content", JSON.readValue(row.get("content").toString(), Object.class));
-        if (row.get("source_document_version_id") != null && row.get("source_document_id") != null) {
+        // 문서가 바뀌어 인용 줄을 옮기지 못한 항목의 옛 줄 번호는 새 문서에서 틀린 위치다 — 출처를 보내지 않는다(-406).
+        if (row.get("source_document_version_id") != null && row.get("source_document_id") != null
+                && !"NEEDS_CONFIRMATION".equals(row.get("source_status"))) {
             var source = new LinkedHashMap<String, Object>();
             source.put("document_id", row.get("source_document_id").toString());
             source.put("document_version_id", row.get("source_document_version_id").toString());

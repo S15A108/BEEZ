@@ -115,6 +115,8 @@ public class AnalysisResultApplier {
         fail(lease, active.get().validation(), active.get().runId(), EvidenceCollectionFailure.CODE, "ERROR",
                 (String) detail.get("message"), retryable ? "RETRY" : "HUMAN_REVIEW",
                 retryable ? "검색·문서 준비 상태를 확인하고 근거 수집부터 다시 시도해 주세요."
+                        : reasonCodes.contains("source_confirmation_required") && !reasonCodes.contains("source_evidence_unavailable")
+                        ? "문서가 바뀐 설계 항목의 출처 위치를 확인·정정한 뒤 새 검증을 요청해 주세요."
                         : reasonCodes.contains("source_evidence_unavailable")
                         ? "승인 문서와 출처 위치·인용 범위를 보완한 뒤 새 검증을 요청해 주세요."
                         : "원인을 확인하고 계획·검색 범위를 보완한 뒤 새 검증을 요청해 주세요.",
@@ -286,8 +288,12 @@ public class AnalysisResultApplier {
             documentIds.add(document);
         }
         if (!versions.isEmpty()) {
-            var rows = jdbc.sql("select id,source_document_version_id from design_item_version where id in (:ids) order by id for share")
+            // The effective source of the analyzed baseline (baseline_item_source), not the item version's own source.
+            jdbc.sql("select id from design_item_version where id in (:ids) order by id for share")
                     .param("ids", versions).query().listOfRows();
+            var rows = jdbc.sql("select source_document_version_id from baseline_item_effective_source "
+                            + "where baseline_id=:baseline and design_item_version_id in (:ids)")
+                    .param("baseline", analyzedBaseline).param("ids", versions).query().listOfRows();
             rows.stream().map(row -> id(row.get("source_document_version_id")))
                     .filter(java.util.Objects::nonNull).forEach(documentIds::add);
         }

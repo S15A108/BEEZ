@@ -34,9 +34,20 @@ public class ValidationEvidenceBuilder {
         this.jdbc = jdbc; this.json = json;
     }
 
-    /** unavailableVersionIds means a known source was not safely recoverable, never PASS evidence. */
-    public record Result(List<Map<String, Object>> evidence, List<String> unavailableVersionIds) {
-        public Result { evidence = List.copyOf(evidence); unavailableVersionIds = List.copyOf(unavailableVersionIds); }
+    /**
+     * unavailableVersionIds means a known source was not safely recoverable, never PASS evidence.
+     * needsConfirmationVersionIds is the subset whose cited passage changed with its document and was not moved
+     * (baseline_item_source.source_status = NEEDS_CONFIRMATION, S15P31A108-406): a person must confirm the new location.
+     */
+    public record Result(List<Map<String, Object>> evidence, List<String> unavailableVersionIds,
+                         List<String> needsConfirmationVersionIds) {
+        public Result {
+            evidence = List.copyOf(evidence); unavailableVersionIds = List.copyOf(unavailableVersionIds);
+            needsConfirmationVersionIds = List.copyOf(needsConfirmationVersionIds);
+        }
+        public Result(List<Map<String, Object>> evidence, List<String> unavailableVersionIds) {
+            this(evidence, unavailableVersionIds, List.of());
+        }
     }
 
     public record SearchHit(String type, long id, long documentVersionId, String query) {}
@@ -148,20 +159,24 @@ public class ValidationEvidenceBuilder {
         if (projectId <= 0 || baselineId <= 0 || approvedItems == null) throw new IllegalArgumentException("invalid evidence scope");
         List<Map<String, Object>> result = new ArrayList<>();
         List<String> unavailable = new ArrayList<>();
+        List<String> needsConfirmation = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
         int totalBytes = 0;
         for (var item : approvedItems) {
             long itemId = id(item.get("design_item_id"));
             long versionId = id(item.get("id"));
             if (!seen.add(versionId)) throw new IllegalArgumentException("duplicate design version");
+            // The effective source of this baseline: the item version's own source unless the document changed and the
+            // publication recorded where the cited lines moved (baseline_item_source).
             var rows = jdbc.sql("""
-                    select v.source_document_version_id as item_source_id,v.source_locator::text as locator,
+                    select es.source_document_version_id as item_source_id,es.source_locator::text as locator,es.source_status,
                            dv.content_text,dp.text_hash,bd.document_version_id as baseline_source_id,
                            d.id as document_id,dv.id as document_version_id,dv.version_no,dv.status as document_status
                     from project p
                     join baseline_item bi on bi.baseline_id=p.current_baseline_id and bi.project_id=p.id
                     join design_item_version v on v.id=bi.design_item_version_id and v.design_item_id=bi.design_item_id
-                    left join document_version dv on dv.id=v.source_document_version_id
+                    join baseline_item_effective_source es on es.baseline_id=bi.baseline_id and es.design_item_id=bi.design_item_id
+                    left join document_version dv on dv.id=es.source_document_version_id
                     left join document d on d.id=dv.document_id and d.project_id=p.id
                     left join baseline_document bd on bd.baseline_id=p.current_baseline_id and bd.project_id=p.id
                       and bd.document_id=d.id and bd.document_version_id=dv.id
@@ -176,6 +191,9 @@ public class ValidationEvidenceBuilder {
             if (row.get("item_source_id") == null) {
                 if (item.get("source") != null) throw new IllegalStateException("unexpected source identity");
                 continue; // A manual design genuinely has no source document.
+            }
+            if ("NEEDS_CONFIRMATION".equals(row.get("source_status"))) {
+                unavailable.add(Long.toString(versionId)); needsConfirmation.add(Long.toString(versionId)); continue;
             }
             if (item.get("source") == null || row.get("baseline_source_id") == null
                     || row.get("document_id") == null || !"APPROVED".equals(row.get("document_status"))) {
@@ -243,7 +261,7 @@ public class ValidationEvidenceBuilder {
             evidence.put("normalization_version", "utf8-lf-v1");
             result.add(Map.copyOf(evidence));
         }
-        return new Result(result, unavailable);
+        return new Result(result, unavailable, needsConfirmation);
     }
 
     /** Strict display-location subset; ambiguous or invalid ranges are unavailable. */

@@ -33,6 +33,24 @@ public class PublicationRepository {
                 WHERE b.project_id=:project AND b.baseline_id=:baseline ORDER BY b.document_id
                 """).param("project", project).param("baseline", baseline).query().listOfRows();
     }
+    /**
+     * 그 기준에서 출처가 있는 항목의 유효 출처(S15P31A108-406). 행: design_item_id, document_id, source_document_version_id,
+     * source_locator(JSON 글자), source_status(덮어쓴 행이 없으면 null), remapped_from_document_version_id(없으면 null).
+     */
+    public List<Map<String, Object>> effectiveSources(long project, long baseline) {
+        return jdbc.sql("""
+                SELECT e.design_item_id,dv.document_id,e.source_document_version_id,e.source_locator::text AS source_locator,
+                       e.source_status,s.remapped_from_document_version_id
+                FROM baseline_item_effective_source e
+                JOIN document_version dv ON dv.id=e.source_document_version_id
+                LEFT JOIN baseline_item_source s ON s.baseline_id=e.baseline_id AND s.design_item_id=e.design_item_id
+                WHERE e.project_id=:project AND e.baseline_id=:baseline ORDER BY e.design_item_id
+                """).param("project", project).param("baseline", baseline).query().listOfRows();
+    }
+    public String documentContent(long documentVersion) {
+        return jdbc.sql("SELECT content_text FROM document_version WHERE id=:id").param("id", documentVersion)
+                .query(String.class).optional().orElse(null);
+    }
     public List<Map<String, Object>> proposedDocuments(long project, long proposal, int revision) {
         return jdbc.sql("""
                 SELECT c.document_id,c.base_document_version_id,c.proposed_document_version_id,

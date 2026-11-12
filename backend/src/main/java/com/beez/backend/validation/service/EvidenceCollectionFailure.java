@@ -12,7 +12,7 @@ public final class EvidenceCollectionFailure {
     private static final Set<String> TRANSIENT = Set.of("evidence_fetch_failed");
     private static final Set<String> REASONS = Set.of("search_query_too_long", "search_query_limit",
             "search_results_truncated", "design_candidate_limit", "related_task_limit", "source_evidence_unavailable",
-            "evidence_fetch_failed", "design_reference_limit", "unresolved_limit", UNKNOWN);
+            "evidence_fetch_failed", "design_reference_limit", "unresolved_limit", "source_confirmation_required", UNKNOWN);
     private EvidenceCollectionFailure() {}
 
     public static Map<String, Object> detail(List<String> reasons) {
@@ -27,6 +27,8 @@ public final class EvidenceCollectionFailure {
         boolean retryable = retryAllowed && safe.stream().allMatch(TRANSIENT::contains);
         String message = retryable
                 ? "검증에 필요한 검색 결과나 문서 근거를 모두 모으지 못했어요. 계획은 바꾸지 않았어요. 검색·문서 준비 상태를 확인하고 다시 시도해 주세요."
+                : safe.contains("source_confirmation_required") && !safe.contains("source_evidence_unavailable")
+                ? "문서가 바뀌어 설계 항목이 인용한 원문 위치를 확인하지 못했어요. 계획은 바꾸지 않았어요. 해당 설계 항목의 출처 위치를 확인·정정한 뒤 새 검증을 요청해 주세요."
                 : safe.contains("source_evidence_unavailable")
                 ? "승인 문서에서 필요한 근거 범위를 확인하지 못했어요. 문서의 승인 상태와 출처 위치·인용 범위를 보완한 뒤 새 검증을 요청해 주세요."
                 : "검증에 필요한 검색 결과나 문서 근거를 모두 모으지 못했어요. 계획은 바꾸지 않았어요. 원인을 확인하고 계획·검색 범위와 문서 준비 상태를 보완한 뒤 새 검증을 요청해 주세요.";

@@ -10,9 +10,16 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class DesignItemRepository {
     private static final String SELECT = """
-            SELECT v.*,i.key,i.kind,s.document_id AS source_document_id,s.version_no AS source_version_no
+            SELECT v.*,i.key,i.kind,s.document_id AS source_document_id,s.version_no AS source_version_no,
+                   es.source_status AS override_status,es.source_document_version_id AS override_document_version_id,
+                   es.source_locator::text AS override_locator,o.document_id AS override_document_id,
+                   o.version_no AS override_version_no
               FROM design_item i JOIN design_item_version v ON v.design_item_id=i.id
               LEFT JOIN document_version s ON s.id=v.source_document_version_id
+              LEFT JOIN project cur ON cur.id=i.project_id
+              LEFT JOIN baseline_item_effective_source es ON es.baseline_id=COALESCE(CAST(:baseline AS BIGINT),cur.current_baseline_id)
+                   AND es.design_item_id=i.id AND es.design_item_version_id=v.id AND es.source_status IS NOT NULL
+              LEFT JOIN document_version o ON o.id=es.source_document_version_id
             """;
 
     private final JdbcClient jdbc;
@@ -29,8 +36,8 @@ public class DesignItemRepository {
         parameters.put("after", after);
         parameters.put("limit", size);
         String filter = " WHERE i.project_id=:project AND v.id>:after";
+        parameters.put("baseline", "APPROVED".equals(status) ? baseline : null);
         if ("APPROVED".equals(status)) {
-            parameters.put("baseline", baseline);
             filter += """
                      AND EXISTS (SELECT 1 FROM baseline b JOIN baseline_item bi ON bi.baseline_id=b.id
                                   WHERE b.project_id=:project AND b.id=:baseline AND bi.design_item_version_id=v.id)
@@ -43,15 +50,20 @@ public class DesignItemRepository {
             parameters.put("kind", kind);
         }
         if (source != null) {
-            filter += " AND v.source_document_version_id=:source";
+            filter += " AND COALESCE(es.source_document_version_id,v.source_document_version_id)=:source";
             parameters.put("source", source);
         }
         return jdbc.sql(SELECT + filter + " ORDER BY v.id LIMIT :limit").params(parameters).query().listOfRows();
     }
 
     public Optional<Map<String, Object>> findVersion(long project, long item, long version) {
+        var parameters = new HashMap<String, Object>();
+        parameters.put("project", project);
+        parameters.put("item", item);
+        parameters.put("version", version);
+        parameters.put("baseline", null);
         return jdbc.sql(SELECT + " WHERE i.project_id=:project AND i.id=:item AND v.id=:version")
-                .params(Map.of("project", project, "item", item, "version", version))
+                .params(parameters)
                 .query().listOfRows().stream().findFirst();
     }
 

@@ -202,7 +202,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
                 Long.parseLong(result.baseline().id()))).isEqualTo("PENDING");
     }
 
-    @Test void changedDocumentMakesPreviouslyCitedSourceUnavailableRatherThanInventingNewSource() {
+    @Test void changedDocumentWithAnUnmovableCitationIsUnavailableAndMarkedForConfirmationRatherThanInventingNewSource() {
         Proposal proposal=create(true,true,"source-after-publication");
         ready(proposal);
         Publication published=approve(proposal,"publish-source-check");
@@ -223,6 +223,10 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         var result=evidenceBuilder.build(project.projectId(),newBaseline,List.of(input));
         assertThat(result.evidence()).isEmpty();
         assertThat(result.unavailableVersionIds()).containsExactly(Long.toString(newItemVersion));
+        // 줄 범위 없는 옛 위치("첫 문단")는 새 문서에서 증명할 수 없어 옮기지 않고 확인 필요로 표시한다(-406).
+        assertThat(result.needsConfirmationVersionIds()).containsExactly(Long.toString(newItemVersion));
+        assertThat(jdbc.queryForObject("SELECT source_status FROM baseline_item_source WHERE baseline_id=? AND design_item_id=?",
+                String.class,newBaseline,item)).isEqualTo("NEEDS_CONFIRMATION");
     }
     @Test void publishingClosesOtherDraftsBuiltOnTheSupersededVersionOfTheSameDocument() {
         Proposal winner=create(true,false,"winner"); ready(winner);
@@ -550,5 +554,218 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
             try { Thread.sleep(20); } catch(InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
         }
         throw new AssertionError("Expected waiting SQL lock: "+queryPattern);
+    }
+
+    // ---- S15P31A108-406: 문서가 바뀐 기준에서 설계 항목의 유효 출처 ----
+    static final String SOURCE_DOC = "# 제목\n첫줄\n둘째줄\n셋째줄\n넷째줄\n";
+
+    /** 세 항목이 문서의 서로 다른 줄을 인용하게 한다(항목 버전의 출처는 승인 뒤에도 바꿀 수 있는 칼럼이다). */
+    void citeLines(long documentVersion) {
+        jdbc.update("UPDATE document_version SET content_text=? WHERE id=?",SOURCE_DOC,documentVersion);
+        cite(item,documentVersion,2,3); cite(retired,documentVersion,2,2); cite(unchanged,documentVersion,4,5);
+    }
+    void cite(long designItem,long documentVersion,int start,int end) {
+        jdbc.update("""
+                UPDATE design_item_version SET source_document_version_id=?,source_locator=cast(? AS jsonb)
+                WHERE design_item_id=?
+                """,documentVersion,"{\"type\":\"text_lines\",\"start_line\":"+start+",\"end_line\":"+end
+                +",\"location\":\"요구사항 / L"+start+"-L"+end+"\"}",designItem);
+    }
+    Proposal createDocument(long baseBaseline,long documentId,long baseVersion,String after,String key) {
+        return commands.create(leader,project.projectId(),new Input(""+baseBaseline,"변경","이유",null,null,List.of(),
+                List.of(new DocumentChange(""+documentId,""+baseVersion,after,null)),null,null,null),key);
+    }
+    Map<String,Object> sourceRow(long baselineId,long designItem) {
+        var rows=jdbc.queryForList("""
+                SELECT source_document_version_id,source_locator::text AS locator,source_status,remapped_from_document_version_id
+                FROM baseline_item_source WHERE baseline_id=? AND design_item_id=?
+                """,baselineId,designItem);
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+    Map<String,Object> effective(long baselineId,long designItem) {
+        return jdbc.queryForMap("""
+                SELECT source_document_version_id,source_locator::text AS locator,source_status
+                FROM baseline_item_effective_source WHERE baseline_id=? AND design_item_id=?
+                """,baselineId,designItem);
+    }
+    Map<String,Object> locator(Map<String,Object> row) { return JSON.readValue(row.get("locator").toString(),new tools.jackson.core.type.TypeReference<Map<String,Object>>(){}); }
+
+    @Test void documentChangeMovesCitedLinesWithoutTouchingItemVersions() {
+        citeLines(version);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","doc-lines"); ready(p);
+        Publication published=approve(p,"doc-lines-approve");
+        long next=Long.parseLong(published.baseline().id());
+        long newDocumentVersion=Long.parseLong(p.documents().getFirst().proposedDocumentVersionId());
+
+        // 인용한 두 줄이 한 줄 밀려 그대로 있으므로 옮긴다. 줄 번호와 표시 문자열이 함께 바뀐다.
+        var moved=sourceRow(next,item);
+        assertThat(moved).containsEntry("source_status","REMAPPED").containsEntry("remapped_from_document_version_id",version);
+        assertThat(((Number)moved.get("source_document_version_id")).longValue()).isEqualTo(newDocumentVersion);
+        assertThat(locator(moved)).containsEntry("start_line",3).containsEntry("end_line",4).containsEntry("location","요구사항 / L3-L4");
+        // 둘째 항목의 마지막 줄(넷째줄)이 수정돼 위치를 증명할 수 없다. 옛 위치는 보존하고 문서 버전만 따라간다.
+        var unconfirmed=sourceRow(next,unchanged);
+        assertThat(unconfirmed).containsEntry("source_status","NEEDS_CONFIRMATION");
+        assertThat(((Number)unconfirmed.get("source_document_version_id")).longValue()).isEqualTo(newDocumentVersion);
+        assertThat(locator(unconfirmed)).containsEntry("start_line",4).containsEntry("end_line",5);
+        // 항목 버전의 출처는 승인 뒤 불변이다 — 옛 문서 버전을 그대로 가리킨다. 옛 기준에는 행이 없다.
+        assertThat(jdbc.queryForObject("SELECT source_document_version_id FROM design_item_version WHERE id=?",Long.class,itemVersion))
+                .isEqualTo(version);
+        assertThat(sourceRow(baseline,item)).isNull();
+        // 읽는 쪽이 보는 뷰는 기준별 유효 출처를 돌려준다.
+        assertThat(effective(next,item)).containsEntry("source_status","REMAPPED");
+        assertThat(((Number)effective(next,item).get("source_document_version_id")).longValue()).isEqualTo(newDocumentVersion);
+        assertThat(effective(baseline,item)).containsEntry("source_status",null);
+        assertThat(((Number)effective(baseline,item).get("source_document_version_id")).longValue()).isEqualTo(version);
+    }
+
+    @Test void remappedSourceFeedsEvidenceAndAnUnmovedOneIsReportedForConfirmation() {
+        citeLines(version);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","doc-evidence"); ready(p);
+        long next=Long.parseLong(approve(p,"doc-evidence-approve").baseline().id());
+        long newDocumentVersion=Long.parseLong(p.documents().getFirst().proposedDocumentVersionId());
+        var source=Map.<String,Object>of("document_id",Long.toString(document),"document_version_id",Long.toString(newDocumentVersion),
+                "version_no",2,"location","요구사항 / L3-L4");
+        var ok=Map.<String,Object>of("id",Long.toString(itemVersion),"design_item_id",Long.toString(item),"source",source);
+        var result=evidenceBuilder.build(project.projectId(),next,List.of(ok));
+        assertThat(result.unavailableVersionIds()).isEmpty();
+        assertThat(result.evidence()).singleElement().satisfies(e -> {
+            assertThat(e).containsEntry("text","첫줄\n둘째줄\n");
+            assertThat((Map<String,Object>)e.get("locator")).containsEntry("start_line",3).containsEntry("end_line",4);
+        });
+
+        long unchangedVersion=currentVersion(unchanged);
+        var unconfirmedSource=Map.<String,Object>of("document_id",Long.toString(document),"document_version_id",Long.toString(newDocumentVersion),
+                "version_no",2,"location","요구사항 / L4-L5");
+        var needs=Map.<String,Object>of("id",Long.toString(unchangedVersion),"design_item_id",Long.toString(unchanged),"source",unconfirmedSource);
+        var blocked=evidenceBuilder.build(project.projectId(),next,List.of(needs));
+        assertThat(blocked.evidence()).isEmpty();
+        assertThat(blocked.unavailableVersionIds()).containsExactly(Long.toString(unchangedVersion));
+        assertThat(blocked.needsConfirmationVersionIds()).containsExactly(Long.toString(unchangedVersion));
+    }
+
+    @Test void unrelatedPublicationCarriesTheEffectiveSourceForward() {
+        citeLines(version);
+        long other=jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API',?) RETURNING id",
+                Long.class,project.projectId(),leader.accountId());
+        long otherVersion=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
+                VALUES(?,1,'APPROVED','other-fixture.md','other-before','다른 문서\n',?,?,now()) RETURNING id
+                """,Long.class,other,leader.accountId(),leader.accountId());
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)",baseline,project.projectId(),other,otherVersion);
+        Proposal first=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","carry-1"); ready(first);
+        long second=Long.parseLong(approve(first,"carry-1-approve").baseline().id());
+
+        // 이 문서와 무관한 다른 문서만 바꾸는 발행: 옮겨 둔 출처가 옛 문서 버전으로 되돌아가면 안 된다.
+        Proposal unrelated=createDocument(second,other,otherVersion,"다른 문서 수정\n","carry-2"); ready(unrelated);
+        long third=Long.parseLong(approve(unrelated,"carry-2-approve").baseline().id());
+        assertThat(sourceRow(third,item)).containsEntry("source_status","REMAPPED");
+        assertThat(locator(sourceRow(third,item))).containsEntry("start_line",3).containsEntry("end_line",4);
+        assertThat(sourceRow(third,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
+        assertThat(effective(third,item).get("locator").toString()).isEqualTo(sourceRow(second,item).get("locator").toString());
+    }
+
+    @Test void secondDocumentChangeStartsFromThePreviousEffectiveSource() {
+        citeLines(version);
+        Proposal first=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","chain-1"); ready(first);
+        long second=Long.parseLong(approve(first,"chain-1-approve").baseline().id());
+        long v2=Long.parseLong(first.documents().getFirst().proposedDocumentVersionId());
+        // 두 번째 변경에서 맨 앞에 두 줄이 더 생긴다. 첫 항목은 3~4줄 → 5~6줄. 이미 확인 필요인 항목은 다시 옮기지 않는다.
+        Proposal again=createDocument(second,document,v2,"머리 1\n머리 2\n# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","chain-2"); ready(again);
+        long third=Long.parseLong(approve(again,"chain-2-approve").baseline().id());
+        long v3=Long.parseLong(again.documents().getFirst().proposedDocumentVersionId());
+        var moved=sourceRow(third,item);
+        assertThat(moved).containsEntry("source_status","REMAPPED").containsEntry("remapped_from_document_version_id",v2);
+        assertThat(((Number)moved.get("source_document_version_id")).longValue()).isEqualTo(v3);
+        assertThat(locator(moved)).containsEntry("start_line",5).containsEntry("end_line",6);
+        var stillUnconfirmed=sourceRow(third,unchanged);
+        assertThat(stillUnconfirmed).containsEntry("source_status","NEEDS_CONFIRMATION").containsEntry("remapped_from_document_version_id",version);
+        assertThat(((Number)stillUnconfirmed.get("source_document_version_id")).longValue()).isEqualTo(v3);
+        assertThat(locator(stillUnconfirmed)).containsEntry("start_line",4).containsEntry("end_line",5);
+    }
+
+    @Test void itemUpdateInTheSameProposalAlsoGetsTheMovedSource() {
+        citeLines(version);
+        Proposal p=create(true,true,"mixed-lines");
+        // create() 는 본문을 "새 본문 …" 한 줄로 바꾸므로 인용 줄을 옮길 수 없다 — 업데이트된 항목도 같은 규칙을 따른다.
+        ready(p);
+        long next=Long.parseLong(approve(p,"mixed-lines-approve").baseline().id());
+        assertThat(sourceRow(next,item)).containsEntry("source_status","NEEDS_CONFIRMATION");
+        assertThat(sourceRow(next,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
+        assertThat(sourceRow(next,retired)).isNull(); // 퇴역한 항목은 새 기준에 없다
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_item_source WHERE baseline_id=?",Integer.class,next)).isEqualTo(2);
+    }
+
+    @Test void publishingWithoutADocumentChangeWritesNoSourceRows() {
+        citeLines(version);
+        Proposal p=create(false,true,"items-only");
+        long next=Long.parseLong(approve(p,"items-only-approve").baseline().id());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_item_source WHERE baseline_id=?",Integer.class,next)).isZero();
+    }
+
+    @Test void backfillMigrationFillsAnAlreadyDriftedCurrentBaselineAndIsIdempotent() throws Exception {
+        citeLines(version);
+        long v2=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
+                VALUES(?,2,'APPROVED','v2.md','v2-hash',?,?,?,now()) RETURNING id
+                """,Long.class,document,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n",leader.accountId(),leader.accountId());
+        jdbc.update("UPDATE document_version SET status='SUPERSEDED' WHERE id=?",version);
+        // -406 이전에 발행된 기준처럼: 기준의 문서는 v2 인데 항목은 옛 v1 출처를 그대로 가리킨다.
+        long drifted=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,2,?) RETURNING id",
+                Long.class,project.projectId(),leader.accountId());
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)",drifted,project.projectId(),document,v2);
+        for (long designItem : List.of(item,retired,unchanged))
+            jdbc.update("INSERT INTO baseline_item VALUES(?,?,?,?)",drifted,project.projectId(),designItem,currentVersion(designItem));
+        jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?",drifted,project.projectId());
+        assertThat(count("baseline_item_source")).isZero();
+
+        runBackfill(); runBackfill();
+        var moved=sourceRow(drifted,item);
+        assertThat(moved).containsEntry("source_status","REMAPPED").containsEntry("remapped_from_document_version_id",version);
+        assertThat(((Number)moved.get("source_document_version_id")).longValue()).isEqualTo(v2);
+        assertThat(locator(moved)).containsEntry("start_line",3).containsEntry("end_line",4).containsEntry("location","요구사항 / L3-L4");
+        assertThat(sourceRow(drifted,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_item_source WHERE baseline_id=?",Integer.class,drifted)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_item_source WHERE baseline_id=?",Integer.class,baseline)).isZero();
+    }
+
+    void runBackfill() throws Exception {
+        var migration=new db.migration.V52__backfill_baseline_item_source();
+        try (var connection=jdbc.getDataSource().getConnection()) {
+            connection.setAutoCommit(true);
+            migration.migrate(new org.flywaydb.core.api.migration.Context() {
+                @Override public org.flywaydb.core.api.configuration.Configuration getConfiguration() { return null; }
+                @Override public java.sql.Connection getConnection() { return connection; }
+            });
+        }
+    }
+
+    @Autowired com.beez.backend.changeproposal.repository.DraftContextRepository drafts;
+    @Autowired com.beez.backend.changeproposal.repository.ProposalRepository proposalRepository;
+
+    @Test void draftAndCandidateReadersFollowTheEffectiveSourceAfterADocumentChange() {
+        citeLines(version);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","readers"); ready(p);
+        long next=Long.parseLong(approve(p,"readers-approve").baseline().id());
+        long newDocumentVersion=Long.parseLong(p.documents().getFirst().proposedDocumentVersionId());
+        // 다음 문서 수정 초안은 새 문서 버전에서 나온 항목을 찾아야 한다. 옛 버전으로는 더 이상 찾지 않는다.
+        assertThat(drafts.relatedItemCount(next,newDocumentVersion)).isEqualTo(3);
+        assertThat(drafts.relatedItemCount(next,version)).isZero();
+        var related=drafts.relatedItems(next,newDocumentVersion,10);
+        assertThat(related).hasSize(3);
+        assertThat(related).filteredOn(r -> "NEEDS_CONFIRMATION".equals(r.get("source_status"))).singleElement()
+                .satisfies(r -> assertThat(((Number)r.get("source_document_version_id")).longValue()).isEqualTo(newDocumentVersion));
+        assertThat(related).filteredOn(r -> "REMAPPED".equals(r.get("source_status"))).hasSize(2)
+                .allSatisfy(r -> assertThat(r.get("source_locator").toString()).contains("\"start_line\": 3").doesNotContain("\"start_line\": 2"));
+        // 영향 후보의 DOCUMENT 갈래도 문서 변경 뒤 사라지지 않는다.
+        assertThat(proposalRepository.candidates(project.projectId(),next,Set.of(),Set.of(document),100))
+                .anyMatch(c -> "DOCUMENT".equals(c.targetType()) && c.targetId().equals(""+document));
+    }
+
+    @Test void sourceRowsAreImmutable() {
+        citeLines(version);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","immutable"); ready(p);
+        long next=Long.parseLong(approve(p,"immutable-approve").baseline().id());
+        assertThatThrownBy(() -> jdbc.update("UPDATE baseline_item_source SET source_status='REMAPPED' WHERE baseline_id=?",next))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
     }
 }

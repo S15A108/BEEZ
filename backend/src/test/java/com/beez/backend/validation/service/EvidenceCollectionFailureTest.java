@@ -16,6 +16,16 @@ class EvidenceCollectionFailureTest {
         assertThat(detail.toString()).doesNotContain("db://secret");
     }
 
+    @Test void sourceConfirmationIsAllowlistedAndKeepsItsOwnMessage() {
+        var detail = EvidenceCollectionFailure.detail(List.of("source_confirmation_required"));
+        assertThat(detail.get("reason_codes")).isEqualTo(List.of("source_confirmation_required"));
+        assertThat(detail.get("message").toString()).contains("출처 위치를 확인·정정");
+        var both = EvidenceCollectionFailure.detail(List.of("source_confirmation_required", "source_evidence_unavailable"));
+        assertThat(both.get("reason_codes")).isEqualTo(List.of("source_confirmation_required", "source_evidence_unavailable"));
+        assertThat(both.get("message").toString()).contains("필요한 근거 범위를 확인하지 못했어요");
+        assertThat(both.get("retryable")).isEqualTo(false);
+    }
+
     @Test void onlyExplicitFetchFailuresAreTransient() {
         var detail = EvidenceCollectionFailure.detail(List.of("evidence_fetch_failed", "evidence_fetch_failed"));
         assertThat(detail.get("reason_codes")).isEqualTo(List.of("evidence_fetch_failed"));
@@ -24,7 +34,7 @@ class EvidenceCollectionFailureTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"search_query_too_long", "search_query_limit", "search_results_truncated",
-            "design_candidate_limit", "related_task_limit", "source_evidence_unavailable",
+            "design_candidate_limit", "related_task_limit", "source_evidence_unavailable", "source_confirmation_required",
             "design_reference_limit", "unresolved_limit", "unknown_collection_failure"})
     void persistentCausesAreHumanReviewEvenWhenPreviouslyStoredAsRetry(String cause) {
         var detail = EvidenceCollectionFailure.detail(List.of(cause));

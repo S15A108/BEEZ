@@ -647,8 +647,8 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"evidence_fetch_failed", "source_evidence_unavailable", "search_query_too_long",
-            "search_query_limit", "design_candidate_limit", "related_task_limit",
+    @ValueSource(strings = {"evidence_fetch_failed", "source_evidence_unavailable", "source_confirmation_required",
+            "search_query_too_long", "search_query_limit", "design_candidate_limit", "related_task_limit",
             "evidence_fetch_failed,search_query_limit", "evidence_fetch_failed,unknown-internal-cause", ""})
     void incompleteCollectionClassifiesCausesAndGuardsRetry(String causes) throws Exception {
         long[] t = passableTask("collection classification");

@@ -46,8 +46,8 @@ public class DraftContextRepository {
     public int relatedItemCount(long baseline, long documentVersion) {
         return jdbc.sql("""
                 SELECT count(*) FROM baseline_item bi JOIN design_item i ON i.id=bi.design_item_id AND i.project_id=bi.project_id
-                JOIN design_item_version v ON v.id=bi.design_item_version_id
-                WHERE bi.baseline_id=:baseline AND i.retired_at IS NULL AND v.source_document_version_id=:version
+                JOIN baseline_item_effective_source es ON es.baseline_id=bi.baseline_id AND es.design_item_id=bi.design_item_id
+                WHERE bi.baseline_id=:baseline AND i.retired_at IS NULL AND es.source_document_version_id=:version
                 """).param("baseline", baseline).param("version", documentVersion).query(Integer.class).single();
     }
 
@@ -55,10 +55,12 @@ public class DraftContextRepository {
     public List<Map<String, Object>> relatedItems(long baseline, long documentVersion, int limit) {
         return jdbc.sql("""
                 SELECT v.id,i.id AS design_item_id,i.key,i.kind,v.version_no,v.status,v.schema_version,
-                       v.content::text AS content,v.source_document_version_id,v.source_locator::text AS source_locator
+                       v.content::text AS content,es.source_document_version_id,es.source_locator::text AS source_locator,
+                       es.source_status
                 FROM baseline_item bi JOIN design_item i ON i.id=bi.design_item_id AND i.project_id=bi.project_id
                 JOIN design_item_version v ON v.id=bi.design_item_version_id
-                WHERE bi.baseline_id=:baseline AND i.retired_at IS NULL AND v.source_document_version_id=:version
+                JOIN baseline_item_effective_source es ON es.baseline_id=bi.baseline_id AND es.design_item_id=bi.design_item_id
+                WHERE bi.baseline_id=:baseline AND i.retired_at IS NULL AND es.source_document_version_id=:version
                 ORDER BY i.key LIMIT :limit
                 """).param("baseline", baseline).param("version", documentVersion).param("limit", limit).query().listOfRows();
     }

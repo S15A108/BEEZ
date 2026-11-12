@@ -145,7 +145,7 @@ public class MeetingRepository {
                        second_plan.revision_no as second_revision_no, coalesce(second_plan.title, second_task.title) as second_title,
                        item.id as item_id, version.id as version_id, item.key as item_key, version.title as item_title,
                        doc.id as document_id, case when doc.id is not null then doc_version.id end as document_version_id,
-                       version.source_locator::text as source_locator,
+                       coalesce(es.source_locator, version.source_locator)::text as source_locator,
                        first_ref.proposed_content::text as first_proposal, second_ref.proposed_content::text as second_proposal
                   from validation v
                   join task first_task on first_task.id = v.task_id and first_task.project_id = :project
@@ -166,7 +166,11 @@ public class MeetingRepository {
                   left join design_item_version version
                     on version.id = coalesce(f.design_item_version_id, first_ref.design_item_version_id, second_ref.design_item_version_id)
                    and version.design_item_id = item.id
-                  left join document_version doc_version on doc_version.id = version.source_document_version_id
+                  left join project cur on cur.id = :project
+                  left join baseline_item_effective_source es on es.baseline_id = cur.current_baseline_id
+                   and es.design_item_id = item.id and es.design_item_version_id = version.id
+                  left join document_version doc_version on doc_version.id
+                       = coalesce(es.source_document_version_id, version.source_document_version_id)
                   left join document doc on doc.id = doc_version.document_id and doc.project_id = :project
                  where v.id = :validation and first_task.id = :task and second_task.id = :related
                    and f.kind = 'CONFLICT' and f.severity = 'BLOCKING'
