@@ -8,6 +8,8 @@
 --   - REMAPPED: 옛 문서의 인용 줄이 새 문서에서 글자 그대로 있어 새 줄 위치로 옮겼다.
 --   - NEEDS_CONFIRMATION: 인용 줄이 바뀌었거나 위치를 증명할 수 없어 옮기지 않았다. 출처 문서 버전만 새 버전으로 두고
 --     source_locator 는 옛 값을 보존한다. 근거 수집은 이 항목을 쓸 수 없는 근거로 본다.
+--   - remapped_from_document_version_id: REMAPPED 는 옮기기 전 문서 버전, NEEDS_CONFIRMATION 은 source_locator 의
+--     줄 번호가 가리키는 문서 버전이다(확인 필요가 이어져도 처음 그 상태가 된 버전을 유지한다).
 CREATE TABLE baseline_item_source (
   baseline_id                       BIGINT      NOT NULL,
   project_id                        BIGINT      NOT NULL,

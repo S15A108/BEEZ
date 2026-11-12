@@ -64,7 +64,10 @@ public class BaselineSourceCarrier {
                 continue;
             }
             if (NEEDS_CONFIRMATION.equals(status)) {
-                baselines.insertItemSource(baseline, project, item, target, locator, NEEDS_CONFIRMATION, from);
+                // 줄 번호(locator)는 처음 확인 필요가 된 버전 기준 그대로이므로 remapped_from 도 그 버전을 유지한다.
+                long locatorVersion = row.get("remapped_from_document_version_id") == null
+                        ? from : id(row, "remapped_from_document_version_id");
+                baselines.insertItemSource(baseline, project, item, target, locator, NEEDS_CONFIRMATION, locatorVersion);
                 needsConfirmation++;
                 continue;
             }

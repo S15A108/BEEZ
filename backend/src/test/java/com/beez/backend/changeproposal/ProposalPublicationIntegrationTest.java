@@ -678,7 +678,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(((Number)moved.get("source_document_version_id")).longValue()).isEqualTo(v3);
         assertThat(locator(moved)).containsEntry("start_line",5).containsEntry("end_line",6);
         var stillUnconfirmed=sourceRow(third,unchanged);
-        assertThat(stillUnconfirmed).containsEntry("source_status","NEEDS_CONFIRMATION").containsEntry("remapped_from_document_version_id",v2);
+        assertThat(stillUnconfirmed).containsEntry("source_status","NEEDS_CONFIRMATION").containsEntry("remapped_from_document_version_id",version);
         assertThat(((Number)stillUnconfirmed.get("source_document_version_id")).longValue()).isEqualTo(v3);
         assertThat(locator(stillUnconfirmed)).containsEntry("start_line",4).containsEntry("end_line",5);
     }
