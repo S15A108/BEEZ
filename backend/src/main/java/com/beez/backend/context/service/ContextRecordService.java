@@ -30,7 +30,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 공유 작업 기록 쓰기·상세·검색 (MCP-07·06·05, S15P31A108-166). REST CTX-A02~A04 도 같은 서비스를 쓴다.
+ * 공유 작업 기록 쓰기·상세·검색 (MCP-07·06·05, S15P31A108-166). REST CTX-A02·A03(-404)도 같은 서비스를 쓴다.
+ * CTX-A04(웹에서 기록 쓰기)는 아직 컨트롤러가 없다.
  *
  * <p>근거
  * <ul>
@@ -53,6 +54,9 @@ public class ContextRecordService {
     private final ContextAccessRecorder accessLog;
     private final JdbcClient jdbc;
     private final EntityManager entityManager;
+
+    /** CTX-A03 조회 이력에 남기는 API 이름 (00-common ContextAccessLog.tool 예: CTX-A01) */
+    public static final String TOOL_REST_DETAIL = "CTX-A03";
 
     public ContextRecordService(ProjectAccessChecker access, InputValidator validator, ContextRecordRepository records,
                                 DevContextPacketRepository packets, ContextLookup lookup, ContextAccessRecorder accessLog,
@@ -150,6 +154,13 @@ public class ContextRecordService {
         return ContextRecordResponse.of(record, latest, current, lookup.recordRefs(record.getId()));
     }
 
+    /** CTX-A03 작업 기록 상세 (S15P31A108-404). 사람 세션용 입구 — 규칙과 조회 이력은 {@link #read} 와 같다 */
+    @Transactional
+    public ContextRecordResponse readForRest(CallerContext caller, Long projectId, Long recordId) {
+        ProjectActor actor = access.requireMember(caller, projectId);
+        return read(actor, projectId, recordId, TOOL_REST_DETAIL);
+    }
+
     // ---- MCP-05 find_context / CTX-A02 ----
 
     /**
@@ -164,16 +175,42 @@ public class ContextRecordService {
         }
         Long taskId = Ids.parse(args.taskId(), "task_id");
         List<String> kinds = parseKinds(args.kinds());
-        int size = PageResponse.normalizeLimit(args.limit());
-        long before = PageResponse.beforeId(args.cursor());
+        return search(actor, projectId, args.query(), taskId, kinds, args.cursor(), args.limit());
+    }
+
+    /**
+     * CTX-A02 공유 작업 기록 목록·검색 (S15P31A108-404). find_context 와 같은 권한·필터·정렬이고, 다른 점은 둘이다:
+     * 검색어(q)가 선택이라 없으면 보이는 기록 전부를 최신순으로 주고(웹 '작업 기록' 카드는 task_id 만 보낸다),
+     * 종류는 하나(kind)만 받는다.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ContextRecordSummaryResponse> list(CallerContext caller, Long projectId, String q, String taskId,
+                                                           String kind, String cursor, Integer limit) {
+        ProjectActor actor = access.requireMember(caller, projectId);
+        Long taskFilter = Ids.parse(taskId, "task_id");
+        List<String> kinds = new ArrayList<>();
+        if (kind != null && !kind.isBlank()) {
+            kinds = parseKinds(List.of(kind));
+        }
+        return search(actor, projectId, q, taskFilter, kinds, cursor, limit);
+    }
+
+    /** 검색어가 없거나 빈칸이면 검색어 조건을 걸지 않는다. 나머지 조건은 항상 건다 */
+    private PageResponse<ContextRecordSummaryResponse> search(ProjectActor actor, Long projectId, String query, Long taskId,
+                                                              List<String> kinds, String cursor, Integer limit) {
+        boolean hasQuery = query != null && !query.isBlank();
+        int size = PageResponse.normalizeLimit(limit);
+        long before = PageResponse.beforeId(cursor);
 
         StringBuilder sql = new StringBuilder("""
                 select id from context_record
                  where project_id = :p
                    and (visibility = 'SHARED' or author_account_id = :me)
-                   and position(lower(:q) in lower(summary)) > 0
                    and id < :before
                 """);
+        if (hasQuery) {
+            sql.append(" and position(lower(:q) in lower(summary)) > 0 ");
+        }
         if (taskId != null) {
             sql.append(" and task_id = :task ");
         }
@@ -182,8 +219,11 @@ public class ContextRecordService {
         }
         sql.append(" order by id desc limit :fetch ");
         JdbcClient.StatementSpec spec = jdbc.sql(sql.toString())
-                .param("p", projectId).param("me", actor.accountId()).param("q", args.query().strip())
+                .param("p", projectId).param("me", actor.accountId())
                 .param("before", before).param("fetch", size + 1);
+        if (hasQuery) {
+            spec = spec.param("q", query.strip());
+        }
         if (taskId != null) {
             spec = spec.param("task", taskId);
         }
