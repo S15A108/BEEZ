@@ -78,31 +78,25 @@ class SlowProvider:
 
 @pytest.mark.asyncio
 async def test_default_meeting_model_budget_leaves_time_below_be_default():
-    # The current BE AiClient default is 20 seconds; deployment overrides still
-    # require an explicit contract and integration test with the actual value.
     provider = SuccessfulProvider()
     await service.analyze(
         MeetingAnalysisRequest.model_validate(request_body()),
         LLMClient(provider),
         "test-model",
     )
-    assert service._MODEL_TIMEOUT_SECONDS == 15.0
-    assert 0 < provider.call.timeout_seconds < 20
-    assert provider.call.timeout_seconds == service._MODEL_TIMEOUT_SECONDS
-    assert 0 < provider.remaining_seconds <= service._MODEL_TIMEOUT_SECONDS
+    assert provider.call.timeout_seconds == 35.0
+    assert 0 < provider.remaining_seconds <= provider.call.timeout_seconds
 
 
 @pytest.mark.asyncio
-async def test_model_deadline_cancels_slow_provider_and_preserves_failed_usage(
-    monkeypatch,
-):
-    monkeypatch.setattr(service, "_MODEL_TIMEOUT_SECONDS", 0.05)
+async def test_model_deadline_cancels_slow_provider_and_preserves_failed_usage():
     provider = SlowProvider()
     with pytest.raises(LLMError) as caught:
         await service.analyze(
             MeetingAnalysisRequest.model_validate(request_body()),
             LLMClient(provider),
             "test-model",
+            timeout_seconds=0.05,
         )
     assert caught.value.code == "model_timeout"
     assert provider.started and provider.cancelled
@@ -115,7 +109,7 @@ async def test_model_deadline_cancels_slow_provider_and_preserves_failed_usage(
 
 
 def test_http_timeout_returns_504_and_started_call_usage(monkeypatch):
-    monkeypatch.setattr(service, "_MODEL_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setenv("MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS", "0.05")
     provider = SlowProvider()
 
     @asynccontextmanager
@@ -129,10 +123,12 @@ def test_http_timeout_returns_504_and_started_call_usage(monkeypatch):
         lambda: Settings(_env_file=None, ai_internal_token="internal"),
     )
     # This test exercises AI-A08, not startup provisioning of the tokenizer.
+    body = request_body()
+    body.update(mode="SUMMARY", related_tasks=[], documents=[])
     with patch("app.main.EmbeddingTokenCounter"), TestClient(app) as http:
         response = http.post(
             "/v1/bee/meeting-analysis",
-            json=request_body(),
+            json=body,
             headers={"Authorization": "Bearer internal"},
         )
     assert response.status_code == 504

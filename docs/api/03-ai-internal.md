@@ -1750,7 +1750,7 @@ HTTP `200`.
 관련 요구사항: MTG-06·08  
 담당: BE: 오서현 / AI: 양지훈 / FE: —
 
-상태: 내부 계약 초안. SUMMARY 는 BE 가 호출하는 경계를 구현했다(S15P31A108-235). AI 서버는 2026-11-05 기준 SUMMARY 를 아직 받지 않아(`SUMMARY contract is not agreed`) 실제 연동은 AI 구현 뒤 확인한다
+BE는 회의 정리와 수정 요청에서 `SUMMARY` 모드를 호출한다. 모델 호출 제한은 `MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS`(기본 35초)로 정한다. 회의 정리의 BE 읽기 제한은 `MEETING_SUMMARY_READ_TIMEOUT`(기본 45초)이다. 동기 요청이므로 AI 호출보다 BE 읽기 제한을 길게 두고, nginx `/api/` 대기 60초 안에 입력 준비와 결과 저장까지 끝날 여유를 둔다. [환경 변수](../infra/env.md)
 
 #### 인증
 

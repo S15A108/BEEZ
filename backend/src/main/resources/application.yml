@@ -151,6 +151,8 @@ beez:
       recent-entries-reserve-bytes: ${MEETING_SUMMARY_RECENT_ENTRIES_RESERVE_BYTES:100000}
       max-entries: ${MEETING_SUMMARY_MAX_ENTRIES:200}
       max-items: ${MEETING_SUMMARY_MAX_ITEMS:100}
+      # 회의 정리·정리 수정의 동기 호출. AI 모델 제한(35초)보다 길게, nginx /api/ 제한(60초)보다 짧게 둔다.
+      read-timeout: ${MEETING_SUMMARY_READ_TIMEOUT:45s}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   validation:

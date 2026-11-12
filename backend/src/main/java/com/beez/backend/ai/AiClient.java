@@ -34,6 +34,8 @@ public class AiClient {
      */
     static final Duration ASSIGNMENT_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration MEETING_REVISION_READ_TIMEOUT = Duration.ofSeconds(55);
+    /** 회의 정리(AI-A08)는 사용자 요청 안에서 기다리므로 AI 모델 제한과 nginx /api/ 제한 사이에 둔다. */
+    private static final int DEFAULT_MEETING_SUMMARY_READ_TIMEOUT_SECONDS = 45;
     /**
      * 문서 검토 제안 대화·직접 요청(DISCUSS·REQUEST, 사용자 요청 안에서 기다림) 전용. 대화 모델 제한(50초)보다 길고
      * nginx(60초)보다 짧아야 한다 (S15P31A108-382·-391). 첫 검토·재검토는 아래 워커 전용 제한을 쓴다.
@@ -72,6 +74,7 @@ public class AiClient {
     private final RestClient draftRest;
     private final RestClient assignmentRest;
     private final RestClient meetingRevisionRest;
+    private final RestClient meetingSummaryRest;
     private final RestClient reviewRest;
     private final RestClient reviewWorkerRest;
     private final RestClient taskBreakdownRest;
@@ -121,6 +124,14 @@ public class AiClient {
                 Duration.ofSeconds(DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS));
     }
 
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
+                    Duration taskBreakdownReadTimeout, Duration reviewWorkerReadTimeout, Duration taskPlanReadTimeout,
+                    Duration developmentContextReadTimeout, Duration changeImpactReadTimeout, Duration validationReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, reviewWorkerReadTimeout,
+                taskPlanReadTimeout, developmentContextReadTimeout, changeImpactReadTimeout, validationReadTimeout,
+                Duration.ofSeconds(DEFAULT_MEETING_SUMMARY_READ_TIMEOUT_SECONDS));
+    }
+
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
@@ -132,10 +143,16 @@ public class AiClient {
                     @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout,
                     @Value(CHANGE_IMPACT_READ_TIMEOUT) Duration changeImpactReadTimeout,
                     @Value("${beez.validation.read-timeout:" + DEFAULT_VALIDATION_READ_TIMEOUT_SECONDS + "s}")
-                    Duration validationReadTimeout) {
+                    Duration validationReadTimeout,
+                    @Value("${beez.meeting.summary.read-timeout:" + DEFAULT_MEETING_SUMMARY_READ_TIMEOUT_SECONDS + "s}")
+                    Duration meetingSummaryReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         if (validationReadTimeout.isZero() || validationReadTimeout.isNegative()) {
             throw new IllegalArgumentException("beez.validation.read-timeout must be positive");
+        }
+        if (meetingSummaryReadTimeout.isZero() || meetingSummaryReadTimeout.isNegative()
+                || meetingSummaryReadTimeout.compareTo(Duration.ofSeconds(60)) >= 0) {
+            throw new IllegalArgumentException("beez.meeting.summary.read-timeout must be positive and below 60s");
         }
         this.rest = client(ai, ai.readTimeout());
         // 검증 워커의 예산에 맞춰 전용 제한을 적용한다. 공통 읽기 제한을 조정해도 검증 호출에는 영향을 주지 않는다.
@@ -145,6 +162,7 @@ public class AiClient {
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
         this.assignmentRest = client(ai, max(ai.readTimeout(), ASSIGNMENT_READ_TIMEOUT));
         this.meetingRevisionRest = client(ai, max(ai.readTimeout(), MEETING_REVISION_READ_TIMEOUT));
+        this.meetingSummaryRest = client(ai, meetingSummaryReadTimeout);
         this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
         this.reviewWorkerRest = client(ai, max(ai.readTimeout(), reviewWorkerReadTimeout));
         // 작업 분해 워커는 모델 제한(90초)보다 긴 전용 읽기 제한을 쓴다.
@@ -337,11 +355,10 @@ public class AiClient {
 
     /**
      * AI-A08 회의 분석 ({@code POST /v1/bee/meeting-analysis}). BE 는 SUMMARY 모드(회의 정리)로 부른다.
-     * 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다. AI 서버는 2026-11-05 기준 SUMMARY 를
-     * 아직 받지 않는다(S15P31A108-235). 읽기 시간 제한은 다른 호출과 같은 {@code ai.read-timeout} 이다.
+     * 회의 정리·정리 수정 요청은 이 호출의 전용 읽기 제한을 쓴다. 호출 실패·HTTP 오류는 호출하는 쪽에서 분류한다.
      */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> meetingAnalysis(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/bee/meeting-analysis").body(input).retrieve().body(java.util.Map.class);
+        return meetingSummaryRest.post().uri("/v1/bee/meeting-analysis").body(input).retrieve().body(java.util.Map.class);
     }
 }

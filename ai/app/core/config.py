@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS = 35.0
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -120,6 +122,12 @@ class Settings(BaseSettings):
     # sentence against the quotes it cites (catches a flipped subject or
     # negation); "tokens": the deterministic checks only, one call.
     bee_chat_claim_verification: str = "entailment"
+
+    # Parsed per request. The model limit must stay below the backend meeting
+    # analysis read timeout and the 60-second nginx read timeout.
+    meeting_analysis_llm_timeout_seconds: str = str(
+        DEFAULT_MEETING_ANALYSIS_TIMEOUT_SECONDS
+    )
 
     # #136 is opt-in until the BE has agreed to pass workload snapshots and
     # handle the proposed alternative-candidate fields.
