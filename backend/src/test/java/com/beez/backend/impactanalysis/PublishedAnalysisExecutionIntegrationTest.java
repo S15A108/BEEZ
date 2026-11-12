@@ -244,6 +244,68 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
                 .query(Integer.class).single()).isEqualTo(2);
     }
 
+    private static RestClientResponseException truncated() {
+        byte[] body = ("{\"error\":{\"code\":\"model_output_truncated\"},\"usage\":[{\"request_key\":\"published-llm-call\","
+                + "\"feature\":\"CHANGE_IMPACT\",\"failed\":true}]}").getBytes(StandardCharsets.UTF_8);
+        return new RestClientResponseException("output truncated", 502, "Bad Gateway", null, body, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 선점 순서 검사 전용 후속 발행 행. 기준 v3 과 접수행만 SQL 로 넣고 project.current_baseline_id 는 바꾸지 않는다.
+     * 실제 발행이 먼저 끝나면 현재 기준이 바뀌어 선행 건의 재시도는 기존 baseline_changed 규칙(ImpactContextQuery)에 걸리므로,
+     * 이 행으로는 "선행 건이 끝나야 후속 건을 집는다"만 본다 (#286 리뷰).
+     */
+    private long pendingLaterPublication() {
+        long nextBaseline = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
+                .param("p", project).param("a", leader).query(Long.class).single();
+        return api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) "
+                + "VALUES(:p,:b,'PENDING') RETURNING id").param("p", project).param("b", nextBaseline).query(Long.class).single();
+    }
+
+    /**
+     * 출력 상한 잘림을 첫 시도에 최종 FAILED 로 닫으면 같은 프로젝트의 후속 발행 분석이 선행 규칙에 막혀 멈춘다.
+     * 잘림은 코드를 그대로 남긴 채 한 번 더 시도하고, 성공하면 후속 발행 분석을 집을 수 있다 (S15P31A108-402, #286 리뷰).
+     */
+    @Test void truncatedOutputRetriesOnceKeepingItsCodeAndThenUnblocksTheNextPublication() {
+        long nextIntake = pendingLaterPublication();
+        when(ai.changeImpact(any())).thenThrow(truncated()).thenReturn(envelope());
+
+        processor.process(intake);
+        assertThat(api.jdbc.sql("SELECT status,error_code,next_attempt_at IS NOT NULL AS scheduled FROM published_change_analysis WHERE id=:id")
+                .param("id", intake).query().singleRow())
+                .containsEntry("status", "PENDING").containsEntry("error_code", "model_output_truncated").containsEntry("scheduled", true);
+        assertThat(repository.claimNow(nextIntake, 60)).isEmpty();
+
+        api.jdbc.sql("UPDATE published_change_analysis SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id")
+                .param("id", intake).update();
+        processor.process(intake);
+        // 시도별로 본다. 첫 시도는 잘림 코드 그대로, 두 번째는 평가 결과만(사유 코드는 관계·검색 범위에 따라 붙으므로 이 시험의 대상이 아니다)
+        var attempts = api.jdbc.sql("SELECT attempt,outcome,error_code FROM published_analysis_attempt WHERE intake_id=:id ORDER BY attempt")
+                .param("id", intake).query().listOfRows();
+        assertThat(attempts).hasSize(2);
+        assertThat(attempts.get(0)).containsEntry("attempt", 1).containsEntry("outcome", "FAILED")
+                .containsEntry("error_code", "model_output_truncated");
+        assertThat(attempts.get(1)).containsEntry("attempt", 2).containsEntry("outcome", "INSUFFICIENT_EVIDENCE");
+        assertThat(api.jdbc.sql("SELECT status FROM published_change_analysis WHERE id=:id").param("id", intake)
+                .query(String.class).single()).isEqualTo("COMPLETED");
+        assertThat(repository.claimNow(nextIntake, 60)).isPresent();
+    }
+
+    /** 잘림이 다시 나면 같은 상한으로 계속 끊길 가능성이 커 더 부르지 않는다. 유료 호출은 최대 두 번이다. */
+    @Test void truncatedOutputTwiceEndsFailedWithoutFurtherModelCalls() {
+        when(ai.changeImpact(any())).thenThrow(truncated()).thenThrow(truncated());
+        processor.process(intake);
+        api.jdbc.sql("UPDATE published_change_analysis SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id")
+                .param("id", intake).update();
+        processor.process(intake);
+
+        assertThat(api.jdbc.sql("SELECT status,error_code,attempt,next_attempt_at FROM published_change_analysis WHERE id=:id")
+                .param("id", intake).query().singleRow())
+                .containsEntry("status", "FAILED").containsEntry("error_code", "model_output_truncated")
+                .containsEntry("attempt", 2).containsEntry("next_attempt_at", null);
+        verify(ai, times(2)).changeImpact(any());
+    }
+
     @Test void expiredWorkerCannotOverwriteReclaimedAttempt() {
         when(ai.changeImpact(any())).thenAnswer(call -> {
             api.jdbc.sql("UPDATE published_change_analysis SET lease_until=clock_timestamp()-interval '1 second' WHERE id=:id")

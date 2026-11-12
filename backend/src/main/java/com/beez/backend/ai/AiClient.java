@@ -53,6 +53,17 @@ public class AiClient {
      * 정상 선택을 먼저 끊지 않는다.
      */
     static final Duration DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT = Duration.ofSeconds(40);
+    /**
+     * 변경 영향 분석(AI-A03) 전용(S15P31A108-402). 재분석·발행 후 분석 모두 백그라운드 실행이라 nginx 60초에 묶이지 않는다.
+     * AI 영향 분석 모델 제한(IMPACT_LLM_TIMEOUT_SECONDS 60초)보다 길어야 정상 분석을 먼저 끊지 않는다. 실행 lease 도 이 값으로 잡으므로
+     * 영향 분석 서비스들은 {@link #changeImpactLeaseSeconds(BeezProperties.Ai, Duration)} 로 같은 값에서 lease 를 얻는다.
+     * 기본값(초)은 한 곳에만 두고 Spring 설정 기본값과 짧은 생성자 기본값이 함께 따른다.
+     */
+    private static final String DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS = "75";
+    public static final String CHANGE_IMPACT_READ_TIMEOUT =
+            "${beez.change-impact.read-timeout:" + DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS + "s}";
+    static final Duration DEFAULT_CHANGE_IMPACT_READ_TIMEOUT =
+            Duration.ofSeconds(Long.parseLong(DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS));
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -64,6 +75,7 @@ public class AiClient {
     private final RestClient taskBreakdownRest;
     private final RestClient taskPlanRest;
     private final RestClient developmentContextRest;
+    private final RestClient changeImpactRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
 
@@ -91,6 +103,14 @@ public class AiClient {
                 taskPlanReadTimeout, DEFAULT_DEVELOPMENT_CONTEXT_READ_TIMEOUT);
     }
 
+    /** 영향 분석 읽기 제한을 기본값(75초)으로 두는 생성자. */
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout, Duration reviewReadTimeout,
+                    Duration taskBreakdownReadTimeout, Duration reviewWorkerReadTimeout, Duration taskPlanReadTimeout,
+                    Duration developmentContextReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, reviewReadTimeout, taskBreakdownReadTimeout, reviewWorkerReadTimeout,
+                taskPlanReadTimeout, developmentContextReadTimeout, DEFAULT_CHANGE_IMPACT_READ_TIMEOUT);
+    }
+
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
@@ -99,7 +119,8 @@ public class AiClient {
                     @Value("${beez.task-breakdown.read-timeout:105s}") Duration taskBreakdownReadTimeout,
                     @Value("${beez.document-review.worker-read-timeout:120s}") Duration reviewWorkerReadTimeout,
                     @Value("${beez.task-plan-draft.read-timeout:40s}") Duration taskPlanReadTimeout,
-                    @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout) {
+                    @Value("${beez.development-context.read-timeout:40s}") Duration developmentContextReadTimeout,
+                    @Value(CHANGE_IMPACT_READ_TIMEOUT) Duration changeImpactReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
@@ -116,12 +137,26 @@ public class AiClient {
         this.taskBreakdownRest = client(ai, taskBreakdownReadTimeout);
         this.taskPlanRest = client(ai, max(ai.readTimeout(), taskPlanReadTimeout));
         this.developmentContextRest = client(ai, max(ai.readTimeout(), developmentContextReadTimeout));
+        this.changeImpactRest = client(ai, changeImpactReadTimeout(ai, changeImpactReadTimeout));
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
         this.chatHttp = http(ai);
     }
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
+
+    /** 영향 분석 호출이 실제로 쓰는 읽기 제한. 공통 제한보다 짧게 설정되어도 공통값을 쓴다. */
+    public static Duration changeImpactReadTimeout(BeezProperties.Ai ai, Duration configured) {
+        return max(ai.readTimeout(), configured);
+    }
+
+    /**
+     * 영향 분석 실행(재분석·발행 후 분석)의 lease(초). 실제 읽기 제한 + 연결 제한 + 1분, 최소 1분이라 긴 정상 분석 중에
+     * lease 가 끝나 중단으로 읽히지 않는다. 두 실행 경로가 같은 식을 쓰도록 여기 한 곳에 둔다 (S15P31A108-402).
+     */
+    public static long changeImpactLeaseSeconds(BeezProperties.Ai ai, Duration configured) {
+        return Math.max(60, changeImpactReadTimeout(ai, configured).plus(ai.connectTimeout()).toSeconds() + 60);
+    }
 
     private static HttpClient http(BeezProperties.Ai ai) {
         // Uvicorn uses HTTP/1.1; avoid h2c upgrades on streamed request bodies.
@@ -184,7 +219,7 @@ public class AiClient {
     /** Analyze a proposal; callers must retain the usage envelope and handle failures explicitly. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> changeImpact(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
+        return changeImpactRest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
     }
 
     /**

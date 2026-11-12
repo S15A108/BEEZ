@@ -102,6 +102,38 @@ class AiClientTest {
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
     }
 
+    /** 영향 분석은 공통 읽기 제한(20초)이 아니라 AI 모델 제한(60초)보다 긴 전용 제한을 쓴다. 공통값이면 정상 분석을 먼저 끊는다 (S15P31A108-402). */
+    @Test void changeImpactUsesItsOwnLongerReadTimeoutThanOtherCalls() throws Exception {
+        server.removeContext("/");
+        AtomicReference<String> seenPath = new AtomicReference<>();
+        server.createContext("/", exchange -> {
+            seenPath.set(exchange.getRequestURI().getPath());
+            try { Thread.sleep(800); } catch (InterruptedException ignored) { }
+            byte[] bytes = "{\"origin\":\"MODEL\",\"result\":{},\"usage\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        var slow = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
+                "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
+                Duration.ofMillis(500), Duration.ofMillis(300)), null),
+                Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofMillis(300),
+                Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofSeconds(3));
+        var input = Map.<String, Object>of("request_key", "impact-1");
+        assertThat(slow.changeImpact(input)).containsEntry("origin", "MODEL");
+        assertThat(seenPath.get()).isEqualTo("/v1/impact");
+        assertThatThrownBy(() -> slow.documentChunks(input))
+                .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+        // 공통 제한보다 짧게 설정해도 공통값 아래로 내려가지 않는다(lease 계산도 같은 값을 쓴다)
+        var ai = new BeezProperties.Ai("http://x", "t", Duration.ofSeconds(3), Duration.ofSeconds(20));
+        assertThat(AiClient.changeImpactReadTimeout(ai, Duration.ofSeconds(5))).isEqualTo(Duration.ofSeconds(20));
+        assertThat(AiClient.changeImpactReadTimeout(ai, Duration.ofSeconds(75))).isEqualTo(Duration.ofSeconds(75));
+        // 실행 lease 는 같은 읽기 제한 + 연결 + 1분이라, 정상 분석이 읽기 제한을 다 써도 lease 안에서 끝난다
+        assertThat(AiClient.changeImpactLeaseSeconds(ai, Duration.ofSeconds(75))).isEqualTo(75 + 3 + 60);
+        assertThat(AiClient.CHANGE_IMPACT_READ_TIMEOUT).isEqualTo("${beez.change-impact.read-timeout:75s}");
+        assertThat(AiClient.DEFAULT_CHANGE_IMPACT_READ_TIMEOUT).isEqualTo(Duration.ofSeconds(75));
+    }
+
     /** 작업 계획 문서 초안도 공통 읽기 제한보다 긴 전용 제한을 쓰고, 경로·본문은 AI 계약 그대로 보낸다 (S15P31A108-385). */
     @Test void taskPlanDraftsUsesItsOwnLongerReadTimeoutThanOtherCalls() throws Exception {
         server.removeContext("/");

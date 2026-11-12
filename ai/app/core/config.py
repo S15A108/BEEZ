@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     impact_llm_api_key: SecretStr | None = None
     impact_llm_model: str | None = None
     # Parse per feature so a bad impact-only setting cannot disable retrieval.
-    impact_llm_timeout_seconds: str = "15"
+    # 설계 40개 규모 실측(S15P31A108-402): 입력 약 1.1만 토큰에서 1,024 출력이 추론 토큰에 먹혀 잘렸다.
+    # 출력은 허용 상한 4,096, 시간은 그 길이를 다 써도 끝나게 60초. BE 영향 분석 읽기 제한(75초)보다 짧게 둔다.
+    impact_llm_timeout_seconds: str = "60"
     impact_llm_allowed_response_models: str = ""
-    impact_llm_output_token_limit: str = "1024"
+    impact_llm_output_token_limit: str = "4096"
     impact_llm_output_token_parameter: str = "max_completion_tokens"
     impact_llm_response_format: str = "json_object"
     impact_max_body_bytes: str = "262144"

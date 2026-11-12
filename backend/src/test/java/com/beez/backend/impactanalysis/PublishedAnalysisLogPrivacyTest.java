@@ -35,7 +35,7 @@ class PublishedAnalysisLogPrivacyTest {
                     new BeezProperties.Ai("http://localhost", "test", Duration.ofSeconds(1), Duration.ofSeconds(1)), null);
             var processor = new PublishedAnalysisProcessor(repository, mock(ImpactAnalysisCoordinator.class),
                     mock(ImpactContextQuery.class), mock(ExplicitImpactCalculator.class), mock(JdbcClient.class),
-                    mock(PlatformTransactionManager.class), properties);
+                    mock(PlatformTransactionManager.class), properties, Duration.ofSeconds(75));
             assertThatThrownBy(() -> processor.process(42)).isInstanceOf(IllegalStateException.class);
             AccessErrors.notFound("not_member project=987654 account=31");
 

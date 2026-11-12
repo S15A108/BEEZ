@@ -969,6 +969,7 @@ HTTP `200`.
 | 413 | `invalid_ai_input` | #188 제안: 설정된 요청 본문 크기 초과 |
 | 422 | `invalid_ai_input` | 본문 업무 구조 부적합 |
 | 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
+| 502 | `model_output_truncated` | 모델 답이 출력 토큰 상한(`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`, 기본 4,096, 추론 토큰 포함)에서 끊김. BE 는 이 코드를 그대로 `error_code` 로 저장하고, 발행 후 분석은 첫 시도의 잘림만 한 번 더 시도한다(S15P31A108-402) |
 | 504 | `model_timeout` | 모델 시간 초과 |
 
 ```json
