@@ -335,7 +335,12 @@ class ValidationInputAssemblerTest {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(target);
         when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
                 .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of(
-                Map.of("baseline_id", 2L, "content", "{\"constraints\":[\"접근 로그 기록\"],\"unresolved\":[]}")));
+                Map.of("baseline_id", 2L, "content", """
+                        {
+                          "constraints": ["접근 로그 기록"],
+                          "unresolved": ["SELECTION_TRUNCATED: 직접 일치 후보 중 설계 1건, 원문 1건이 직접 선택 상한으로 제외됐습니다."]
+                        }
+                        """)));
         var result = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
         assertTrue(result.searchComplete());
         assertEquals(List.of("접근 로그 기록"), result.request().get("context_packet_constraints"));
