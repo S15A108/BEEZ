@@ -2447,3 +2447,181 @@ it('계획 수정에는 문서로 초안 받기를 두지 않는다', async () =
   await openPlanEditor()
   expect(screen.queryByRole('button', { name: '문서로 초안 받기' })).toBeNull()
 })
+
+it.each(['typed', 'legacy-fetch'] as const)(
+  '%s 근거 수집 실패는 계획 보완 대신 같은 검증을 재시도한다',
+  async (mode) => {
+    const failed = {
+      ...task.validation!,
+      status: 'ERROR' as const,
+      error_code:
+        mode === 'typed'
+          ? 'evidence_collection_failed'
+          : 'evidence_fetch_failed',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL' as const,
+          kind: 'ERROR' as const,
+          severity: 'BLOCKING' as const,
+          message: '분석 후보 검색 또는 원문 근거 범위가 불완전합니다',
+          sources: [],
+          resolution: 'RETRY' as const,
+          next_action: '근거 수집을 다시 시도해 주세요.',
+        },
+      ],
+      ...(mode === 'typed'
+        ? {
+            execution_failure: {
+              type: 'EVIDENCE_COLLECTION_FAILED' as const,
+              message: '원문을 가져오지 못했어요.',
+              reason_codes: ['evidence_fetch_failed'],
+              retryable: true,
+            },
+          }
+        : {}),
+    }
+    task = { ...task, validation_status: 'ERROR', validation: failed }
+    const retry = vi
+      .spyOn(validationsApi, 'retry')
+      .mockResolvedValue({ ...failed, status: 'RUNNING' })
+    const save = vi.spyOn(tasksApi, 'savePlan')
+    const proposal = vi.spyOn(tasksApi, 'proposePlanRevision')
+    show(false)
+    const button = await screen.findByRole('button', {
+      name: '근거 수집 재시도',
+    })
+    expect(screen.queryByText(/보완한 뒤 새 검증/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '계획 보완' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'AI 계획 수정안 받기' }),
+    ).not.toBeInTheDocument()
+    await userEvent.click(button)
+    expect(retry).toHaveBeenCalledWith(
+      '101',
+      '601',
+      { expected_attempt: 1 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(save).not.toHaveBeenCalled()
+    expect(proposal).not.toHaveBeenCalled()
+  },
+)
+
+it.each(['durable', 'mixed', 'source', 'legacy-unknown'] as const)(
+  '%s 근거 수집 실패는 수동 범위 검토를 열고 재시도나 AI 수정을 제안하지 않는다',
+  async (mode) => {
+    const failed = {
+      ...task.validation!,
+      status: 'ERROR' as const,
+      error_code:
+        mode === 'legacy-unknown'
+          ? 'ai_evidence_insufficient'
+          : 'evidence_collection_failed',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL' as const,
+          kind: 'ERROR' as const,
+          severity: 'BLOCKING' as const,
+          message: '분석 후보 검색 또는 원문 근거 범위가 불완전합니다',
+          sources: [],
+          // 이전 서버가 RETRY로 잘못 저장한 결과도 그대로 실행시키지 않는다.
+          resolution: 'RETRY' as const,
+          next_action: '근거 수집을 다시 시도해 주세요.',
+        },
+      ],
+      ...(mode === 'legacy-unknown'
+        ? {}
+        : {
+            execution_failure: {
+              type: 'EVIDENCE_COLLECTION_FAILED' as const,
+              message: '근거 수집 실패',
+              reason_codes:
+                mode === 'mixed'
+                  ? ['search_results_truncated', 'evidence_fetch_failed']
+                  : mode === 'source'
+                    ? ['source_evidence_unavailable']
+                    : ['search_query_too_long'],
+              retryable: true,
+            },
+          }),
+    }
+    task = { ...task, validation_status: 'ERROR', validation: failed }
+    const retry = vi.spyOn(validationsApi, 'retry')
+    const proposal = vi.spyOn(tasksApi, 'proposePlanRevision')
+    const save = vi.spyOn(tasksApi, 'savePlan')
+    show(false)
+    const manual = await screen.findByRole('button', {
+      name: '계획·참조 범위 검토',
+    })
+    expect(
+      screen.getByRole('list', { name: '근거 수집 실패 원인' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '근거 문서 확인' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '근거 수집 재시도' }),
+    ).toBeNull()
+    expect(screen.queryByRole('button', { name: '실행 재시도' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '계획 검증' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 검증' })).toBeNull()
+    if (mode === 'durable')
+      expect(
+        screen.queryByRole('button', { name: '보완 후 새 검증' }),
+      ).toBeNull()
+    else
+      expect(
+        screen.getByRole('button', { name: '보완 후 새 검증' }),
+      ).toBeEnabled()
+    expect(
+      screen.queryByRole('button', { name: 'AI 계획 수정안 받기' }),
+    ).toBeNull()
+    expect(screen.getByRole('button', { name: '작업 시작' })).toBeDisabled()
+    await userEvent.click(manual)
+    expect(await screen.findByLabelText('이번 작업의 목표')).toHaveValue(
+      task.current_plan_revision.plan.goal,
+    )
+    expect(retry).not.toHaveBeenCalled()
+    expect(proposal).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+  },
+)
+
+it('원문 근거를 외부에서 보완하면 계획을 저장하지 않고 새 검증을 요청할 수 있다', async () => {
+  const failed = {
+    ...task.validation!,
+    status: 'ERROR' as const,
+    error_code: 'evidence_collection_failed',
+    execution_failure: {
+      type: 'EVIDENCE_COLLECTION_FAILED' as const,
+      message: '원문 근거 확인 필요',
+      reason_codes: ['source_evidence_unavailable'],
+      retryable: false,
+    },
+  }
+  task = { ...task, validation_status: 'ERROR', validation: failed }
+  const create = vi
+    .spyOn(validationsApi, 'create')
+    .mockResolvedValue({ ...failed, id: '602', status: 'RUNNING' })
+  const retry = vi.spyOn(validationsApi, 'retry')
+  const save = vi.spyOn(tasksApi, 'savePlan')
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '보완 후 새 검증' }),
+  )
+  expect(create).toHaveBeenCalledWith(
+    '101',
+    '501',
+    {
+      plan_revision_id: '511',
+      expected_lock_version: 7,
+    },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  )
+  expect(retry).not.toHaveBeenCalled()
+  expect(save).not.toHaveBeenCalled()
+})

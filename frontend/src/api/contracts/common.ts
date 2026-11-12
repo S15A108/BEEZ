@@ -827,6 +827,14 @@ export const validationSchema = z
     created_at: timeSchema,
     finished_at: timeSchema.optional(),
     error_code: z.string().optional(),
+    execution_failure: z
+      .object({
+        type: z.literal('EVIDENCE_COLLECTION_FAILED'),
+        reason_codes: z.string().array(),
+        retryable: z.boolean(),
+        message: z.string(),
+      })
+      .optional(),
     policy_analysis: z
       .object({
         policy_assessments: z.array(

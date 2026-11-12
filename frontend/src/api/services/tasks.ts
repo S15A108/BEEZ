@@ -67,6 +67,36 @@ export const tasksApi = {
       },
       options,
     ),
+  proposePlanRevision: (
+    projectId: string,
+    taskId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.planRevisionProposalSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(idSchema.parse(projectId))}/tasks/${encodeURIComponent(idSchema.parse(taskId))}/plan-revision-proposals`,
+        data: {},
+      },
+      options,
+    ),
+  applyPlanRevisionProposal: (
+    projectId: string,
+    taskId: string,
+    proposalId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.applyPlanRevisionProposalResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(idSchema.parse(projectId))}/tasks/${encodeURIComponent(idSchema.parse(taskId))}/plan-revision-proposals/${encodeURIComponent(idSchema.parse(proposalId))}/apply`,
+        data: {},
+        idempotent: true,
+      },
+      options,
+    ),
   get: (projectId: string, taskId: string, options?: RequestOptions) =>
     callEndpoint(
       schemas.getResponseSchema,

@@ -60,10 +60,15 @@ public class ValidationResponses {
         @SuppressWarnings("unchecked")
         Map<String, Object> policyAnalysis = summary(v.summary()).get("policy_analysis") instanceof Map<?, ?> value
                 ? (Map<String, Object>) value : null;
+        Map<String, Object> executionFailure = null;
+        if ("ERROR".equals(v.status())) {
+            executionFailure = EvidenceCollectionFailure.fromStored(errorCode, summary(v.summary()).get(EvidenceCollectionFailure.KEY),
+                    findings.stream().filter(f -> "ERROR".equals(f.kind())).map(FindingResponse::message).toList());
+        }
         return new ValidationResponse(Ids.str(v.id()), Ids.str(v.taskId()), Ids.str(v.planRevisionId()),
                 Ids.str(responseBaseline(v)), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,
                 findings, cacheHit,
-                v.requestedAt(), v.finishedAt(), errorCode, policyAnalysis);
+                v.requestedAt(), v.finishedAt(), errorCode, policyAnalysis, executionFailure);
     }
 
     /**

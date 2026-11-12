@@ -210,6 +210,12 @@ public class AiClient {
         return taskPlanRest.post().uri("/v1/task-plan-drafts").body(input).retrieve().body(java.util.Map.class);
     }
 
+    /** Human-reviewed plan repair; same bounded synchronous budget as document drafts. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> taskPlanRevisionProposals(java.util.Map<String, Object> input) {
+        return taskPlanRest.post().uri("/v1/task-plan-revision-proposals").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /** 기획 보완 질문 생성(AI 모델 제한 90초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> planningQuestions(java.util.Map<String, Object> input) {

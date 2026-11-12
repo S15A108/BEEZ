@@ -109,6 +109,8 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
         assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
                 .param("v", validation).query(String.class).single()).isEqualTo("HUMAN_REVIEW");
+        assertThat(api.jdbc.sql("select summary::text from validation where id=:v").param("v", validation).query(String.class).single())
+                .contains("EVIDENCE_COLLECTION_FAILED", "search_results_truncated");
         assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")
                 .param("v", validation).query(String.class).optional()).isEmpty();
     }

@@ -74,6 +74,17 @@ public class TaskPlanDraftService {
     }
 
     public Map<String, Object> draft(CallerContext caller, long projectId, TaskPlanDraftRequest body) {
+        return generate(caller, projectId, body, Map.of());
+    }
+
+    /** Context is constructed by the proposal service from the persisted plan and validation, never a request body. */
+    public Map<String, Object> revision(CallerContext caller, long projectId, TaskPlanDraftRequest body,
+                                         Map<String, Object> currentPlan, Map<String, Object> validation) {
+        return generate(caller, projectId, body, Map.of("current_plan", currentPlan, "validation", validation));
+    }
+
+    private Map<String, Object> generate(CallerContext caller, long projectId, TaskPlanDraftRequest body,
+                                          Map<String, Object> context) {
         access.requireMember(caller, projectId).requireHuman();
         Long baseline = design.currentBaselineId(projectId).orElse(null);
         if (baseline == null) {
@@ -89,13 +100,14 @@ public class TaskPlanDraftService {
                 throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "draft_limit_exceeded",
                         "한 시간에 받을 수 있는 초안 횟수를 모두 썼어요. 잠시 뒤 다시 시도해 주세요.");
             }
-            return run(projectId, account, baseline, body);
+            return run(projectId, account, baseline, body, context);
         } finally {
             inFlight.remove(guard);
         }
     }
 
-    private Map<String, Object> run(long projectId, long account, long baseline, TaskPlanDraftRequest body) {
+    private Map<String, Object> run(long projectId, long account, long baseline, TaskPlanDraftRequest body,
+                                     Map<String, Object> context) {
         long retrievalStart = System.nanoTime();
         var retrieval = documents.retrieveEvidence(projectId, query(body), limits.retrievalLimit());
         long retrievalMillis = elapsedMillis(retrievalStart);
@@ -135,13 +147,16 @@ public class TaskPlanDraftService {
         input.put("task", task);
         input.put("excerpts", excerpts);
         input.put("design_items", modelItems.stream().map(this::aiItem).toList());
+        input.putAll(context);
         log.info("task-plan-draft-input project={} candidates={} excerpts={} approved_items={} selected_items={} retrieval_ms={} selection_ms={}",
                 projectId, retrieval.evidence().size(), excerpts.size(), approved.size(), modelItems.size(), retrievalMillis, selectionMillis);
 
         long start = System.nanoTime();
         Map<String, Object> response;
         try {
-            response = AiPlanningAdapter.call("task-plan-drafts", ai::taskPlanDrafts, input);
+            response = context.isEmpty()
+                    ? AiPlanningAdapter.call("task-plan-drafts", ai::taskPlanDrafts, input)
+                    : AiPlanningAdapter.call("task-plan-revision-proposals", ai::taskPlanRevisionProposals, input);
         } catch (AiCallException e) {
             recordFailedCall(projectId, key, e.usage(), elapsedMillis(start));
             log.info("task-plan-draft-failed project={} retrieval_ms={} selection_ms={} generation_ms={}",
@@ -159,7 +174,9 @@ public class TaskPlanDraftService {
         if (!design.currentBaselineId(projectId).filter(id -> id == baseline).isPresent()) {
             throw new ApiException(HttpStatus.CONFLICT, "baseline_changed", "기준이 바뀌었어요. 다시 시도해 주세요.");
         }
-        return view(baseline, result, approved, retrieval.evidence());
+        var output = view(baseline, result, approved, retrieval.evidence());
+        if (!context.isEmpty()) output.put("changes", list(result.get("changes")));
+        return output;
     }
 
     // ---- 입력 만들기 ----
