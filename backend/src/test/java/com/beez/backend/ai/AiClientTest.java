@@ -128,6 +128,10 @@ class AiClientTest {
         var ai = new BeezProperties.Ai("http://x", "t", Duration.ofSeconds(3), Duration.ofSeconds(20));
         assertThat(AiClient.changeImpactReadTimeout(ai, Duration.ofSeconds(5))).isEqualTo(Duration.ofSeconds(20));
         assertThat(AiClient.changeImpactReadTimeout(ai, Duration.ofSeconds(75))).isEqualTo(Duration.ofSeconds(75));
+        // 실행 lease 는 같은 읽기 제한 + 연결 + 1분이라, 정상 분석이 읽기 제한을 다 써도 lease 안에서 끝난다
+        assertThat(AiClient.changeImpactLeaseSeconds(ai, Duration.ofSeconds(75))).isEqualTo(75 + 3 + 60);
+        assertThat(AiClient.CHANGE_IMPACT_READ_TIMEOUT).isEqualTo("${beez.change-impact.read-timeout:75s}");
+        assertThat(AiClient.DEFAULT_CHANGE_IMPACT_READ_TIMEOUT).isEqualTo(Duration.ofSeconds(75));
     }
 
     /** 작업 계획 문서 초안도 공통 읽기 제한보다 긴 전용 제한을 쓰고, 경로·본문은 AI 계약 그대로 보낸다 (S15P31A108-385). */

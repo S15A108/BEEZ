@@ -38,7 +38,15 @@ public class PublishedAnalysisProcessor {
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(transactions);
         // 영향 분석 전용 읽기 제한(AiClient 와 같은 값)으로 잡아, 긴 정상 분석 중에 lease 가 끝나 중단으로 읽히지 않게 한다 (S15P31A108-402)
-        this.leaseSeconds = Math.max(60, AiClient.changeImpactReadTimeout(properties.ai(), impactReadTimeout).plus(properties.ai().connectTimeout()).toSeconds() + 60);
+        this.leaseSeconds = AiClient.changeImpactLeaseSeconds(properties.ai(), impactReadTimeout);
+    }
+
+    /**
+     * 자동 재시도할 AI 실패. 일시 장애(시간 초과·연결 실패)만 다시 시도한다. 출력 상한 잘림(model_output_truncated)은 같은 상한으로
+     * 다시 끊기고 시도마다 입력 전체 비용이 나가므로 재시도하지 않는다(11-11 잘림 4회 반복, S15P31A108-402).
+     */
+    static boolean retryableAiFailure(String code) {
+        return Set.of("model_timeout", "model_unavailable").contains(code);
     }
 
     public void process(long id) {
@@ -67,7 +75,7 @@ public class PublishedAnalysisProcessor {
             receivedModel = outcome.model();
             if (outcome.status() == ImpactAnalysisCoordinator.Status.AI_FAILED) {
                 String code = outcome.errorCode() == null ? "model_unavailable" : outcome.errorCode();
-                fail(claim, code, Set.of("model_timeout", "model_unavailable").contains(code), outcome.usage(), outcome.usageStatus().name(),
+                fail(claim, code, retryableAiFailure(code), outcome.usage(), outcome.usageStatus().name(),
                         outcome.model());
                 return;
             }

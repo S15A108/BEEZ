@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from copy import deepcopy
 
 import pytest
@@ -290,6 +291,27 @@ def test_provider_failure_propagates_common_error_and_usage():
     assert error.value.code == "model_unavailable"
     assert len(error.value.usage) == 1
     assert error.value.usage[0].failed
+
+
+def test_truncated_output_fails_with_its_own_code_and_a_warning_line(caplog):
+    # 서버 ai 는 앱 로거의 INFO 를 버리므로, 잘림은 WARNING 한 줄로 남아야 운영에서 원인을 가린다 (S15P31A108-402)
+    provider = FakeProvider(
+        failure=ProviderError(
+            "output_truncated",
+            input_tokens=11000,
+            output_tokens=4096,
+            reasoning_tokens=3900,
+            finish_reason="length",
+        )
+    )
+    with caplog.at_level(logging.WARNING), pytest.raises(LLMError) as error:
+        invoke(provider)
+    assert error.value.code == "output_truncated"
+    assert error.value.to_api_dict()["error"]["code"] == "model_output_truncated"
+    lines = [r for r in caplog.records if "impact_completion" in r.getMessage()]
+    assert len(lines) == 1 and lines[0].levelno == logging.WARNING
+    assert "finish_reason=length" in lines[0].getMessage()
+    assert "reasoning_tokens=3900" in lines[0].getMessage()
 
 
 def test_wrong_project_is_rejected_before_model_call():

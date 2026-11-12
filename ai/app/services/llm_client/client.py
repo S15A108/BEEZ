@@ -248,7 +248,10 @@ def _usage(
             "tool_calls",
         }:
             finish = None
-        logger.info(
+        # 서버의 uvicorn 기본 로그 설정은 앱 로거의 INFO 를 버린다. 출력 상한 잘림(length)은 운영에서 원인을 가려야
+        # 하므로 WARNING 으로 올려 반드시 남긴다 (S15P31A108-402)
+        logger.log(
+            logging.WARNING if finish == "length" else logging.INFO,
             "%s_completion call_hash=%s failed=%s input_tokens=%s output_tokens=%s reasoning_tokens=%s "
             "finish_reason=%s latency_ms=%s",
             request.diagnostics,

@@ -40,7 +40,7 @@ public class ImpactRunService {
         this.access=access; this.projects=projects; this.commands=commands; this.contexts=contexts; this.rules=rules;
         this.coordinator=coordinator; this.runs=runs; this.executor=executor; this.tx=new TransactionTemplate(transactions);
         // 영향 분석 전용 읽기 제한(AiClient 와 같은 값)으로 잡아, 긴 정상 분석 중에 lease 가 끝나 중단으로 읽히지 않게 한다 (S15P31A108-402)
-        this.leaseSeconds=Math.max(60, AiClient.changeImpactReadTimeout(properties.ai(), impactReadTimeout).plus(properties.ai().connectTimeout()).toSeconds()+60);
+        this.leaseSeconds=AiClient.changeImpactLeaseSeconds(properties.ai(), impactReadTimeout);
     }
 
     private record Accepted(Result result, Long newRun) {}

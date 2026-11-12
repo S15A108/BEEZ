@@ -56,10 +56,14 @@ public class AiClient {
     /**
      * 변경 영향 분석(AI-A03) 전용(S15P31A108-402). 재분석·발행 후 분석 모두 백그라운드 실행이라 nginx 60초에 묶이지 않는다.
      * AI 영향 분석 모델 제한(IMPACT_LLM_TIMEOUT_SECONDS 60초)보다 길어야 정상 분석을 먼저 끊지 않는다. 실행 lease 도 이 값으로 잡으므로
-     * 영향 분석 서비스들은 {@link #changeImpactReadTimeout(BeezProperties.Ai, Duration)} 로 같은 값을 얻는다.
+     * 영향 분석 서비스들은 {@link #changeImpactLeaseSeconds(BeezProperties.Ai, Duration)} 로 같은 값에서 lease 를 얻는다.
+     * 기본값(초)은 한 곳에만 두고 Spring 설정 기본값과 짧은 생성자 기본값이 함께 따른다.
      */
-    public static final String CHANGE_IMPACT_READ_TIMEOUT = "${beez.change-impact.read-timeout:75s}";
-    static final Duration DEFAULT_CHANGE_IMPACT_READ_TIMEOUT = Duration.ofSeconds(75);
+    private static final String DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS = "75";
+    public static final String CHANGE_IMPACT_READ_TIMEOUT =
+            "${beez.change-impact.read-timeout:" + DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS + "s}";
+    static final Duration DEFAULT_CHANGE_IMPACT_READ_TIMEOUT =
+            Duration.ofSeconds(Long.parseLong(DEFAULT_CHANGE_IMPACT_READ_TIMEOUT_SECONDS));
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -141,9 +145,17 @@ public class AiClient {
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
 
-    /** 영향 분석 호출이 실제로 쓰는 읽기 제한. 공통 제한보다 짧게 설정되어도 공통값을 쓴다. 실행 lease 계산도 이 값을 쓴다. */
+    /** 영향 분석 호출이 실제로 쓰는 읽기 제한. 공통 제한보다 짧게 설정되어도 공통값을 쓴다. */
     public static Duration changeImpactReadTimeout(BeezProperties.Ai ai, Duration configured) {
         return max(ai.readTimeout(), configured);
+    }
+
+    /**
+     * 영향 분석 실행(재분석·발행 후 분석)의 lease(초). 실제 읽기 제한 + 연결 제한 + 1분, 최소 1분이라 긴 정상 분석 중에
+     * lease 가 끝나 중단으로 읽히지 않는다. 두 실행 경로가 같은 식을 쓰도록 여기 한 곳에 둔다 (S15P31A108-402).
+     */
+    public static long changeImpactLeaseSeconds(BeezProperties.Ai ai, Duration configured) {
+        return Math.max(60, changeImpactReadTimeout(ai, configured).plus(ai.connectTimeout()).toSeconds() + 60);
     }
 
     private static HttpClient http(BeezProperties.Ai ai) {

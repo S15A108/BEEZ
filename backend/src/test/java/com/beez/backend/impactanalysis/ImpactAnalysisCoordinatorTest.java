@@ -216,6 +216,10 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.AI_FAILED);
         assertThat(outcome.errorCode()).isEqualTo("model_output_truncated");
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
+        // 발행 후 분석은 일시 장애만 다시 시도하고, 잘림은 같은 상한으로 다시 끊기므로 재시도하지 않는다
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure(outcome.errorCode())).isFalse();
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure("model_timeout")).isTrue();
+        assertThat(PublishedAnalysisProcessor.retryableAiFailure("model_unavailable")).isTrue();
     }
 
     @Test

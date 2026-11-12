@@ -212,11 +212,11 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
   끝 `/`만 달라도 다른 주소로 보고 공용 키를 쓰지 않아 502 `model_unavailable`이 납니다.
 - 영향 분석의 모델 시간 제한은 `IMPACT_LLM_TIMEOUT_SECONDS` 기본 60초, 출력 상한은 `IMPACT_LLM_OUTPUT_TOKEN_LIMIT`
   기본 4,096(허용 최대, 추론 토큰 포함)입니다. backend는 영향 분석 전용 읽기 제한 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`
-  (기본 75초)을 쓰며, 모델 시간 제한보다 길어야 합니다. 세 변수 모두 compose가 전달하므로 서버 env 파일에 한 줄 쓰면
-  반영됩니다(S15P31A108-402). 기본값 그대로면 쓸 필요가 없습니다.
+  (기본 75초)을 쓰며, 모델 시간 제한보다 길어야 합니다. 세 변수 모두 compose가 전달하므로 아래 명령의 `vals`에
+  적으면 반영됩니다(S15P31A108-402). 기본값 그대로면 쓸 필요가 없습니다.
 - 출력 상한 1,024이던 11-11에는 설계 40개 프로젝트(입력 약 1.1만 토큰)에서 영향 분석이 4번 모두 출력 1,024토큰에서 끊겨
   실패했습니다(약 12초). 잘림은 이제 `model_unavailable`이 아니라 `model_output_truncated`로 남고, ai 로그에
-  `impact_completion … finish_reason=length` 한 줄이 찍힙니다. `model_timeout`이면 `llm_usage.latency_ms`로 실제 지연을
+  `impact_completion … finish_reason=length` 한 줄이 WARNING으로 찍힙니다(정상 호출의 같은 줄은 INFO라 서버 로그에 안 보입니다). `model_timeout`이면 `llm_usage.latency_ms`로 실제 지연을
   보고 모델 시간 제한과 backend 읽기 제한을 함께 올립니다.
 - **켜도 남는 실패(2026-11-10 기준)**: 보완 질문·설계 초안은 ai가 400 `validation_failed`로 거절합니다(BE가
   해시를 `sha256:` 접두어째 보냄, S15P31A108-373). 비비 질문은 모델이 답해도 ai 검증에서 거절돼 템플릿으로
@@ -233,8 +233,8 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
 DESIGN_DRAFTS_ENABLED=true
 BEE_CHAT_ENABLED=true
 IMPACT_LLM_MODEL=gpt-6-luna'
-  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL)=[A-Za-z0-9._-]*$' \
-    && { echo "vals 형식이 다름(위 네 이름=값만) — 바꾸지 않음"; exit 1; }
+  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL|IMPACT_LLM_TIMEOUT_SECONDS|IMPACT_LLM_OUTPUT_TOKEN_LIMIT|BEEZ_CHANGE_IMPACT_READ_TIMEOUT)=[A-Za-z0-9._-]*$' \
+    && { echo "vals 형식이 다름(아래 허용 이름=값만) — 바꾸지 않음"; exit 1; }
   keys=$(printf '%s\n' "$vals" | cut -d= -f1 | paste -sd'|')
   [ -n "$keys" ] || { echo "vals 가 비었음 — 바꾸지 않음"; exit 1; }
   [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
@@ -250,7 +250,9 @@ IMPACT_LLM_MODEL=gpt-6-luna'
 
 - `vals`에 적은 이름만 옛 줄을 지우고 끝에 새로 씁니다. 적지 않은 스위치는 그대로 둡니다(이미 켠 기능을 빼고
   돌려도 꺼지지 않습니다). 여러 번 돌려도 줄이 겹치지 않습니다.
-- `vals`에 네 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다.
+- `vals`에 허용한 일곱 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다. 위 네 스위치에 더해
+  영향 분석 한도 `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_CHANGE_IMPACT_READ_TIMEOUT`을
+  받습니다(기본값으로 충분하면 적지 않습니다). 마지막 값은 backend 설정이라 적용할 때 backend도 다시 만들어집니다.
 - 원본이 개행 없이 끝나면 한 줄을 먼저 넣습니다. 그러지 않으면 새 줄이 마지막 줄 뒤에 붙어 두 값이 함께 깨집니다.
 - 실패하면 `jenkins can read`를 찍지 않습니다. 이 줄이 보여야 반영된 것입니다.
 - 끄려면 그 줄의 값을 `false`(모델은 빈 값, `IMPACT_LLM_MODEL=`)로 바꿔 같은 명령을 돌립니다. 줄을 지우면 그
