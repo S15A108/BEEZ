@@ -212,7 +212,8 @@ public class MeetingSummaryService {
             through = meetings.lastSummarizableEntryId(meetingId)
                     .orElseThrow(() -> invalid("정리할 기록이 없습니다"));
         }
-        Built built = inputs.build(CallerContext.human(actor.accountId()), projectId, meetingId, through, previous, command.feedback());
+        Built built = inputs.build(CallerContext.human(actor.accountId()), projectId, meetingId, through, previous,
+                command.feedback(), meeting.conflictGuidance());
         return new Step(null, new Prepared(built, through, previousId, command.feedback()));
     }
 

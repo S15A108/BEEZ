@@ -468,7 +468,7 @@ public class AnalysisResultApplier {
         validations.finish(v.id(), status, summary);
         activities.finishedBySystem(v, status);
         // 저장된 결과일 때만 나간다(앞의 늦은 결과·입력 변경·리스 만료 분기는 이미 return). 회의 개설은 커밋 뒤 리스너가 맡는다
-        ValidationConflictMeetings.publish(publisher, v, findings);
+        ValidationConflictMeetings.publish(publisher, v, findings, objects(request.get("related_plans")));
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());

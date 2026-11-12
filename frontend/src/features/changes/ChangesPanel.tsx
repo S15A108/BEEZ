@@ -880,7 +880,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       </AsyncState>
                     </div>
                   )
-                if (mode.kind === 'approve')
+                if (mode.kind === 'approve') {
+                  const documentOnly = isDocumentOnly(current)
                   return (
                     <div className="grid content-start gap-4">
                       <Back onClick={() => setMode({ kind: 'detail' })}>
@@ -937,13 +938,12 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           </ul>
                         </>
                       )}
-                      {/* 미리 보기가 있으면 실제로 바뀌는 검증·작업을 보여 주므로 일반 안내는 미리 보기를 못 받았을 때만 둔다. */}
-                      {!preview.data && (
+                      {/* 문서만 발행할 때는 새 문서 버전과 설계 항목의 영향을 구분한다. */}
+                      {(documentOnly || !preview.data) && (
                         <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
-                          승인하면 이 항목을 쓰는 검증은 &apos;다시 검증
-                          필요&apos;, 진행 중 작업은 &apos;대기 ·
-                          재검증&apos;으로 바뀌어요. 문서 원문도 함께 새 기준이
-                          돼요.
+                          {documentOnly
+                            ? '승인하면 새 문서 버전이 공용 문서함에 발행돼요. 설계 항목과 기존 작업 상태·검증 결과는 유지돼요.'
+                            : '승인하면 이 항목을 쓰는 검증은 ‘다시 검증 필요’, 진행 중 작업은 ‘대기 · 재검증’으로 바뀌어요. 문서 원문도 함께 새 기준이 돼요.'}
                         </p>
                       )}
                       {preview.isLoading && (
@@ -991,17 +991,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       {overrideNeeded && (
                         <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
                           <strong className="text-sm">
-                            AI 영향 분석이 끝나지 않았어요
+                            {documentOnly
+                              ? '문서 변경을 직접 확인해 주세요'
+                              : 'AI 영향 분석이 끝나지 않았어요'}
                           </strong>
                           <p className="text-sm leading-6">
-                            이 제안의 영향 분석이 끝나지 않았거나(실패·근거
-                            부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못
-                            함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향
-                            0건으로 보지 않아요. 영향 범위를 직접 확인했다면
-                            사유를 남기고 승인할 수 있어요. 사유는 승인 이력에
-                            남아요.
+                            {documentOnly
+                              ? '문서 본문만 바꾸는 제안은 AI 영향 분석 대상이 아니에요. 바뀐 내용을 직접 확인하고 승인 사유를 남겨 주세요. 사유는 승인 이력에 남아요.'
+                              : '이 제안의 영향 분석이 끝나지 않았거나(실패·근거 부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못 함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향 0건으로 보지 않아요. 영향 범위를 직접 확인했다면 사유를 남기고 승인할 수 있어요. 사유는 승인 이력에 남아요.'}
                           </p>
-                          {!isDocumentOnly(current) && (
+                          {!documentOnly && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1025,7 +1024,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             htmlFor="impact-override-reason"
                             className="text-sm font-semibold"
                           >
-                            영향 분석 없이 승인하는 사유
+                            {documentOnly
+                              ? '문서 변경 승인 사유'
+                              : '영향 분석 없이 승인하는 사유'}
                           </label>
                           <Textarea
                             id="impact-override-reason"
@@ -1061,6 +1062,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       </div>
                     </div>
                   )
+                }
                 if (mode.kind === 'reject')
                   return (
                     <div className="grid content-start gap-4">

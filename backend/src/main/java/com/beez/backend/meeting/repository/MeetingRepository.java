@@ -19,7 +19,13 @@ public class MeetingRepository {
 
     public record MeetingRow(long id, long projectId, String title, Long changeProposalId, String origin,
                              String conflictSummary, String status, Instant closedAt, Long closedByAccountId,
-                             Instant createdAt) {
+                             Instant createdAt, String conflictGuidance) {
+        public MeetingRow(long id, long projectId, String title, Long changeProposalId, String origin,
+                          String conflictSummary, String status, Instant closedAt, Long closedByAccountId,
+                          Instant createdAt) {
+            this(id, projectId, title, changeProposalId, origin, conflictSummary, status, closedAt, closedByAccountId,
+                    createdAt, null);
+        }
     }
 
     /** memberId 는 이 프로젝트의 멤버 번호. addedByMemberId 는 추가한 멤버(비비가 부른 사람은 null) */
@@ -35,6 +41,14 @@ public class MeetingRepository {
     /** 충돌 회의 개설 판정용 작업 한 줄. assigneeMemberId 는 담당자가 없으면 null */
     public record TaskState(long id, String title, Long assigneeMemberId, String status) {
     }
+
+    public record ConflictPlan(long taskId, String title, Long revisionId, Integer revisionNo) {}
+
+    public record ConflictDesign(long itemId, long versionId, String key, String title, Long documentId,
+                                 Long documentVersionId, String locator) {}
+
+    public record ConflictFinding(String message, String nextAction, ConflictPlan first, ConflictPlan second,
+                                  ConflictDesign design, String firstProposedContent, String secondProposedContent) {}
 
     private static final String MEETING_COLUMNS = "id, project_id, title, change_proposal_id, origin, conflict_summary,"
             + " status, closed_at, closed_by, created_at";
@@ -122,14 +136,54 @@ public class MeetingRepository {
         return out;
     }
 
-    /** 한 검증에서 이 관련 작업을 가리키는 BLOCKING 충돌 발견 항목 메시지 전부(저장 순서, 없으면 빈 목록) */
-    public List<String> conflictFindingMessages(long validationId, long relatedTaskId) {
+    /** 변경될 수 있는 현재 작업 계획 대신 검증이 실제로 비교한 불변 리비전에서 읽는다. */
+    public List<ConflictFinding> conflictFindings(long projectId, long validationId, long taskId,
+                                                  long relatedTaskId, Long analyzedRelatedPlan) {
         return jdbc.sql("""
-                select message from validation_finding
-                 where validation_id = :v and related_task_id = :t
-                   and kind = 'CONFLICT' and severity = 'BLOCKING'
-                 order by id
-                """).param("v", validationId).param("t", relatedTaskId).query(String.class).list();
+                select f.message, f.next_action, first_plan.id as first_revision_id, first_plan.revision_no as first_revision_no,
+                       first_plan.title as first_title, second_plan.id as second_revision_id,
+                       second_plan.revision_no as second_revision_no, coalesce(second_plan.title, second_task.title) as second_title,
+                       item.id as item_id, version.id as version_id, item.key as item_key, version.title as item_title,
+                       doc.id as document_id, case when doc.id is not null then doc_version.id end as document_version_id,
+                       version.source_locator::text as source_locator,
+                       first_ref.proposed_content::text as first_proposal, second_ref.proposed_content::text as second_proposal
+                  from validation v
+                  join task first_task on first_task.id = v.task_id and first_task.project_id = :project
+                  join task_plan_revision first_plan on first_plan.id = v.plan_revision_id and first_plan.task_id = first_task.id
+                  join validation_finding f on f.validation_id = v.id
+                  join task second_task on second_task.id = f.related_task_id and second_task.project_id = :project
+                  left join validation_task_ref pinned on pinned.validation_id = v.id and pinned.related_task_id = second_task.id
+                  left join task_plan_revision second_plan
+                    on second_plan.id = coalesce(cast(:analyzed as bigint), pinned.related_plan_revision_id)
+                   and second_plan.task_id = second_task.id
+                  left join design_item_version cited on cited.id = f.design_item_version_id
+                  left join design_item item on item.id = coalesce(f.design_item_id, cited.design_item_id)
+                   and item.project_id = :project
+                  left join task_plan_design_ref first_ref
+                    on first_ref.plan_revision_id = first_plan.id and first_ref.design_item_id = item.id
+                  left join task_plan_design_ref second_ref
+                    on second_ref.plan_revision_id = second_plan.id and second_ref.design_item_id = item.id
+                  left join design_item_version version
+                    on version.id = coalesce(f.design_item_version_id, first_ref.design_item_version_id, second_ref.design_item_version_id)
+                   and version.design_item_id = item.id
+                  left join document_version doc_version on doc_version.id = version.source_document_version_id
+                  left join document doc on doc.id = doc_version.document_id and doc.project_id = :project
+                 where v.id = :validation and first_task.id = :task and second_task.id = :related
+                   and f.kind = 'CONFLICT' and f.severity = 'BLOCKING'
+                 order by f.id
+                """).param("project", projectId).param("validation", validationId).param("task", taskId)
+                .param("related", relatedTaskId).param("analyzed", analyzedRelatedPlan).query((rs, rowNum) -> {
+                    var first = new ConflictPlan(taskId, rs.getString("first_title"), rs.getLong("first_revision_id"),
+                            rs.getInt("first_revision_no"));
+                    var second = new ConflictPlan(relatedTaskId, rs.getString("second_title"),
+                            nullableLong(rs, "second_revision_id"), rs.getObject("second_revision_no", Integer.class));
+                    Long versionId = nullableLong(rs, "version_id");
+                    var design = versionId == null ? null : new ConflictDesign(rs.getLong("item_id"), versionId,
+                            rs.getString("item_key"), rs.getString("item_title"), nullableLong(rs, "document_id"),
+                            nullableLong(rs, "document_version_id"), rs.getString("source_locator"));
+                    return new ConflictFinding(rs.getString("message"), rs.getString("next_action"), first, second, design,
+                            rs.getString("first_proposal"), rs.getString("second_proposal"));
+                }).list();
     }
 
     /** 작업 담당자의 프로젝트 멤버 번호와 계정. 담당자가 없거나 비활성·탈퇴인 작업은 나오지 않는다 */
@@ -170,8 +224,10 @@ public class MeetingRepository {
     }
 
     public Optional<MeetingRow> findMeeting(long projectId, long meetingId) {
-        return jdbc.sql("select " + MEETING_COLUMNS + " from meeting where id = :id and project_id = :p")
-                .param("id", meetingId).param("p", projectId).query(MeetingRepository::mapMeeting).optional();
+        return jdbc.sql("select " + MEETING_COLUMNS
+                        + ", conflict_guidance::text as conflict_guidance from meeting where id = :id and project_id = :p")
+                .param("id", meetingId).param("p", projectId)
+                .query((rs, rowNum) -> mapMeeting(rs, rs.getString("conflict_guidance"))).optional();
     }
 
     /**
@@ -208,14 +264,14 @@ public class MeetingRepository {
      * (on conflict do nothing 은 먼저 들어간 트랜잭션의 커밋을 기다린 뒤 판정한다).
      */
     public Optional<Long> insertMeeting(long projectId, String title, String conflictSummary, String taskSetKey,
-                                        List<Long> taskIds) {
+                                        List<Long> taskIds, String conflictGuidance) {
         Optional<Long> id = jdbc.sql("""
-                insert into meeting (project_id, title, status, origin, conflict_summary, task_set_key)
-                values (:p, :title, 'OPEN', 'BEE_CONFLICT', :summary, :key)
+                insert into meeting (project_id, title, status, origin, conflict_summary, task_set_key, conflict_guidance)
+                values (:p, :title, 'OPEN', 'BEE_CONFLICT', :summary, :key, cast(:guidance as jsonb))
                 on conflict (project_id, task_set_key) where status = 'OPEN' do nothing
                 returning id
                 """).param("p", projectId).param("title", title).param("summary", conflictSummary)
-                .param("key", taskSetKey).query(Long.class).optional();
+                .param("key", taskSetKey).param("guidance", conflictGuidance).query(Long.class).optional();
         if (id.isPresent()) {
             for (Long taskId : taskIds) {
                 jdbc.sql("insert into meeting_task (meeting_id, project_id, task_id) values (:m, :p, :t)")
@@ -359,10 +415,14 @@ public class MeetingRepository {
     }
 
     private static MeetingRow mapMeeting(ResultSet rs, int rowNum) throws SQLException {
+        return mapMeeting(rs, null);
+    }
+
+    private static MeetingRow mapMeeting(ResultSet rs, String guidance) throws SQLException {
         return new MeetingRow(rs.getLong("id"), rs.getLong("project_id"), rs.getString("title"),
                 nullableLong(rs, "change_proposal_id"), rs.getString("origin"), rs.getString("conflict_summary"),
                 rs.getString("status"), instant(rs, "closed_at"), nullableLong(rs, "closed_by"),
-                rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(), guidance);
     }
 
     private static EntryRow mapEntry(ResultSet rs, int rowNum) throws SQLException {

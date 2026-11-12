@@ -2,6 +2,7 @@ package com.beez.backend.meeting.service;
 
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.designitem.support.DesignJson;
+import com.beez.backend.meeting.dto.MeetingConflictGuidance;
 import com.beez.backend.meeting.dto.MeetingEntryResponse;
 import com.beez.backend.meeting.dto.MeetingGeneration;
 import com.beez.backend.meeting.dto.MeetingRef;
@@ -44,7 +45,8 @@ class MeetingAssembler {
             out.add(new MeetingResponse(Ids.str(row.id()), Ids.str(row.projectId()), row.title(),
                     Ids.str(row.changeProposalId()), row.origin(), Ids.strs(tasks.getOrDefault(row.id(), List.of())),
                     row.conflictSummary(), row.status(), row.closedAt(), Ids.str(row.closedByAccountId()), people,
-                    row.createdAt()));
+                    row.createdAt(), row.conflictGuidance() == null ? null
+                            : DesignJson.JSON.readValue(row.conflictGuidance(), MeetingConflictGuidance.class)));
         }
         return out;
     }

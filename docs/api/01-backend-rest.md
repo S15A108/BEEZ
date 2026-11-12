@@ -12842,11 +12842,16 @@ HTTP `200`.
 | `origin` | `BEE_CONFLICT\|HUMAN` | Y | 연 주체 |
 | `task_ids` | `ID[]` | Y | 충돌한 작업(오름차순) |
 | `conflict_summary` | `string` | N | 비비가 정리한 충돌 한 줄 |
+| `conflict_guidance` | `object` | N | 자동 충돌 회의 개설 당시의 검증 근거. 구조화된 근거가 있는 회의의 상세 응답에 포함한다. |
 | `status` | `OPEN\|CLOSED` | Y | 회의 상태 |
 | `closed_at` | `Time` | N | 끝낸 시각 |
 | `closed_by` | `ID` | N | 끝낸 팀장 계정 |
 | `participants` | [Participant[]](00-common.md#schema-participant) | Y | 참여자 |
 | `created_at` | `Time` | Y | 생성 시각 |
+
+`conflict_guidance.validation_id`는 회의를 열게 한 검증이다. `tasks[]`에는 화면에 표시할 순서대로 작업 ID, 당시 제목, 확인 가능한 계획 리비전 ID와 번호를 담는다. `conflicts[]`에는 저장된 충돌 이유와 다음 행동, 관련 설계 항목·버전, 확인 가능한 원문 문서·버전·위치를 담는다. `differences[]`의 `path`, `first_value`, `second_value`는 그 두 계획의 변경안에서 확인된 차이다. 비교할 값이 없거나 같아도 같은 항목을 두 작업이 변경하려는 충돌은 성립할 수 있다.
+
+회의에서 작업 범위나 담당을 나눴다면 연결된 작업의 계획을 수정하고 다시 검증한다. 공통 문서의 변경에 합의했다면 회의 대화에 결정을 기록하고 비비 정리를 확인한다. 문서 변경을 포함한 회의 종료로 제안이 생기고, 팀장이 이를 승인·발행하면 새 문서 버전이 승인 기준에 반영된다. 구조화 설계 항목의 변경과 작업 영향 처리는 CHG-A09의 발행 규칙을 따른다.
 
 ```json
 {
