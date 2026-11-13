@@ -215,6 +215,7 @@ def verify_item(
     existing: dict[str, ExistingDesignItem],
     answered: frozenset[str],
     allowed_blocks: frozenset[str] | None = None,
+    related: frozenset[str] = frozenset(),
 ) -> DraftItem:
     """Fold the proposals for one item into a draft.
 
@@ -277,6 +278,11 @@ def verify_item(
                 quote=quote,
             )
         )
+    # A new item backed only by answers from other documents (no quote of this
+    # document, no answer of this version) is not this document's item; the
+    # prompt forbids it, and it is enforced here (S15P31A108-414).
+    if base is None and not sources and refs and all(ref in related for ref in refs):
+        raise DraftRejected("new item backed only by related answers")
     rationale = " ".join(text for item in proposals if (text := item.rationale.strip()))
     return DraftItem(
         candidate_key=draft_key(kind, base_id, content),
@@ -314,11 +320,15 @@ def compose_result(
     existing = {item.design_item_version_id: item for item in request.existing_items}
     # Answers from other documents and earlier versions may back a draft too
     # (S15P31A108-414); their keys never collide with question keys.
-    answered = frozenset(
-        entry.question.question_key
-        for entry in request.questions
-        if entry.status == "ANSWERED"
-    ) | frozenset(entry.ref_key for entry in request.related_answers)
+    related = frozenset(entry.ref_key for entry in request.related_answers)
+    answered = (
+        frozenset(
+            entry.question.question_key
+            for entry in request.questions
+            if entry.status == "ANSWERED"
+        )
+        | related
+    )
     allowed_blocks = scope_block_ids(document, request)
     pairs: list[tuple[DraftItem, DraftChange]] = []
     seen_keys: set[str] = set()
@@ -333,6 +343,7 @@ def compose_result(
                 existing=existing,
                 answered=answered,
                 allowed_blocks=allowed_blocks,
+                related=related,
             )
             base_id = item.base_design_item_version_id
             if base_id is not None:

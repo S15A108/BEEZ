@@ -24,6 +24,22 @@ final class PlanningAnswers {
 
     private PlanningAnswers() { }
 
+    /**
+     * 구조 답의 글자 수(코드 포인트): 선택지와 기타 입력의 합, 또는 본문. AI 가 related_answers 상한을 셀 때(answer_chars)와 같은 방식이다.
+     * 질문 생성의 known_questions 와 초안의 related_answers 가 같은 크기로 세야 앞의 범위가 뒤에 들어간다(S15P31A108-414).
+     */
+    static int chars(Map<String, Object> payload) {
+        int total = 0;
+        if (payload.get("selected") instanceof List<?> selected) {
+            for (Object option : selected) total += codePoints(option);
+        }
+        return total + codePoints(payload.get("other_text")) + codePoints(payload.get("text"));
+    }
+
+    private static int codePoints(Object value) {
+        return value instanceof String s ? s.codePointCount(0, s.length()) : 0;
+    }
+
     static Normalized normalize(String questionType, Map<String, Object> format, String answer, Map<String, Object> payload) {
         if (questionType == null) {
             String text = requireText(answer, LEGACY_MAX, "답변");

@@ -1111,3 +1111,20 @@ async def test_related_answers_do_not_count_against_the_payload_bound(monkeypatc
     provider = FakeProvider({"items": [], "unresolved": []})
     await llm_proposer(provider).propose(body, document)
     assert len(provider.calls) == 1
+
+
+# A new item backed only by another document's answer is not this document's
+# item: dropped. An update of this document's item may rest on one.
+@pytest.mark.asyncio
+async def test_a_new_item_backed_only_by_related_answers_is_dropped():
+    proposer = FakeProposer(
+        item("POLICY", "다른 문서 답만으로 만든 새 항목", refs=["pq-71"]),
+        item("POLICY", "갱신은 다른 문서 답으로도 된다", base="1102", refs=["pq-71"]),
+        item("CONSTRAINT", "이 버전 답에 기댄 새 항목", refs=["pq-71", "q-1"]),
+    )
+    outcome = await generate_design_drafts(
+        request(related_answers=[related()]), proposer
+    )
+    kept = {entry.content.description: entry for entry in outcome.result.items}
+    assert set(kept) == {"갱신은 다른 문서 답으로도 된다", "이 버전 답에 기댄 새 항목"}
+    assert kept["갱신은 다른 문서 답으로도 된다"].support == "ANSWER"

@@ -1,5 +1,6 @@
 package com.beez.backend.planning.service;
 
+import static com.beez.backend.designitem.support.DesignJson.JSON;
 import static com.beez.backend.designitem.support.DesignJson.canonical;
 
 import com.beez.backend.ai.AiUsageRecorder;
@@ -171,20 +172,30 @@ public class PlanningQuestionGenerator {
 
     /**
      * 같은 프로젝트에서 이미 묻거나 답하거나 닫은 질문(S15P31A108-414). 모델이 같은 결정을 다른 문서에서 다시 묻지 않게 넘긴다.
-     * {@code rows} 는 최근 것부터다. 질문·답 요약의 글자 수(코드 포인트, AI 가 세는 단위) 합이 상한을 넘으면 거기서 끊어
-     * 최근 것만 남긴다. 답은 ANSWERED 일 때만 앞 {@value #KNOWN_ANSWER_CHARS}자를 보낸다.
+     * {@code rows} 는 최근 것부터다. 글자 수(코드 포인트) 합이 상한을 넘으면 거기서 끊어 최근 것만 남긴다.
+     * 답은 ANSWERED 일 때만 앞 {@value #KNOWN_ANSWER_CHARS}자를 보낸다.
+     *
+     * <p>답한 질문은 설계 초안의 related_answers({@link DesignDraftService#related})에 넘어갈 수 있는 것만 넣고, 크기도 그쪽과 같게
+     * 질문 + 구조 답 전체로 센다. 그래서 여기 넣은 답한 질문(= 모델이 다시 묻지 않을 결정)은 같은 순서·같은 상한의 초안 입력에
+     * 반드시 들어간다 — 그렇지 않으면 질문은 생략했는데 초안은 그 결정을 모르게 된다(리뷰 지적). 구조 답이 없는 예전 답과
+     * {@value #KNOWN_QUESTION_CHARS}자를 넘는 질문은 초안에 넘길 수 없어 여기서도 뺀다.
      */
+    @SuppressWarnings("unchecked")
     static List<Map<String, Object>> known(List<Map<String, Object>> rows) {
         List<Map<String, Object>> out = new ArrayList<>();
         int chars = 0;
         for (var row : rows) {
             if (out.size() == MAX_KNOWN_QUESTIONS) break;
             String status = (String) row.get("status");
-            String question = head((String) row.get("question"), KNOWN_QUESTION_CHARS);
-            String answer = "ANSWERED".equals(status) && row.get("answer") instanceof String a && !a.isBlank()
-                    ? head(a, KNOWN_ANSWER_CHARS) : null;
-            if (question == null || question.isBlank()) continue;
-            int size = question.codePointCount(0, question.length()) + (answer == null ? 0 : answer.codePointCount(0, answer.length()));
+            if (!(row.get("question") instanceof String full) || full.isBlank()) continue;
+            String question = head(full, KNOWN_QUESTION_CHARS);
+            int size = question.codePointCount(0, question.length());
+            String answer = null;
+            if ("ANSWERED".equals(status)) {
+                if (row.get("answer_payload") == null || !question.equals(full)) continue;
+                size += PlanningAnswers.chars(JSON.readValue(row.get("answer_payload").toString(), Map.class));
+                if (row.get("answer") instanceof String a && !a.isBlank()) answer = head(a, KNOWN_ANSWER_CHARS);
+            }
             if (chars + size > MAX_KNOWN_CHARS) break;
             chars += size;
             var item = new LinkedHashMap<String, Object>();

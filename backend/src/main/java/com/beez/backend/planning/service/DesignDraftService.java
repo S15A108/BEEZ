@@ -211,7 +211,7 @@ public class DesignDraftService {
             int questionChars = question.codePointCount(0, question.length());
             if (question.isBlank() || questionChars > RELATED_QUESTION_CHARS || row.get("answer_payload") == null) continue;
             Map<String, Object> answer = json(row.get("answer_payload"));
-            int size = questionChars + answerChars(answer);
+            int size = questionChars + PlanningAnswers.chars(answer);
             if (chars + size > MAX_RELATED_CHARS) break;
             chars += size;
             var source = new LinkedHashMap<String, Object>();
@@ -226,19 +226,6 @@ public class DesignDraftService {
             out.add(view);
         }
         return out;
-    }
-
-    /** 구조 답의 글자 수(코드 포인트): 선택지와 기타 입력의 합, 또는 본문. AI(answer_chars)와 같은 방식으로 센다. */
-    private static int answerChars(Map<String, Object> answer) {
-        int total = 0;
-        if (answer.get("selected") instanceof List<?> selected) {
-            for (Object option : selected) total += codePoints(option);
-        }
-        return total + codePoints(answer.get("other_text")) + codePoints(answer.get("text"));
-    }
-
-    private static int codePoints(Object value) {
-        return value instanceof String s ? s.codePointCount(0, s.length()) : 0;
     }
 
     private static Map<String, Object> itemView(Map<String, Object> row) {

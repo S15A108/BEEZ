@@ -87,8 +87,9 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
                 otherVersion, STORED_PREFIX + TEXT_HASH);
         String insert = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer) VALUES(?,?,'CLARIFICATION',?,'model',?,?)";
         jdbc.update(insert, project, otherVersion, "다른 문서 미답", "OPEN", null);
-        jdbc.update("INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answered_by,answered_at)"
-                + " VALUES(?,?,'CLARIFICATION','다른 문서 답함','model','ANSWERED',?,?,now())", project, otherVersion, "가".repeat(250), leader);
+        jdbc.update("INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answer_payload,answered_by,answered_at)"
+                + " VALUES(?,?,'CLARIFICATION','다른 문서 답함','model','ANSWERED',?,cast(? AS jsonb),?,now())", project, otherVersion, "가".repeat(250),
+                "{\"type\":\"ESSAY\",\"text\":\"" + "가".repeat(250) + "\"}", leader);
         jdbc.update(insert, project, otherVersion, "다른 문서 닫음", "DISMISSED", null);
         jdbc.update(insert, project, otherVersion, "다른 문서 대체", "SUPERSEDED", null);
 
@@ -117,12 +118,12 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
     }
 
     // 목록에서 빠지거나(등록 취소 문서) 지금 답할 수 없는(갱신 중인 문서) 미답변 질문은 넘기지 않는다 — 그 질문이 대체돼 사라지면
-    // 이 문서도 묻지 않았으니 그 결정을 아무도 묻지 않게 된다. 답한 질문은 이력이라 넘긴다.
+    // 이 문서도 묻지 않았으니 그 결정을 아무도 묻지 않게 된다. 답한 질문은 이력이라 넘기되, 등록 취소 문서의 답은 철회된 결정이라 뺀다.
     @SuppressWarnings({"unchecked", "rawtypes"})
     @Test void leavesOutOpenQuestionsThatTheListHidesOrThatCannotBeAnsweredNow() {
         String open = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status) VALUES(?,?,'CLARIFICATION',?,'model','OPEN')";
-        String answered = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answered_by,answered_at)"
-                + " VALUES(?,?,'CLARIFICATION',?,'model','ANSWERED','답',?,now())";
+        String answered = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answer_payload,answered_by,answered_at)"
+                + " VALUES(?,?,'CLARIFICATION',?,'model','ANSWERED','답','{\"type\":\"ESSAY\",\"text\":\"답\"}'::jsonb,?,now())";
         long settled = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id", Long.class, project, leader);
         long settledVersion = documentVersion(settled, 1, CONTENT);
         jdbc.update("INSERT INTO planning_question_run(document_version_id,analysis_attempt,text_hash,status,request_key) VALUES(?,1,?,'COMPLETED','seed')",
@@ -149,7 +150,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         verify(ai).planningQuestions(sent.capture());
         assertThat(sent.getValue().get("document")).isEqualTo(Map.of("document_id", "" + document, "document_version_id", "" + version, "version_no", 1));
         assertThat((List<Map<String, Object>>) sent.getValue().get("known_questions")).extracting(m -> m.get("question"))
-                .containsExactly("갱신 중 문서 답함", "등록 취소 문서 답함", "생성이 끝난 문서 미답");
+                .containsExactly("갱신 중 문서 답함", "생성이 끝난 문서 미답");
     }
 
     static List<Map<String, Object>> withNullAnswers(List<Map<String, String>> rows) {

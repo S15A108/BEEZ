@@ -321,6 +321,15 @@ class DesignDraftIntegrationTest extends PlanningTestSupport {
                 """, Long.class, project, otherVersion, "{\"type\":\"ESSAY\",\"text\":\"409로 거부한다.\"}", leader);
         jdbc.update("INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status) VALUES(?,?,'CLARIFICATION','다른 문서 미답','model','OPEN')",
                 project, otherVersion);
+        // 등록을 취소한 문서의 답은 철회된 결정이라 넘기지 않는다.
+        long discarded = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'ERD','ERD',?) RETURNING id", Long.class, project, leader);
+        long discardedVersion = documentVersion(discarded, 1, CONTENT);
+        jdbc.update("UPDATE document SET discarded_at=now() WHERE id=?", discarded);
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", discardedVersion);
+        jdbc.update("""
+                INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answer_payload,answered_by,answered_at)
+                VALUES(?,?,'CLARIFICATION','철회된 결정','model','ANSWERED','누구나 삭제',cast(? AS jsonb),?,now())
+                """, project, discardedVersion, "{\"type\":\"ESSAY\",\"text\":\"누구나 삭제\"}", leader);
         String ref = "pq-" + related;
         item("draft-create").put("answer_refs", List.of(ref));
         item("draft-create").put("support", "DOCUMENT_AND_ANSWER");
@@ -329,7 +338,7 @@ class DesignDraftIntegrationTest extends PlanningTestSupport {
         var ids = run("k1");
         ArgumentCaptor<Map<String, Object>> sent = captor();
         verify(ai).designDrafts(sent.capture());
-        assertThat((List<Map<String, Object>>) sent.getValue().get("related_answers")).as("이 버전의 답·미답변은 빼고 다른 곳의 답만")
+        assertThat((List<Map<String, Object>>) sent.getValue().get("related_answers")).as("이 버전의 답·미답변·등록 취소 문서의 답은 빼고 다른 곳의 답만")
                 .containsExactly(Map.of("ref_key", ref, "question", "이미 취소된 예약을 다시 취소하면?",
                         "answer", Map.of("type", "ESSAY", "text", "409로 거부한다."),
                         "source", Map.of("document_id", "" + other, "document_version_id", "" + otherVersion, "version_no", 1)));

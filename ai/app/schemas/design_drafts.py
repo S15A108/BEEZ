@@ -235,7 +235,7 @@ class AnsweredQuestion(_Strict):
         return self
 
 
-def answer_chars(answer: ChoiceAnswer | Any) -> int:
+def answer_chars(answer: Answer) -> int:
     """Characters of an answer's own text: options and free text, or the text."""
     if isinstance(answer, ChoiceAnswer):
         return sum(len(option) for option in answer.selected) + len(
