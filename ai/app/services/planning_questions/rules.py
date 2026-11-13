@@ -58,9 +58,15 @@ _UNDECIDED_SCOPED = re.compile(
 _SCOPE_MARKER = re.compile(
     r"이 문서|본 문서|이 명세|이 요구사항|여기(?:에서)?는|아직|현재는"
 )
+# Only cells that say they are undecided. An empty cell is not one: tables
+# leave cells blank when nothing needs saying (an `id` row's description, a
+# table-level constraint row), and asking about each blank flooded one ERD
+# with dozens of identical questions (S15P31A108-413).
 _PLACEHOLDER_CELLS = frozenset(
-    {"", "?", "미정", "tbd", "todo", "추후", "추후 결정", "미확정"}
+    {"?", "미정", "tbd", "todo", "추후", "추후 결정", "미확정"}
 )
+# Row names listed in one column question; the rest are counted, not named.
+_MAX_LISTED_ROWS = 10
 _SENTENCE = re.compile(r"[^\n.。!?]+[.。!?]?")
 _LIST_MARKER = re.compile(r"^(?:[-*+]|\d{1,9}[.)]|>)\s*")
 _KEY_AT_START = re.compile(
@@ -79,6 +85,9 @@ class QuestionDraft:
     text: str
     answer_format: AnswerFormat
     origin: Origin
+    # The question covers more passages than its evidence could cite, so a
+    # model question quoting all the evidence still leaves some uncovered.
+    evidence_truncated: bool = False
 
 
 def heading_titles(document: SourceDocument) -> dict[str, str]:
@@ -179,51 +188,106 @@ def _undecided(
     return hits
 
 
-def _placeholder_cells(
-    ref: DocumentRef,
-    block: SourceBlock,
-    header: SourceBlock | None,
-    text: str,
-    location: str,
-) -> list[tuple[ReviewCandidate, QuestionDraft]]:
-    hits = []
-    row_text = text.strip()[:MAX_QUOTE_CHARS].strip()
-    if not row_text:
-        return hits
-    row_label = (_name(block.cells[0]) if block.cells else "") or (
+@dataclass(slots=True)
+class _PlaceholderColumn:
+    """Rows of one table whose cell in one column is marked undecided."""
+
+    # Header start line, or the row's own line for a table without a header;
+    # a header line is never a row line, so the two cannot share a key.
+    anchor_line: int
+    index: int
+    header: SourceBlock | None
+    rows: list[tuple[SourceBlock, str, str]]
+
+
+def _placeholder_indexes(block: SourceBlock, text: str) -> list[int]:
+    if not text.strip():
+        return []
+    return [
+        index
+        for index, cell in enumerate(block.cells)
+        if cell.strip().lower() in _PLACEHOLDER_CELLS
+    ]
+
+
+def _row_label(block: SourceBlock) -> str:
+    return (_name(block.cells[0]) if block.cells else "") or (
         f"L{block.locator.start_line}"
     )
-    where = shorten(location)
-    for index, cell in enumerate(block.cells):
-        if cell.strip().lower() not in _PLACEHOLDER_CELLS:
-            continue
-        column = (
-            _name(header.cells[index])
-            if header is not None and index < len(header.cells)
-            else ""
-        ) or f"{index + 1}번째 열"
-        candidate = ReviewCandidate(
-            candidate_key=f"rule-placeholder-L{block.locator.start_line}-c{index + 1}",
-            kind="MISSING_CANDIDATE",
-            status="REVIEW_CANDIDATE",
-            signal="PLACEHOLDER_CELL",
-            summary=clip(
-                f"표의 '{row_label}' 행에서 '{column}' 값이 비어 있거나 미정입니다."
-            ),
-            evidence=(_evidence(ref, block, location, row_text),),
+
+
+def _rows_location(column: _PlaceholderColumn) -> str:
+    """First row's display path, its line span replaced by the undecided rows.
+
+    Adjacent rows share one span; a gap starts a new one, so the location
+    never takes in a row whose value is decided.
+    """
+    first, _, location = column.rows[0]
+    own = f"L{first.locator.start_line}-L{first.locator.end_line}"
+    if len(column.rows) == 1 or not location.endswith(own):
+        return location
+    runs: list[list[int]] = []
+    for block, _, _ in column.rows:
+        if runs and block.locator.start_line == runs[-1][1] + 1:
+            runs[-1][1] = block.locator.end_line
+        else:
+            runs.append([block.locator.start_line, block.locator.end_line])
+    spans = ", ".join(f"L{start}-L{end}" for start, end in runs)
+    return location[: -len(own)] + spans
+
+
+def _placeholder_column(
+    ref: DocumentRef, column: _PlaceholderColumn
+) -> tuple[ReviewCandidate, QuestionDraft]:
+    """One question per table column, however many rows mark it undecided."""
+    header, index = column.header, column.index
+    name = (
+        _name(header.cells[index])
+        if header is not None and index < len(header.cells)
+        else ""
+    ) or f"{index + 1}번째 열"
+    labels = [_row_label(block) for block, _, _ in column.rows]
+    evidence = tuple(
+        _evidence(ref, block, location, text.strip()[:MAX_QUOTE_CHARS].strip())
+        for block, text, location in column.rows[:MAX_DUPLICATE_EVIDENCE]
+    )
+    where = shorten(_rows_location(column))
+    key = f"rule-placeholder-L{column.anchor_line}-c{index + 1}"
+    if len(labels) == 1:
+        summary = f"표의 '{labels[0]}' 행에서 '{name}' 값이 미정으로 표시돼 있습니다."
+        question = (
+            f"표({where})의 '{labels[0]}' 행에서 '{name}' 값이 미정으로 표시돼 "
+            "있습니다. 정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 "
+            "적어 주세요."
         )
-        draft = QuestionDraft(
-            "SHORT_ANSWER",
-            clip(
-                f"표({where})의 '{row_label}' 행에서 '{column}' 값이 비어 있거나 "
-                "미정입니다. 정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 "
-                "적어 주세요."
-            ),
-            ShortAnswerFormat(),
-            "TEMPLATE",
+        answer_type, answer_format = "SHORT_ANSWER", ShortAnswerFormat()
+    else:
+        listed = ", ".join(f"'{label}'" for label in labels[:_MAX_LISTED_ROWS])
+        if len(labels) > _MAX_LISTED_ROWS:
+            listed += f" 외 {len(labels) - _MAX_LISTED_ROWS}개"
+        rows = f"{len(labels)}개 행({listed})"
+        summary = f"표의 '{name}' 열이 {rows}에서 미정으로 표시돼 있습니다."
+        question = (
+            f"표({where})의 '{name}' 열이 {rows}에서 미정으로 표시돼 있습니다. "
+            "정해진 값이 있는 행은 '행 이름: 값' 형식으로 한 줄씩 적어 주세요. "
+            "아직 정해지지 않은 행은 '미정'이라고 적어 주세요."
         )
-        hits.append((candidate, draft))
-    return hits
+        answer_type, answer_format = "ESSAY", EssayAnswerFormat()
+    candidate = ReviewCandidate(
+        candidate_key=key,
+        kind="MISSING_CANDIDATE",
+        status="REVIEW_CANDIDATE",
+        signal="PLACEHOLDER_CELL",
+        summary=clip(summary),
+        evidence=evidence,
+    )
+    return candidate, QuestionDraft(
+        answer_type,
+        clip(question),
+        answer_format,
+        "TEMPLATE",
+        evidence_truncated=len(column.rows) > len(evidence),
+    )
 
 
 def _identifier(block: SourceBlock, text: str) -> str | None:
@@ -287,18 +351,32 @@ def detect_rule_candidates(
         for block in document.blocks
         if block.block_type == "table_header"
     }
-    hits: list[tuple[ReviewCandidate, QuestionDraft]] = []
+    # A column question takes the place of its first undecided cell, so hits
+    # stay in source order while later rows of the same column join it.
+    slots: list[tuple[ReviewCandidate, QuestionDraft] | _PlaceholderColumn] = []
+    columns: dict[tuple[int, int], _PlaceholderColumn] = {}
     identifiers: dict[str, list[tuple[SourceBlock, str, str]]] = {}
     for block in document.blocks:
         text = resolve_source(document, block.locator)
         location = block_location(document, block, titles)
         if block.block_type in _PROSE_BLOCKS:
-            hits.extend(_undecided(ref, block, text, location))
+            slots.extend(_undecided(ref, block, text, location))
         elif block.block_type == "table_row":
             header = headers.get(block.table_header_id or "")
-            hits.extend(_placeholder_cells(ref, block, header, text, location))
+            anchor = (block if header is None else header).locator.start_line
+            for index in _placeholder_indexes(block, text):
+                column = columns.get((anchor, index))
+                if column is None:
+                    column = _PlaceholderColumn(anchor, index, header, [])
+                    columns[(anchor, index)] = column
+                    slots.append(column)
+                column.rows.append((block, text, location))
         key = _identifier(block, text)
         if key is not None:
             identifiers.setdefault(key, []).append((block, text, location))
+    hits = [
+        _placeholder_column(ref, slot) if isinstance(slot, _PlaceholderColumn) else slot
+        for slot in slots
+    ]
     hits.extend(_duplicates(ref, identifiers))
     return hits

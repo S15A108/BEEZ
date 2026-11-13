@@ -27,7 +27,7 @@
 | 신호(`signal`) | `kind` | 기준 |
 | --- | --- | --- |
 | `UNDECIDED_STATEMENT` | `MISSING_CANDIDATE` | 문서가 스스로 미결이라고 말한 문장: "정하지 않았다"·"합의하지 않았다"·"결정되지 않았다", "미정"·TBD·TODO, "추후 결정", "별도 정책에 따른다"·"후속 계약에서 정한다". 현재형("정의하지 않는다", "포함하지 않는다")은 같은 문장에 "이 문서"·"아직" 같은 문서 범위 표지가 있을 때만(동작 설명과 구분) |
-| `PLACEHOLDER_CELL` | `MISSING_CANDIDATE` | 표 행의 빈 셀 또는 "미정"·TBD·TODO·"추후"·"미확정"·"?" 셀. 행 전체를 인용하고 헤더로 열 이름을 붙인다. `-`는 "없음"의 뜻으로 쓰여 제외 |
+| `PLACEHOLDER_CELL` | `MISSING_CANDIDATE` | 표 셀이 "미정"·TBD·TODO·"추후"·"추후 결정"·"미확정"·"?"로 **명시된** 경우. 같은 표·같은 열의 미정 칸은 후보·질문 하나로 묶고, 행 이름을 요약·질문에 나열하며 행마다 행 전체를 근거로 인용한다(근거 최대 5개). 미정 행이 하나면 `SHORT_ANSWER`, 둘 이상이면 `ESSAY`. 빈 칸은 미정 표시가 아니라서 제외(설명이 필요 없는 `id` 칸, 표 제약 행 — S15P31A108-413), `-`는 "없음"의 뜻으로 쓰여 제외 |
 | `DUPLICATE_KEY` | `CONFLICT` | 같은 식별자(`REQ-003`)가 서로 다른 내용으로 2곳 이상. 동일 문장 반복은 제외 |
 | `MODEL_PROPOSAL` | 모델이 고른 kind | 모델이 블록 ID·인용으로 제시한 후보. 3절 검증을 거친다 |
 
@@ -78,7 +78,7 @@ ReviewCandidate:
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
-| `candidate_key` | string ≤ 64 | 결과 안의 임시 키. 최종 ID가 아니다. 규칙 후보는 위치 기반(`rule-undecided-L29-1`, `rule-placeholder-L27-c2`, `rule-duplicate-REQ-003`), 모델 후보는 **종류 + 확인된 근거(블록 ID·인용, 정렬) + 질문 유형·선택지 + 공백 정규화한 질문 문구의 해시**(`model-3f9a1c…` 12자리)다. 출력 순서와 무관해 같은 버전을 재분석해 같은 문장을 인용하고 같은 질문을 하면 같은 키가 나온다. 같은 문장을 근거로 한 서로 다른 질문은 키가 다르고 둘 다 남으며, 질문까지 같은 제안이 둘일 때만 첫 번째를 남긴다 |
+| `candidate_key` | string ≤ 64 | 결과 안의 임시 키. 최종 ID가 아니다. 규칙 후보는 위치 기반(`rule-undecided-L29-1`, `rule-placeholder-L23-c2`(표 머리 행 시작 줄 + 열 번호, 머리가 없는 표는 그 행의 줄), `rule-duplicate-REQ-003`), 모델 후보는 **종류 + 확인된 근거(블록 ID·인용, 정렬) + 질문 유형·선택지 + 공백 정규화한 질문 문구의 해시**(`model-3f9a1c…` 12자리)다. 출력 순서와 무관해 같은 버전을 재분석해 같은 문장을 인용하고 같은 질문을 하면 같은 키가 나온다. 같은 문장을 근거로 한 서로 다른 질문은 키가 다르고 둘 다 남으며, 질문까지 같은 제안이 둘일 때만 첫 번째를 남긴다 |
 | `kind` | `MISSING_CANDIDATE\|CLARIFICATION\|CONFLICT` | 2절 |
 | `status` | `REVIEW_CANDIDATE\|UNVERIFIED` | 3절 |
 | `signal` | `UNDECIDED_STATEMENT\|PLACEHOLDER_CELL\|DUPLICATE_KEY\|MODEL_PROPOSAL` | 탐지 경로 |
@@ -120,7 +120,7 @@ SupplementQuestion:
 | 모델 제안 | 최대 20건, 후보당 근거 최대 5 |
 | 모델 입력 | 블록 JSON 256 KiB 초과 시 422 `invalid_ai_input`. 큰 문서는 `RULES_ONLY`로 먼저 처리 |
 
-우선순위 점수 = 상태(`REVIEW_CANDIDATE` 100, `UNVERIFIED` 0) + 종류(`CONFLICT` 30, `MISSING_CANDIDATE` 20, `CLARIFICATION` 10) + 근거 수(최대 3 × 2). 동점은 첫 근거의 시작 행이 앞선 순, 다음은 `candidate_key` 순. 근거 없는 후보는 항상 뒤다. 같은 종류·같은 블록에서 인용이 겹치는 검증 완료 모델 후보가 있으면 규칙 후보는 제거되고 모델 질문이 쓰인다.
+우선순위 점수 = 상태(`REVIEW_CANDIDATE` 100, `UNVERIFIED` 0) + 종류(`CONFLICT` 30, `MISSING_CANDIDATE` 20, `CLARIFICATION` 10) + 근거 수(최대 3 × 2). 동점은 첫 근거의 시작 행이 앞선 순, 다음은 `candidate_key` 순. 근거 없는 후보는 항상 뒤다. 같은 종류·같은 블록에서 인용이 겹치는 검증 완료 모델 후보가 있으면 규칙 후보는 제거되고 모델 질문이 쓰인다. 단 `PLACEHOLDER_CELL` 열 후보는 미정 행이 근거 상한(5개) 이내이고 모델 후보 하나가 그 근거 행을 모두 인용할 때만 제거된다(한 행만 다룬 모델 질문이 같은 열 다른 행의 질문을 지우지 않게). 미정 행이 근거 상한을 넘은 열 후보는 모델 후보와 겹쳐도 제거하지 않는다. 모델 근거도 최대 5개라 근거에서 빠진 행은 열 질문만 묻기 때문이다.
 
 ## 8. 저장 계약 제안 (오서현 합의 대상)
 
