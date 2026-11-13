@@ -47,6 +47,14 @@ public class PublishedAnalysisMetrics {
                     .description("Retained finished attempt records by result, not a lifetime event counter")
                     .tag("result", result).register(registry);
         }
+        for (String kind : PublishedAnalysisMetricsSnapshot.UNRESOLVED_KINDS) {
+            for (String scope : PublishedAnalysisMetricsSnapshot.UNRESOLVED_SCOPES) {
+                String key = PublishedAnalysisMetricsSnapshot.unresolvedKey(kind, scope);
+                Gauge.builder("beez.cdc.analysis.unresolved", this, m -> m.value(s -> s.unresolved().get(key)))
+                        .description("FAILED and review-required rows; ACTIONABLE means the intake baseline is still current")
+                        .tag("kind", kind).tag("scope", scope).register(registry);
+            }
+        }
         gauge(registry, "beez.cdc.analysis.not.evaluated.expected", "Initial v1 and explicitly marked historical backfill rows", PublishedAnalysisMetricsSnapshot::notEvaluatedExpected);
         gauge(registry, "beez.cdc.analysis.not.evaluated.requires.review", "Other not-evaluated rows", PublishedAnalysisMetricsSnapshot::notEvaluatedRequiresReview);
         gauge(registry, "beez.cdc.analysis.blocked.projects", "Projects with pending work blocked by predecessor order", PublishedAnalysisMetricsSnapshot::blockedProjects);

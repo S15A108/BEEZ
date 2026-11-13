@@ -25,7 +25,7 @@ class PublishedAnalysisPostgresIntegrationTest {
         var source = new SingleConnectionDataSource(System.getenv("BEEZ_CDC_TEST_DATABASE_URL"), "beez_test", "", true);
         try {
             var sql = new JdbcTemplate(source);
-            sql.execute("CREATE TEMP TABLE project(id bigint PRIMARY KEY)");
+            sql.execute("CREATE TEMP TABLE project(id bigint PRIMARY KEY, current_baseline_id bigint, archived_at timestamptz)");
             sql.execute("CREATE TEMP TABLE baseline(id bigint PRIMARY KEY, project_id bigint NOT NULL, version_no integer NOT NULL)");
             sql.execute("""
                     CREATE TEMP TABLE published_change_analysis(
@@ -35,7 +35,7 @@ class PublishedAnalysisPostgresIntegrationTest {
                       started_at timestamptz, finished_at timestamptz, lease_until timestamptz, next_attempt_at timestamptz)
                     """);
             sql.execute("CREATE TEMP TABLE published_analysis_attempt(intake_id bigint, attempt integer, outcome text)");
-            sql.update("INSERT INTO project VALUES (1),(2),(3)");
+            sql.update("INSERT INTO project(id,current_baseline_id) VALUES (1,103),(2,203),(3,303)");
             sql.update("INSERT INTO baseline VALUES (101,1,1),(102,1,2),(103,1,3),"
                     + "(201,2,1),(203,2,3),(301,3,1),(302,3,2),(303,3,3)");
             sql.update("""

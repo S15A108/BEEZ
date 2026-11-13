@@ -22,8 +22,8 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcMetricsMissing](#cdcmetricsmissing) | backend 수집은 되는데(`up == 1`) CDC 필수 지표가 없음(인스턴스별) | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcExpiredLeases](#cdcexpiredleases) | lease 만료 RUNNING > 0 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcBlockedProjects](#cdcblockedprojects) | 순서상 막힌 프로젝트 > 0 | 10분 | 4시간 | 앱 · 양지훈 |
-| [CdcFailedIntakes](#cdcfailedintakes) | FAILED > 0 | 바로 | **24시간** | 앱 · 양지훈 |
-| [CdcNotEvaluatedRequiresReview](#cdcnotevaluatedrequiresreview) | 확인 필요 미평가 > 0 | 바로 | **24시간** | 앱 · 양지훈 |
+| [CdcFailedIntakes](#cdcfailedintakes) | 현재 기준 버전의 FAILED > 0 | 바로 | **24시간** | 앱 · 양지훈 |
+| [CdcNotEvaluatedRequiresReview](#cdcnotevaluatedrequiresreview) | 현재 기준 버전의 확인 필요 미평가 > 0 | 바로 | **24시간** | 앱 · 양지훈 |
 | [CdcKafkaReceiveFailures](#cdckafkareceivefailures) | 최근 5분 Kafka 수신 실패 증가 **그리고** consumer 켜짐 | 바로 | 4시간 | 인프라 · 전진 |
 | [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜진 인스턴스에 그 인스턴스의 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConsumerDown](#cdcconsumerdown) | consumer 켜진 인스턴스가 Kafka에 붙어 있지 않음(`consumer_up` ≠ 1 또는 없음) | 5분 | 4시간 | 인프라 · 전진 |
@@ -134,7 +134,7 @@ backend가 지표용 DB 집계에 실패하거나, 집계 값이 120초 넘게 �
 ### CdcMetricsMissing
 
 backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지표(`snapshot_available`·
-`last_success`·`consumer_enabled`·`recovery_enabled`·`intakes`) 중 하나라도 5분 넘게 없습니다. 이때는
+`last_success`·`consumer_enabled`·`recovery_enabled`·`intakes`·`unresolved`) 중 하나라도 5분 넘게 없습니다. 이때는
 `CdcSnapshotFailing`도 `BackendScrapeDown`도 울리지 않아 CDC 감시가 통째로 빠집니다.
 
 - 볼 곳: 그 인스턴스에 배포된 커밋(CDC 지표가 없는 커밋으로 배포·롤백했는지), backend 기동
@@ -161,9 +161,12 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 
 ### CdcFailedIntakes
 
-자동 재처리되지 않는 `FAILED` 접수가 남아 있습니다. 처음 한 번 알리고, 남아 있으면
+자동 재처리되지 않는 `FAILED` 접수가 **현재 기준 버전에** 남아 있습니다. 처음 한 번 알리고, 남아 있으면
 24시간마다 다시 알립니다.
 
+- 현재 기준 버전 = 그 접수의 baseline이 아직 프로젝트의 현재 baseline이고 프로젝트가 보관되지 않은 것입니다.
+  뒤 버전에 밀렸거나 보관된 FAILED는 다시 분석할 수 없어(발행 후 분석은 현재 baseline에서만 돔) 세지 않습니다.
+  그런 행은 "막힘·정체·확인 필요" 그래프의 "밀린 FAILED"에 보입니다(S15P31A108-412).
 - 볼 곳: "FAILED 남은 건", "시도 이력 결과별". 원인 확인은 권한이 있는 담당자가 DB를
   조회해서 합니다(조회만).
 - 남아 있는 것을 알고 있고 처리 계획이 정해졌으면 24시간 재통지를 그대로 두거나 일시
@@ -175,6 +178,8 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 후속 분석도 막지 않지만(S15P31A108-408), 그 버전의 영향은 평가되지 않았습니다. `document_change_unavailable`은
 해당 버전의 문서와 설계 항목을 포함한 영향 분석 전체가 미평가로 남습니다. 재통지는 24시간입니다.
 
+- CdcFailedIntakes처럼 현재 기준 버전의 것만 셉니다. 밀린 버전의 미평가는 그래프의 "밀린 확인 필요 미평가"에
+  보이고 알리지 않습니다(S15P31A108-412).
 - 볼 곳: "확인 필요 미평가". "미평가(예상된 것)"는 장애가 아닙니다.
 
 ### CdcKafkaReceiveFailures

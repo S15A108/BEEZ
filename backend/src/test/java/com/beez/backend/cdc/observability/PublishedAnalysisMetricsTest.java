@@ -21,7 +21,9 @@ class PublishedAnalysisMetricsTest {
                 Map.of("PENDING", pending, "RUNNING", 1d, "COMPLETED", 2d, "FAILED", 1d, "NOT_EVALUATED", 2d),
                 Map.of("COMPLETED", 0d, "INSUFFICIENT_EVIDENCE", 2d, "UNKNOWN", 0d),
                 Map.of("COMPLETED", 0d, "INSUFFICIENT_EVIDENCE", 2d, "NOT_EVALUATED", 1d, "FAILED", failedAttempts),
-                1d, 1d, 1d, 1d, 0d, retries, retries, 140d);
+                1d, 1d, 1d, 1d, 0d, retries, retries, 140d,
+                Map.of("FAILED/ACTIONABLE", 1d, "FAILED/NOT_ACTIONABLE", 2d,
+                        "NOT_EVALUATED_REVIEW/ACTIONABLE", 0d, "NOT_EVALUATED_REVIEW/NOT_ACTIONABLE", 1d));
     }
 
     @Test
@@ -35,6 +37,8 @@ class PublishedAnalysisMetricsTest {
         assertThat(gauge(registry, "beez.cdc.analysis.evaluations", "result", "INSUFFICIENT_EVIDENCE")).isEqualTo(2);
         assertThat(gauge(registry, "beez.cdc.analysis.attempt.records", "result", "FAILED")).isEqualTo(1);
         assertThat(registry.get("beez.cdc.analysis.snapshot.available").gauge().value()).isEqualTo(1);
+        assertThat(registry.get("beez.cdc.analysis.unresolved").tag("kind", "FAILED").tag("scope", "NOT_ACTIONABLE")
+                .gauge().value()).isEqualTo(2);
         verify(reader, times(1)).read();
 
         metrics.invalidate();
@@ -45,7 +49,7 @@ class PublishedAnalysisMetricsTest {
 
         assertThat(registry.getMeters()).allSatisfy(meter ->
                 assertThat(meter.getId().getTags()).allSatisfy(tag ->
-                        assertThat(tag.getKey()).isIn("status", "result")));
+                        assertThat(tag.getKey()).isIn("status", "result", "kind", "scope")));
     }
 
     @Test
@@ -104,7 +108,7 @@ class PublishedAnalysisMetricsTest {
                 "beez_cdc_analysis_started_retries", "beez_cdc_analysis_recorded_retry_attempts",
                 "beez_cdc_analysis_oldest_pending_seconds", "beez_cdc_analysis_snapshot_available",
                 "beez_cdc_analysis_snapshot_last_success_epoch_seconds", "beez_cdc_analysis_consumer_enabled",
-                "beez_cdc_analysis_recovery_enabled"
+                "beez_cdc_analysis_recovery_enabled", "beez_cdc_analysis_unresolved"
         }) {
             assertThat(scrape).contains("# TYPE " + name + " gauge");
         }
