@@ -42,6 +42,16 @@ public class DesignDraftService {
     static final int MAX_JOBS = 20;
     static final int MAX_QUESTIONS = 200;
     static final int MAX_ITEMS = 500;
+    /**
+     * 다른 곳의 답변(related_answers) 상한(134 계약 §2·§5). 질문 생성의 known_questions(PlanningQuestionGenerator)와 같은 개수·글자 수다.
+     * 글자 수는 질문과 구조 답(선택지·기타 입력·본문)의 코드 포인트 합으로, AI 가 세는 방식과 같다. 넘기면 AI 가 요청 전체를 거절한다.
+     */
+    static final int MAX_RELATED_ANSWERS = 100;
+    static final int MAX_RELATED_CHARS = 30_000;
+    /** AI 질문 문구 상한(Text 2,000자). 넘는 예전 질문은 보낼 수 없어 뺀다. */
+    static final int RELATED_QUESTION_CHARS = 2_000;
+    /** related_answers 참조 키 접두어. AI 가 만드는 질문 키(q-…)와 겹치지 않는다. */
+    static final String RELATED_PREFIX = "pq-";
 
     private final ProjectAccessChecker access;
     private final LeaderGuard leader;
@@ -184,7 +194,51 @@ public class DesignDraftService {
         }
         if (questions.size() > MAX_QUESTIONS) throw conflict("draft_too_large", "질문이 너무 많아 한 번에 처리할 수 없습니다.");
         snapshot.put("questions", questions);
+        snapshot.put("related_answers", related(drafts.relatedAnswers(project, version, MAX_RELATED_ANSWERS)));
         return snapshot;
+    }
+
+    /**
+     * 다른 문서·이전 버전의 답변(S15P31A108-414). 질문 생성이 이 답들 때문에 같은 결정을 다시 묻지 않으므로 초안에도 원래 답과
+     * 출처를 넘긴다. 최근 것부터 담다가 상한(개수·글자 수)에 닿으면 멈춘다.
+     */
+    static List<Map<String, Object>> related(List<Map<String, Object>> rows) {
+        var out = new ArrayList<Map<String, Object>>();
+        int chars = 0;
+        for (var row : rows) {
+            if (out.size() == MAX_RELATED_ANSWERS) break;
+            String question = row.get("question") instanceof String q ? q : "";
+            int questionChars = question.codePointCount(0, question.length());
+            if (question.isBlank() || questionChars > RELATED_QUESTION_CHARS || row.get("answer_payload") == null) continue;
+            Map<String, Object> answer = json(row.get("answer_payload"));
+            int size = questionChars + answerChars(answer);
+            if (chars + size > MAX_RELATED_CHARS) break;
+            chars += size;
+            var source = new LinkedHashMap<String, Object>();
+            source.put("document_id", row.get("document_id").toString());
+            source.put("document_version_id", row.get("document_version_id").toString());
+            source.put("version_no", ((Number) row.get("version_no")).intValue());
+            var view = new LinkedHashMap<String, Object>();
+            view.put("ref_key", RELATED_PREFIX + row.get("id"));
+            view.put("question", question);
+            view.put("answer", answer);
+            view.put("source", source);
+            out.add(view);
+        }
+        return out;
+    }
+
+    /** 구조 답의 글자 수(코드 포인트): 선택지와 기타 입력의 합, 또는 본문. AI(answer_chars)와 같은 방식으로 센다. */
+    private static int answerChars(Map<String, Object> answer) {
+        int total = 0;
+        if (answer.get("selected") instanceof List<?> selected) {
+            for (Object option : selected) total += codePoints(option);
+        }
+        return total + codePoints(answer.get("other_text")) + codePoints(answer.get("text"));
+    }
+
+    private static int codePoints(Object value) {
+        return value instanceof String s ? s.codePointCount(0, s.length()) : 0;
     }
 
     private static Map<String, Object> itemView(Map<String, Object> row) {
@@ -422,6 +476,22 @@ public class DesignDraftService {
             var now = drafts.currentAnswer(project, version, ref);
             if (now.isEmpty() || !"ANSWERED".equals(now.get().get("status")) || now.get().get("answer_payload") == null
                     || !canonical(then.get("answer")).equals(canonical(json(now.get().get("answer_payload"))))) {
+                throw stale();
+            }
+        }
+        // 다른 문서·이전 버전의 답(S15P31A108-414). 예전 작업의 스냅샷에는 이 필드가 없다.
+        Map<String, Object> related = new LinkedHashMap<>();
+        if (snapshot.get("related_answers") instanceof List<?> list) {
+            for (Object value : list) {
+                var r = (Map<String, Object>) value;
+                related.put(r.get("ref_key").toString(), r.get("answer"));
+            }
+        }
+        for (String ref : answerRefs) {
+            if (!related.containsKey(ref)) continue;
+            var now = drafts.currentAnswerById(project, Long.parseLong(ref.substring(RELATED_PREFIX.length())));
+            if (now.isEmpty() || !"ANSWERED".equals(now.get().get("status")) || now.get().get("answer_payload") == null
+                    || !canonical(related.get(ref)).equals(canonical(json(now.get().get("answer_payload"))))) {
                 throw stale();
             }
         }

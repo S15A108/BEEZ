@@ -309,6 +309,47 @@ class DesignDraftIntegrationTest extends PlanningTestSupport {
         fails(HttpStatus.CONFLICT, "candidate_stale", () -> drafts.adopt(leaderCaller, project, more.get("draft-create"), null));
     }
 
+    // S15P31A108-414: 질문 생성은 다른 문서·이전 버전에서 답한 결정을 다시 묻지 않는다. 그래서 초안에 그 답의 원문과 출처를 넘기고,
+    // 그 답에 기댄 후보는 답이 바뀌면 채택할 수 없다.
+    @SuppressWarnings("unchecked")
+    @Test void answersFromOtherDocumentsReachTheDraftAndChangingThemMakesCitingCandidatesStale() {
+        long other = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id", Long.class, project, leader);
+        long otherVersion = documentVersion(other, 1, CONTENT);
+        long related = jdbc.queryForObject("""
+                INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answer_payload,answered_by,answered_at)
+                VALUES(?,?,'CLARIFICATION','이미 취소된 예약을 다시 취소하면?','model','ANSWERED','409로 거부한다.',cast(? AS jsonb),?,now()) RETURNING id
+                """, Long.class, project, otherVersion, "{\"type\":\"ESSAY\",\"text\":\"409로 거부한다.\"}", leader);
+        jdbc.update("INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status) VALUES(?,?,'CLARIFICATION','다른 문서 미답','model','OPEN')",
+                project, otherVersion);
+        String ref = "pq-" + related;
+        item("draft-create").put("answer_refs", List.of(ref));
+        item("draft-create").put("support", "DOCUMENT_AND_ANSWER");
+        change("draft-create").put("answer_refs", List.of(ref));
+
+        var ids = run("k1");
+        ArgumentCaptor<Map<String, Object>> sent = captor();
+        verify(ai).designDrafts(sent.capture());
+        assertThat((List<Map<String, Object>>) sent.getValue().get("related_answers")).as("이 버전의 답·미답변은 빼고 다른 곳의 답만")
+                .containsExactly(Map.of("ref_key", ref, "question", "이미 취소된 예약을 다시 취소하면?",
+                        "answer", Map.of("type", "ESSAY", "text", "409로 거부한다."),
+                        "source", Map.of("document_id", "" + other, "document_version_id", "" + otherVersion, "version_no", 1)));
+        assertThat(jdbc.queryForObject("SELECT answer_refs::text FROM design_draft_candidate WHERE id=?", String.class, ids.get("draft-create"))).contains(ref);
+
+        jdbc.update("UPDATE planning_question SET answer='별도 오류 응답',answer_payload=cast(? AS jsonb) WHERE id=?",
+                "{\"type\":\"ESSAY\",\"text\":\"별도 오류 응답\"}", related);
+        fails(HttpStatus.CONFLICT, "candidate_stale", () -> drafts.adopt(leaderCaller, project, ids.get("draft-create"), new AdoptRequest(true, List.of())));
+        assertThat(drafts.adopt(leaderCaller, project, ids.get("draft-update"), null)).as("그 답을 쓰지 않은 후보는 영향 없음").containsEntry("status", "ADOPTED");
+    }
+
+    // 이 필드가 생기기 전에 접수된 작업(스냅샷에 related_answers 없음)도 그대로 실행·채택된다.
+    @Test void jobsAcceptedBeforeRelatedAnswersStillRunAndAdopt() {
+        create("k1");
+        jdbc.update("UPDATE design_draft_job SET input_snapshot=input_snapshot - 'related_answers' WHERE project_id=?", project);
+        assertThat(runner.runOnce()).isTrue();
+        long update = jdbc.queryForObject("SELECT id FROM design_draft_candidate WHERE project_id=? AND candidate_key='draft-update'", Long.class, project);
+        assertThat(drafts.adopt(leaderCaller, project, update, null)).containsEntry("status", "ADOPTED");
+    }
+
     @Test void evidenceAndConflictConfirmationsAreRequired() {
         item("draft-create").put("support", "NONE");
         change("draft-update").put("conflicting_fields", List.of("description"));

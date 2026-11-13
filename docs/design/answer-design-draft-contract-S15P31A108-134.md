@@ -23,9 +23,12 @@
 | `kind`, `media_type`, `content`, `content_hash`, `text_hash`, `normalization_version`, `parser_profile` | — | Y | #133 요청과 같음(#127 파서 계약) |
 | `existing_items[]` | ExistingDesignItem | N | 문서에서 나온 현재 설계 항목. 최대 500. `design_item_version_id`·`design_item_id`·`key`는 서로 달라야 한다(**설계 항목당 한 버전**, 어기면 422) |
 | `questions[]` | AnsweredQuestion | N | 저장된 #133 질문. 최대 200, `question_key` 중복 금지 |
+| `related_answers[]` | RelatedAnswer | N | 같은 프로젝트의 **다른 문서·이 문서의 다른 버전**에서 답한 #133 질문(S15P31A108-414). 최대 100, 아래 설명 |
 | `max_items` | integer 1~100 | N | 초안 수 상한. 기본 50 |
 
 ExistingDesignItem: `design_item_version_id`, `design_item_id`, `key`(표시 키), `kind`(5종), `version_no`, `status`(`DRAFT|APPROVED`), `schema_version`(1), `content`(DesignItemContent v1), `source?`(00-common Source). 종류별 필수 필드(API `method`·`path`, DATA `entity`·`fields`)가 없으면 400이다. 검사 규칙은 BE `DesignContentValidator`와 같다(`description` ≤ 10,000자, API `method`는 대문자 HTTP 메서드, `path`는 `/`로 시작하고 공백·`?`·`#`·제어 문자 없이 2,000자 이하, DATA `entity`는 비어 있지 않은 문자열로 길이 제한 없음, `fields`는 배열). BE가 저장한 본문은 이 요청에서 거부되지 않아야 하므로 BE보다 좁은 제한은 두지 않는다. 본문은 값이 `null`인 필드까지 입력 그대로 보존한다. BE `DesignJson`이 거부하는 것(모든 깊이의 빈 필드명, 32단계를 넘는 중첩, JSON이 아닌 값, 정렬·압축 JSON 1 MiB 초과)은 여기서도 거부한다(`check_json_content`).
+
+RelatedAnswer: `ref_key`(BE가 붙인 참조 키 `pq-<planning_question id>`), `question`(질문 문구, 1~2,000자), `answer`(#133 `Answer` 구조 그대로: 선택·단답·서술), `source`(`{document_id, document_version_id, version_no}`, 이 문서 버전이면 422). 질문 생성(#133 §4.1)은 프로젝트가 이미 답한 결정을 다시 묻지 않으므로, 그 답을 여기서 **원래 답과 출처째로** 받는다. BE는 이 버전이 아닌 답변 질문을 최근(id 큰) 것부터 담다가 100개 또는 질문·답 글자 수(코드 포인트, 답은 선택지·기타 입력·본문 문자열의 합) 합 30,000자에서 멈춘다(2,000자를 넘는 예전 질문은 뺀다). AI는 같은 상한을 넘거나, `ref_key`가 서로 또는 `questions[].question.question_key`와 겹치면 요청 전체를 거절한다. `DOCUMENT_ONLY`에서는 비어 있어야 한다. 모델에는 `ref_key`·질문·답·출처 문서(ID·버전 번호)가 있을 때만 전달되고, 모델 입력 256 KiB 상한은 이 필드를 빼고 잰다(전에 통과하던 요청이 이 필드 때문에 거절되지 않게). 모델 지시: 이 문서가 다루거나 열어 둔 점을 정할 때만 쓰고 `answer_refs`에 `ref_key`를 적는다. 다른 곳의 답만으로 초안을 만들지 않는다. 이 문서와 어긋나면 문서를 따르고 `unresolved`에 적는다(이 버전의 답과 어긋날 때 답을 따르는 것과 다르다 — 그런 충돌은 #133이 이 버전에서 CONFLICT로 묻는다).
 
 AnsweredQuestion: `question`(#133 `SupplementQuestion` 그대로), `evidence[]`(#133 `EvidenceItem`, 이 문서 버전 소속), `status`(`OPEN|ANSWERED|DISMISSED`), `answer`(#133 `QuestionAnswer`, `ANSWERED`일 때만). 답변은 질문의 `answer_format`에 맞아야 하며(`validate_answer`) 어긋나면 422 `invalid_ai_input`이다. 모델에는 `ANSWERED` 질문만 본문이 전달되고 나머지는 개수만 전달된다.
 
@@ -56,7 +59,7 @@ DraftItem:
 | `content` | DesignItemContent | `description` 필수. 종류가 요구하는 필드만 타입 검사(API `method`·`path`, DATA `entity`·`fields`)하고 그 밖의 JSON 필드는 그대로 보존한다(BE 계약과 동일; POLICY의 `method: "manual"` 같은 값도 허용). UPDATE면 기준 항목 본문에 모델이 돌려준 필드를 4절 규칙으로 합친 결과이며, 기준 항목의 `null` 값 필드도 모델이 건드리지 않는 한 그대로 남는다 |
 | `base_design_item_version_id`, `base_status` | ID \| null, `DRAFT\|APPROVED` \| null | 갱신 대상 기존 버전과 그 상태. APPROVED 기준은 편집되지 않고 새 DRAFT 버전의 바탕일 뿐이다 |
 | `sources[]` | EvidenceItem | **확인된 원문 인용만**(블록 ID·행 범위·위치·인용). 모델 제안당 최대 5이며 합친 초안은 그 합(최대 500)까지 모두 남긴다. 블록에 없는 인용은 버린다 |
-| `answer_refs[]` | string | 이 초안이 기댄 답변의 `question_key`. 입력의 `ANSWERED` 질문만 허용. 모델 제안당 최대 10이며 합친 초안은 답변된 질문 수(최대 200)까지 모두 남긴다 |
+| `answer_refs[]` | string | 이 초안이 기댄 답변의 `question_key` 또는 `related_answers[].ref_key`. 입력의 `ANSWERED` 질문과 `related_answers`만 허용. 모델 제안당 최대 10이며 합친 초안은 둘을 합친 수(최대 300)까지 모두 남긴다 |
 | `support` | `DOCUMENT_AND_ANSWER\|ANSWER\|DOCUMENT\|NONE` | 출처 등급. `NONE`은 검토자가 대조할 근거가 없는 항목 |
 | `rationale` | string ≤ 2,000 | 문서·답변이 무엇을 확정했는지(한국어) |
 
@@ -89,9 +92,10 @@ DraftChange:
 | --- | --- |
 | 초안 수 | `max_items`(기본 50, 1~100). 초과분은 근거 등급이 낮은 순으로 버리고 `omitted_items`에 수를 남긴다 |
 | 기존 항목 / 질문 | 500 / 200 |
-| 모델 제안당 인용 / 답변 참조 | 5 / 10. 합친 초안은 500 / 200까지(확인된 것은 버리지 않음) |
+| 다른 곳의 답변(`related_answers`) | 100건, 질문·답 글자 수 합 30,000자(S15P31A108-414) |
+| 모델 제안당 인용 / 답변 참조 | 5 / 10. 합친 초안은 500 / 300까지(확인된 것은 버리지 않음) |
 | `unresolved` | 50건, 각 2,000자 |
-| 모델 입력 | 블록·기존 항목·답변 JSON 256 KiB 초과 시 422 `invalid_ai_input` |
+| 모델 입력 | 블록·기존 항목·답변 JSON 256 KiB 초과 시 422 `invalid_ai_input`. `related_answers`는 이 크기에 넣지 않고 위 상한으로 따로 막는다 |
 | 본문 | `DESIGN_DRAFTS_MAX_BODY_BYTES` 기본 2 MiB |
 
 ## 6. 저장과 채택 (오서현 제안 반영, 표 설계는 합의 중)
@@ -101,11 +105,11 @@ BE 제안대로 AI 응답은 바로 DRAFT가 되지 않고 **생성 작업 → �
 | 단계 | 보존·사용할 AI 응답 | 비고 |
 | --- | --- | --- |
 | 생성 작업 | `document`·`text_hash`·`parser_profile`(대상 문서 확인), `usage[]`(실제 호출 사용량), 처리 상태 | 입력 스냅샷(문서 버전·질문·답변·기존 항목 본문)은 BE가 접수 시 보존한다 |
-| 생성 후보(항목별) | `items[]`와 `changes[]`: `candidate_key`, `kind`, `content`(= `after`, BE 용어로 `proposed_after`), `base_design_item_version_id`·`base_status`, **`before`(생성 당시 기준 본문 그대로)**, `changed_fields`, `conflicting_fields`, `sources[]`, `answer_refs[]`, `support`, `rationale` | 모두 **불변으로 보존**한다. 기존 DRAFT는 같은 행이 수정될 수 있어 `before`를 나중에 재구성할 수 없기 때문이다. 기준 본문 해시는 `before`에 BE `DesignJson.hash`를 적용해 얻는다(`before`는 입력 본문과 동일하며 `null` 필드도 보존된다). 생성에 쓴 답변은 BE 스냅샷에서 `answer_refs`의 질문 키로 찾는다 |
+| 생성 후보(항목별) | `items[]`와 `changes[]`: `candidate_key`, `kind`, `content`(= `after`, BE 용어로 `proposed_after`), `base_design_item_version_id`·`base_status`, **`before`(생성 당시 기준 본문 그대로)**, `changed_fields`, `conflicting_fields`, `sources[]`, `answer_refs[]`, `support`, `rationale` | 모두 **불변으로 보존**한다. 기존 DRAFT는 같은 행이 수정될 수 있어 `before`를 나중에 재구성할 수 없기 때문이다. 기준 본문 해시는 `before`에 BE `DesignJson.hash`를 적용해 얻는다(`before`는 입력 본문과 동일하며 `null` 필드도 보존된다). 생성에 쓴 답변은 BE 스냅샷에서 `answer_refs`의 질문 키로 찾는다(`pq-` 키는 스냅샷 `related_answers`에서) |
 | 생성 후보(결과 전체) | `unresolved[]`, `untouched_existing_ids[]`, `unanswered_question_keys[]`, `omitted_items` | `untouched_existing_ids`는 "이번 결과가 건드리지 않음"이지 삭제 지시가 아니다. 재생성 결과에 없는 기존 항목은 삭제하지 않는다 |
 | 실제 DRAFT(채택 시) | `content`를 `design_item_version`에 저장: `status=DRAFT`, `origin=AI_PROPOSED`, `schema_version=1`, `title=content.description`, `source_document_version_id`=요청 문서 버전, `source_locator`=`sources[0].locator`(대표 출처, 전체 근거를 대체하지 않음) | CREATE는 새 `design_item`(키 발급)과 v1 DRAFT, UPDATE는 기준 DRAFT 갱신 또는 APPROVED 기준의 새 DRAFT 버전. AI 제안과 사용자 편집 결과는 구분해 둔다 |
 
-채택 규칙(BE 제안): 모든 후보는 사용자 채택 후 반영하고, `support=NONE`은 "확인 가능한 근거 없음"을 확인한 뒤 명시적으로 채택한다. `conflicting_fields`가 있는 후보는 사용자가 그 필드를 확정하기 전에는 채택할 수 없게 하는 것을 제안한다. 반영 직전에 대상 문서·답변이 생성 당시와 같은지, UPDATE 대상 DRAFT의 버전·본문 해시가 같은지, baseline이 그사이 발행되지 않았는지 확인하고, 다르면 반영을 막고 재생성을 안내한다. 같은 후보의 채택 요청 재전송은 **BE가 발급한 후보 ID**를 기준으로 중복 반영하지 않는다. 후보를 폐기해도 실제 DRAFT에는 영향이 없다.
+채택 규칙(BE 제안): 모든 후보는 사용자 채택 후 반영하고, `support=NONE`은 "확인 가능한 근거 없음"을 확인한 뒤 명시적으로 채택한다. `conflicting_fields`가 있는 후보는 사용자가 그 필드를 확정하기 전에는 채택할 수 없게 하는 것을 제안한다. 반영 직전에 대상 문서·답변(`related_answers`에서 참조한 다른 문서의 답 포함, S15P31A108-414)이 생성 당시와 같은지, UPDATE 대상 DRAFT의 버전·본문 해시가 같은지, baseline이 그사이 발행되지 않았는지 확인하고, 다르면 반영을 막고 재생성을 안내한다. 같은 후보의 채택 요청 재전송은 **BE가 발급한 후보 ID**를 기준으로 중복 반영하지 않는다. 후보를 폐기해도 실제 DRAFT에는 영향이 없다.
 
 `candidate_key`는 한 생성 결과 안에서 `items[]`와 `changes[]`를 짝짓는 키일 뿐이다. 종류·기준 버전 ID·본문의 해시라서 `before`·답변·근거가 달라도 같을 수 있으므로, **생성 결과 간 중복 제거나 채택 멱등의 단독 기준으로 쓰지 않는다.** 후보는 생성 작업별로 보존하고 채택 멱등은 BE 후보 ID로 처리한다. 한 결과 안에서 기준 항목당 후보는 하나이며, 여러 생성 결과에 같은 항목의 후보가 있으면 BE 제안대로 하나를 골라 반영하고 이후는 기존 편집 기능으로 고친다.
 

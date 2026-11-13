@@ -312,11 +312,13 @@ def compose_result(
 ) -> DesignDraftResult:
     """Verify, diff, drop unchanged repeats, order by support and cap."""
     existing = {item.design_item_version_id: item for item in request.existing_items}
+    # Answers from other documents and earlier versions may back a draft too
+    # (S15P31A108-414); their keys never collide with question keys.
     answered = frozenset(
         entry.question.question_key
         for entry in request.questions
         if entry.status == "ANSWERED"
-    )
+    ) | frozenset(entry.ref_key for entry in request.related_answers)
     allowed_blocks = scope_block_ids(document, request)
     pairs: list[tuple[DraftItem, DraftChange]] = []
     seen_keys: set[str] = set()
