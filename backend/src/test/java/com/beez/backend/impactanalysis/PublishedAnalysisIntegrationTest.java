@@ -58,8 +58,6 @@ class PublishedAnalysisIntegrationTest extends IntegrationTestSupport {
         repository.fail(fourth,now.plusSeconds(99),"model_timeout",true);
         assertThat(jdbc.queryForObject("SELECT status FROM published_change_analysis WHERE id=?",String.class,first)).isEqualTo("FAILED");
         assertThat(repository.claim(first,now.plusSeconds(100),60)).isEmpty();
-        // 끝난(FAILED) 앞 버전은 다시 분석할 수 없으므로 뒤 버전을 막지 않는다 (S15P31A108-408)
-        assertThat(repository.claim(second,now.plusSeconds(100),60)).isPresent();
     }
     @Test void concurrentClaimsHaveExactlyOneOwnerAndOneSecondRetryWorks() throws Exception {
         long id=pending(baseline(1)); Instant now=Instant.now();

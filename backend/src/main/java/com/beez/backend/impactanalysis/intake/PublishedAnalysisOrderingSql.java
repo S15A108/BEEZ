@@ -18,6 +18,8 @@ public final class PublishedAnalysisOrderingSql {
      * ({@code ImpactContextQuery}, 아니면 {@code baseline_changed}), 이 접수가 있다는 것은 더 뒤의 baseline 이 이미
      * 발행됐다는 뜻이기 때문이다. 그런 앞 버전을 기다리면 그 프로젝트의 발행 후 분석이 영구히 멈춘다 (S15P31A108-408).
      * 끝난 앞 버전의 실패·미평가는 지표·알림(FAILED, 확인 필요 미평가)에 그대로 남는다.
+     * 처리 중인 앞 버전은 어차피 완료되지 못해도 기다린다 — 앞 버전이 먼저 끝나야 결과 순번(V36 result_seq)이
+     * 발행 순서대로 붙고, 에이전트가 받는 impact_updates 가 뒤집히지 않는다.
      */
     public static final String PREDECESSORS_READY = """
             NOT EXISTS (SELECT 1 FROM baseline current
