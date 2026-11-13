@@ -99,6 +99,13 @@ START·RESUME에 `base_sha`를 더한다. **기준 브랜치를 pull한 뒤 작�
 | G3-b | 선행 작업의 PR이 기준 브랜치에 머지됨. `no_code_reason` 완료면 건너뜀 | `409 dependency_not_merged` | T-12의 PR #34가 아직 머지되지 않았습니다 / T-12에 연결된 PR이 없습니다 |
 | G3-c | `base_sha`가 선행 작업의 머지 커밋을 포함함 — `compare/{merge_sha}...{base_sha}`의 `status`가 `ahead` 또는 `identical` | `409 base_missing_dependency` | 시작 커밋에 T-12의 머지 커밋 abc1234가 없습니다. git pull 후 다시 시작하세요 |
 
+**GitHub 조회는 잠금 밖에서 한다.** `StartGate`는 project 행을 잠근(`FOR UPDATE`) 트랜잭션 안에서 돈다([04-task-lifecycle](04-task-lifecycle.md) §3). 그 안에서 GitHub를 부르면 네트워크가 느린 동안 같은 프로젝트의 시작·전이가 모두 기다린다. 그래서 두 단계로 나눈다.
+
+1. **잠금 전**: 선행 작업들의 PR 머지 여부와 (머지 커밋, `base_sha`) 포함 여부를 GitHub에 묻고, 머지 사실은 `task_code_link`에 저장한다. 조회 실패는 여기서 `503`으로 끝낸다.
+2. **잠금 안**: G3-a는 지금처럼 DB에서 본다. G3-b·c는 1단계 결과만 읽는다.
+
+머지는 되돌려지지 않는 사실이고(D7) (머지 커밋, `base_sha`) 포함 여부도 바뀌지 않으므로, 1단계와 2단계 사이에 결과가 틀어지지 않는다. 그 사이 선행 작업이 다시 열리는 경우(D8)는 2단계의 G3-a가 잡는다.
+
 추가 규칙:
 - `base_sha`가 없으면 `400 validation_failed`. GitHub에 없는 커밋이면(compare가 404) `409 base_not_found`로 응답하고, merge-base를 보내라고 안내한다.
 - GitHub 조회가 실패하면(네트워크·한도·토큰 만료) `503 repository_unavailable`. 메시지에 원인 분류(토큰 만료 등)를 넣어 팀장이 고칠 수 있게 한다.
@@ -192,5 +199,6 @@ START·RESUME에 `base_sha`를 더한다. **기준 브랜치를 pull한 뒤 작�
 
 ## 12. 변경 이력
 
+- v0.3 (2026-11-13) G3의 GitHub 조회를 project 행 잠금 밖으로 뺌(§6). 잠금 안에서는 저장된 결과만 읽는다.
 - v0.2 (2026-11-13) 완료 뒤 코드 변경(리뷰 반영·머지 충돌 해소) 절차 추가(§7). D1을 "새 상태 없음, 전이 하나 추가"로 고치고 D8(머지 전 완료 작업 RESUME)·D9(충돌 표시) 추가, `get_task`의 `pr_number` 조회, 작업 나누기에 4번 추가.
 - v0.1 (2026-11-13) 초안. 전진 제안, 팀 합의 전.
