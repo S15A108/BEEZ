@@ -34,11 +34,11 @@
         "unverified_reason": null
       },
       {
-        "candidate_key": "rule-placeholder-L27-c2",
+        "candidate_key": "rule-placeholder-L23-c2",
         "kind": "MISSING_CANDIDATE",
         "status": "REVIEW_CANDIDATE",
         "signal": "PLACEHOLDER_CELL",
-        "summary": "표의 '정식 운영' 행에서 '담당' 값이 비어 있거나 미정입니다.",
+        "summary": "표의 '정식 운영' 행에서 '담당' 값이 미정으로 표시돼 있습니다.",
         "evidence": [
           {
             "document_id": "301",
@@ -118,11 +118,11 @@
         "basis": "REVIEW_CANDIDATE"
       },
       {
-        "question_key": "q-rule-placeholder-L27-c2",
-        "candidate_key": "rule-placeholder-L27-c2",
+        "question_key": "q-rule-placeholder-L23-c2",
+        "candidate_key": "rule-placeholder-L23-c2",
         "rank": 2,
         "question_type": "SHORT_ANSWER",
-        "text": "표(나래 협업 도구 기획서 / 운영 일정 / L27-L27)의 '정식 운영' 행에서 '담당' 값이 비어 있거나 미정입니다. 정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 적어 주세요.",
+        "text": "표(나래 협업 도구 기획서 / 운영 일정 / L27-L27)의 '정식 운영' 행에서 '담당' 값이 미정으로 표시돼 있습니다. 정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 적어 주세요.",
         "answer_format": {
           "type": "SHORT_ANSWER",
           "max_length": 200

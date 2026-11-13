@@ -200,11 +200,16 @@ def _covered_by(rule: ReviewCandidate, model: ReviewCandidate) -> bool:
     # template question for that rule hit; its question is written for it.
     if rule.kind != model.kind or model.status != "REVIEW_CANDIDATE":
         return False
-    return any(
-        r.block_id == m.block_id and (r.quote in m.quote or m.quote in r.quote)
+    quoted = [
+        any(
+            r.block_id == m.block_id and (r.quote in m.quote or m.quote in r.quote)
+            for m in model.evidence
+        )
         for r in rule.evidence
-        for m in model.evidence
-    )
+    ]
+    # A column question asks about every undecided row of the column; a model
+    # question about one of them must not take the other rows' question away.
+    return all(quoted) if rule.signal == "PLACEHOLDER_CELL" else any(quoted)
 
 
 def merge_items(rule_items: list[Item], model_items: list[Item]) -> list[Item]:
