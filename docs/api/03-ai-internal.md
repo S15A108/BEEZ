@@ -1719,6 +1719,7 @@ HTTP `200`.
 | 401 | `invalid_internal_token` | 내부 인증 실패 |
 | 422 | `invalid_ai_input` | 본문 업무 구조 부적합 |
 | 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
+| 503 | `assignment_recommendation_not_configured` | 기능 스위치 꺼짐·설정값 오류 |
 | 504 | `model_timeout` | 모델 시간 초과 |
 
 ```json
