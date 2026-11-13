@@ -2432,7 +2432,7 @@ HTTP `200` 응답은 `{result, origin: MODEL, model, usage[]}`이며 `result`는
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `known_questions` | `{question, status, answer?}[]` ≤ 100 | N | 같은 프로젝트에서 목록에 보이는 질문 중 이번 문서 버전이 아닌 것(다른 문서, 같은 문서 이전 버전의 답한·닫은 질문). 최근 것부터. 기본 빈 배열 |
+| `known_questions` | `{question, status, answer?}[]` ≤ 100 | N | 같은 프로젝트에서 목록에 보이는 질문 중 이번 문서 버전이 아닌 것(다른 문서의 미답변·답한 질문, 같은 문서 이전 버전의 답한·닫은 질문). 최근 것부터. 기본 빈 배열 |
 | `known_questions[].question` | string 1~2,000 | Y | 질문 문구 |
 | `known_questions[].status` | `OPEN\|ANSWERED\|DISMISSED` | Y | `SUPERSEDED`·조회 때 대체로 판정된 질문은 보내지 않는다 |
 | `known_questions[].answer` | string 1~200 \| null | N | `ANSWERED`일 때만 답의 앞 200자 |

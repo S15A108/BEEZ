@@ -208,12 +208,19 @@ public class PlanningQuestionRepository {
      * 다른 문서의 미답변 질문도 지금 답할 수 있는 것(freshness CURRENT)만 넣는다. 갱신 중·갱신 실패·다시 제출 대기인 문서의
      * 미답변 질문은 답할 수 없고(question_outdated) 그 문서가 다시 만들어지면 대체돼 사라질 수 있다 — 넘기면 이 문서도 묻지 않아
      * 그 결정을 아무도 묻지 않게 된다. 답한·닫은 질문은 이력이라 freshness 와 상관없이 넣는다.
-     * 등록을 취소한(DOC-A25) 문서의 질문은 답한 것도 넣지 않는다 — 철회된 문서의 답이 다른 문서의 질문을 막으면 안 된다.
+     *
+     * <p>다른 문서에서 닫은(DISMISSED) 질문은 넣지 않는다. 닫으면 답이 지워져 결정이 남지 않으므로 초안(related_answers)에도 넘어가지
+     * 않는다 — 넘기면 이 문서도 묻지 않아 그 결정이 프로젝트 어디에도 남지 않는다. 닫은 이유가 '그 문서에서는 필요 없음'(예: 요구사항에서
+     * 'API 명세에서 정할 일')일 수 있어 다른 문서에서는 물어야 할 수도 있다. 다시 나오면 다시 닫으면 되니 그쪽이 싸다.
+     * 같은 문서의 이전 버전에서 닫은 질문은 '이 문서에는 필요 없음'이 새 버전에도 맞을 가능성이 커서 넣는다.
+     *
+     * <p>등록을 취소한(DOC-A25) 문서의 질문은 답한 것도 넣지 않는다 — 철회된 문서의 답이 다른 문서의 질문을 막으면 안 된다.
      * 설계 초안의 related_answers({@link DesignDraftRepository#relatedAnswers})도 같은 이유로 뺀다.
      * {@link #page} 를 쓰지 않은 이유: 오름차순 커서 목록이라 '최근 것부터 N개'와 '이 버전 제외'를 표현할 수 없다.
      */
     public List<Map<String, Object>> knownQuestions(long project, long version, long document, int limit) {
-        String filter = " AND q.document_version_id<>:version AND (v.document_id<>:document OR q.status<>'OPEN') AND qd.discarded_at IS NULL";
+        String filter = " AND q.document_version_id<>:version AND qd.discarded_at IS NULL"
+                + " AND (v.document_id=:document AND q.status<>'OPEN' OR v.document_id<>:document AND q.status<>'DISMISSED')";
         return jdbc.sql("SELECT question,status,answer,answer_payload FROM (" + live(filter) + ") x"
                         + " WHERE x.status<>'OPEN' OR x.freshness='CURRENT' ORDER BY x.id DESC LIMIT :limit")
                 .param("project", project).param("version", version).param("document", document).param("limit", limit)
