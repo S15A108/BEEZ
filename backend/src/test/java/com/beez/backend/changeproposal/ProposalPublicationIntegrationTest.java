@@ -784,6 +784,74 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
                 .anyMatch(c -> "DOCUMENT".equals(c.targetType()) && c.targetId().equals(""+document));
     }
 
+    @Autowired com.beez.backend.designitem.service.DesignItemCommandService designItems;
+
+    /**
+     * S15P31A108-422: 옮기지 못한 출처를 팀장이 확정하면 근거로 쓰이고, 문서가 같은 다음 발행에는 확정한 사람째로 이어지며,
+     * 문서가 다시 바뀌면 다른 위치처럼 옮겨진다. 이어받지 못하면 확정한 위치가 사라져 검증이 다시 막힌다.
+     */
+    @Test void leaderConfirmedSourceFeedsEvidenceIsCarriedAndMovesWithTheDocument() {
+        citeLines(version);
+        long other=jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API',?) RETURNING id",
+                Long.class,project.projectId(),leader.accountId());
+        long otherVersion=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
+                VALUES(?,1,'APPROVED','other-fixture.md','other-before','다른 문서\n',?,?,now()) RETURNING id
+                """,Long.class,other,leader.accountId(),leader.accountId());
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)",baseline,project.projectId(),other,otherVersion);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","confirm-1"); ready(p);
+        long second=Long.parseLong(approve(p,"confirm-1-approve").baseline().id());
+        long v2=Long.parseLong(p.documents().getFirst().proposedDocumentVersionId());
+        long unchangedVersion=currentVersion(unchanged);
+        assertThat(sourceRow(second,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
+
+        // PR #299 리뷰: 문서만 바뀌면 항목 버전은 그대로라, 옛 원문(v1)을 보고 고른 줄은 거절해야 새 원문에 엉뚱한 줄이 저장되지 않는다.
+        assertThatThrownBy(() -> designItems.confirmSource(leader,unchanged,new com.beez.backend.designitem.dto.ConfirmDesignItemSourceRequest(
+                ""+project.projectId(),""+unchangedVersion,""+version,4,5,null)))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("source_document_changed"));
+        assertThat(sourceRow(second,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
+        var confirmed=designItems.confirmSource(leader,unchanged,new com.beez.backend.designitem.dto.ConfirmDesignItemSourceRequest(
+                ""+project.projectId(),""+unchangedVersion,""+v2,5,6,null));
+        assertThat(confirmed.source().location()).isEqualTo("제목 / L5-L6");
+        assertThat(sourceRow(second,unchanged)).containsEntry("source_status","CONFIRMED").containsEntry("remapped_from_document_version_id",v2);
+        var source=Map.<String,Object>of("document_id",""+document,"document_version_id",""+v2,"version_no",2,"location","제목 / L5-L6");
+        var result=evidenceBuilder.build(project.projectId(),second,
+                List.of(Map.of("id",""+unchangedVersion,"design_item_id",""+unchanged,"source",source)));
+        assertThat(result.unavailableVersionIds()).isEmpty();
+        assertThat(result.evidence()).singleElement().satisfies(e -> assertThat(e).containsEntry("text","셋째줄\n넷째줄 수정\n"));
+        // 확정은 같은 문서 버전에서 위치만 바꿀 수 있다 — 출처 문서 버전을 바꾸는 갱신은 트리거가 막는다.
+        assertThatThrownBy(() -> jdbc.update("UPDATE baseline_item_source SET source_document_version_id=? WHERE baseline_id=? AND design_item_id=?",
+                version,second,unchanged)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+
+        Proposal unrelated=createDocument(second,other,otherVersion,"다른 문서 수정\n","confirm-2"); ready(unrelated);
+        long third=Long.parseLong(approve(unrelated,"confirm-2-approve").baseline().id());
+        assertThat(sourceRow(third,unchanged)).containsEntry("source_status","CONFIRMED");
+        assertThat(jdbc.queryForObject("SELECT confirmed_by FROM baseline_item_source WHERE baseline_id=? AND design_item_id=?",
+                Long.class,third,unchanged)).isEqualTo(leader.accountId());
+
+        Proposal again=createDocument(third,document,v2,"머리\n# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","confirm-3"); ready(again);
+        long fourth=Long.parseLong(approve(again,"confirm-3-approve").baseline().id());
+        var moved=sourceRow(fourth,unchanged);
+        assertThat(moved).containsEntry("source_status","REMAPPED");
+        assertThat(locator(moved)).containsEntry("start_line",6).containsEntry("end_line",7).containsEntry("location","제목 / L6-L7");
+    }
+
+    /** S15P31A108-422: 인용 없음으로 확인된 항목은 문서가 바뀌어도 확인 필요가 되지 않고, 근거 수집이 수동 항목처럼 건너뛴다. */
+    @Test void noQuoteSourceFollowsTheDocumentWithoutBlockingEvidence() {
+        citeLines(version);
+        jdbc.update("UPDATE design_item_version SET source_locator=cast(? AS jsonb) WHERE design_item_id=?",
+                com.beez.backend.designitem.support.SourceLocators.NO_QUOTE,unchanged);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","no-quote"); ready(p);
+        long next=Long.parseLong(approve(p,"no-quote-approve").baseline().id());
+        var row=sourceRow(next,unchanged);
+        assertThat(row).containsEntry("source_status","REMAPPED");
+        assertThat(locator(row)).containsEntry("no_quote",true);
+        var result=evidenceBuilder.build(project.projectId(),next,
+                List.of(Map.of("id",""+currentVersion(unchanged),"design_item_id",""+unchanged)));
+        assertThat(result.unavailableVersionIds()).isEmpty();
+        assertThat(result.evidence()).isEmpty();
+    }
+
     @Test void sourceRowsAreImmutable() {
         citeLines(version);
         Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄 수정\n","immutable"); ready(p);

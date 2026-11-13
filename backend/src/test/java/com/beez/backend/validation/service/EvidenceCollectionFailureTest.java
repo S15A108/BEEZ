@@ -26,6 +26,21 @@ class EvidenceCollectionFailureTest {
         assertThat(both.get("retryable")).isEqualTo(false);
     }
 
+    /**
+     * S15P31A108-422: 출처 때문에 막힌 항목을 안내에 싣는다(없으면 REST 로 80개를 뒤져야 했다). 저장 뒤 다시 읽어도 남고,
+     * 출처와 무관한 실패에는 싣지 않으며, 형식이 틀린 값은 걸러진다.
+     */
+    @Test void sourceFailuresNameTheBlockingDesignItemsAndKeepThemOnReadback() {
+        var item = Map.<String, Object>of("design_item_id", "884", "design_item_version_id", "888", "key", "REQ-015");
+        var forged = Map.<String, Object>of("design_item_id", "x", "design_item_version_id", "889", "key", "REQ-016");
+        var detail = EvidenceCollectionFailure.detail(List.of("source_evidence_unavailable"), List.of(item, forged, item));
+        assertThat(detail.get("design_items")).isEqualTo(List.of(item));
+        assertThat(detail.get("message").toString()).contains("출처 위치를 지정하거나 인용 없음으로 확정");
+        assertThat(EvidenceCollectionFailure.fromStored(EvidenceCollectionFailure.CODE, detail, List.of()).get("design_items"))
+                .isEqualTo(List.of(item));
+        assertThat(EvidenceCollectionFailure.detail(List.of("search_query_limit"), List.of(item))).doesNotContainKey("design_items");
+    }
+
     @Test void onlyExplicitFetchFailuresAreTransient() {
         var detail = EvidenceCollectionFailure.detail(List.of("evidence_fetch_failed", "evidence_fetch_failed"));
         assertThat(detail.get("reason_codes")).isEqualTo(List.of("evidence_fetch_failed"));

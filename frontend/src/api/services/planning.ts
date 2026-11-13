@@ -192,6 +192,20 @@ export const planningApi = {
       },
       options,
     ),
+  confirmItemSource: (
+    itemId: string,
+    input: schemas.ConfirmItemSourceInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.confirmItemSourceResponseSchema,
+      {
+        method: 'PUT',
+        url: `/human/design-items/${encodeURIComponent(String(idSchema.parse(itemId)))}/source`,
+        data: schemas.confirmItemSourceInputSchema.parse(input),
+      },
+      options,
+    ),
   removeItem: (
     itemId: string,
     query: schemas.RemoveItemQuery,

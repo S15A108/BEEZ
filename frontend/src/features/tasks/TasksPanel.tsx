@@ -99,6 +99,10 @@ import {
 import { FindingRelatedTask } from './FindingRelatedTask'
 import { RelatedTaskRefs } from './RelatedTaskRefs'
 import { ValidationFailure } from './ValidationFailure'
+import {
+  SourceLocationDialog,
+  type SourceFixTarget,
+} from './SourceLocationDialog'
 import { PlanRevisionProposal } from './PlanRevisionProposal'
 
 interface Props {
@@ -252,6 +256,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   // 팀원이 담당자 없는 작업을 스스로 맡기(TSK-A06, 11-04). takenBy는 먼저 맡은 사람 이름이다.
   const [claim, setClaim] = useState<ClaimState | null>(null)
   const [recording, setRecording] = useState(false)
+  // 근거 수집이 막힌 설계 항목의 출처 위치를 팀장이 지정한다(PLN-A11, S15P31A108-422).
+  const [sourceFix, setSourceFix] = useState<SourceFixTarget | null>(null)
   const queryClient = useQueryClient()
   const action = useProjectAction(projectId)
   // 상태 타일 개수와 검색이 목록 전체를 보도록 마지막 페이지까지 읽은 뒤 보인다(PR #224 리뷰).
@@ -515,6 +521,29 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
 
   return (
     <section className="space-y-6">
+      {sourceFix && (
+        <SourceLocationDialog
+          projectId={projectId}
+          target={sourceFix}
+          source={
+            designItems.find(
+              (item) => item.design_item_id === sourceFix.design_item_id,
+            )?.source
+          }
+          onClose={() => setSourceFix(null)}
+          onConfirm={(input) =>
+            runAction(
+              () =>
+                planningApi.confirmItemSource(sourceFix.design_item_id, {
+                  project_id: projectId,
+                  expected_version_id: sourceFix.design_item_version_id,
+                  ...input,
+                }),
+              `${sourceFix.key} 출처 위치를 지정했어요. 새 검증을 요청해 주세요.`,
+            )
+          }
+        />
+      )}
       {/* 창 머리에 이미 '작업 현황'이 있어 안쪽 제목을 두지 않고, 설명 문구도 캔버스 PNL-05-v2-tasks(v461 이후)처럼 뺀다.
           노란 '+ 작업 계획' 하나는 캔버스처럼 창 머리 줄에 둔다(PNL-05 수정안 10-29). */}
       <PaneHeaderAction>
@@ -1246,6 +1275,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             errorCode={result.error_code}
                             needsHumanReview={!!needsHumanReview}
                             collectionFailure={view?.collectionFailure}
+                            onFixSource={isLeader ? setSourceFix : undefined}
                           />
                           {view?.collectionFailure &&
                             !view.collectionFailure.retryable && (

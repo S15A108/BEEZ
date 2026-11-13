@@ -412,6 +412,48 @@ export async function documentRoutes(
       item.status = 'REJECTED'
       return { status: 204 }
     }
+    case 'PLN-A11': {
+      // 서버처럼 기준 설계(승인 항목)의 출처 위치만 바꾼다. 항목 버전은 그대로다.
+      requireLeader(context)
+      const item =
+        project.items.find(
+          (candidate) =>
+            candidate.design_item_id === params.id &&
+            candidate.status === 'APPROVED',
+        ) ?? fail(404, 'not_found', '기준 설계에서 항목을 찾을 수 없어요.')
+      expectValue(item.id, body.expected_version_id)
+      if (
+        item.source &&
+        item.source.document_version_id !== body.expected_document_version_id
+      )
+        fail(
+          409,
+          'source_document_changed',
+          '출처 문서가 새 버전으로 바뀌었어요. 원문을 다시 열어 위치를 지정해 주세요.',
+        )
+      if (!item.source)
+        fail(
+          409,
+          'design_source_missing',
+          '원문 출처가 없는 항목이라 확정할 출처 위치가 없어요.',
+        )
+      const noQuote = body.no_quote === true
+      const start = Number(body.start_line)
+      const end = Number(body.end_line)
+      if (noQuote === (body.start_line !== undefined))
+        fail(
+          400,
+          'validation_failed',
+          '줄 범위와 인용 없음 중 하나만 보내 주세요.',
+        )
+      if (!noQuote && (!(start >= 1) || end < start))
+        fail(400, 'validation_failed', '시작 줄과 끝 줄을 확인해 주세요.')
+      item.source = {
+        ...item.source,
+        location: noQuote ? '원문 인용 없음' : `L${start}-L${end}`,
+      }
+      return { data: item }
+    }
     case 'PLN-A10': {
       requireLeader(context)
       if (project.baselines.length)

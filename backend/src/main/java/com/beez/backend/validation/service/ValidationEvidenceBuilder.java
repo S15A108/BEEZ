@@ -1,5 +1,6 @@
 package com.beez.backend.validation.service;
 
+import com.beez.backend.designitem.support.SourceLocators;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -23,7 +24,7 @@ public class ValidationEvidenceBuilder {
     // The existing design-item API accepts a display location. Only this exact,
     // explicit 1-based line notation can be restored without guessing.
     private static final Pattern DISPLAY_LINES = Pattern.compile("^([1-9][0-9]*)\\s*(?:~\\s*([1-9][0-9]*))?\\s*행$");
-    private static final int MAX_EXCERPT_BYTES = 16_000;
+    private static final int MAX_EXCERPT_BYTES = SourceLocators.MAX_EXCERPT_BYTES;
     private static final int MAX_TOTAL_BYTES = 100_000;
     private static final int MAX_SEARCH_BYTES = 60_000;
     private static final int MAX_SEARCH_EXCERPTS = 50;
@@ -194,6 +195,11 @@ public class ValidationEvidenceBuilder {
             }
             if ("NEEDS_CONFIRMATION".equals(row.get("source_status"))) {
                 unavailable.add(Long.toString(versionId)); needsConfirmation.add(Long.toString(versionId)); continue;
+            }
+            // 문서에 인용할 줄이 없다고 확인된 항목(답변만 근거 등)은 수동 항목처럼 원문 근거 없이 검증한다(S15P31A108-422).
+            if (SourceLocators.isNoQuote(row.get("locator"))) {
+                if (item.get("source") != null) throw new IllegalStateException("unexpected source identity");
+                continue;
             }
             if (item.get("source") == null || row.get("baseline_source_id") == null
                     || row.get("document_id") == null || !"APPROVED".equals(row.get("document_status"))) {

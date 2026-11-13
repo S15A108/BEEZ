@@ -833,6 +833,15 @@ export const validationSchema = z
         reason_codes: z.string().array(),
         retryable: z.boolean(),
         message: z.string(),
+        // 출처 때문에 근거를 쓸 수 없던 설계 항목(S15P31A108-422). 출처 원인일 때만 온다.
+        design_items: z
+          .object({
+            design_item_id: idSchema,
+            design_item_version_id: idSchema,
+            key: z.string(),
+          })
+          .array()
+          .optional(),
       })
       .optional(),
     policy_analysis: z
