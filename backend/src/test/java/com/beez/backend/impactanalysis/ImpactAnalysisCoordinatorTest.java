@@ -216,7 +216,7 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.AI_FAILED);
         assertThat(outcome.errorCode()).isEqualTo("model_output_truncated");
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
-        // 발행 후 분석: 잘림은 첫 시도에서만 한 번 더 시도하고(최종 FAILED 는 후속 발행 분석을 멈춤), 일시 장애는 횟수대로 재시도한다
+        // 발행 후 분석: 잘림은 첫 시도에서만 한 번 더 시도하고(최종 FAILED 는 그 버전을 다시 평가할 수 없게 남김), 일시 장애는 횟수대로 재시도한다
         assertThat(PublishedAnalysisProcessor.retryableAiFailure(outcome.errorCode(), 1)).isTrue();
         assertThat(PublishedAnalysisProcessor.retryableAiFailure(outcome.errorCode(), 2)).isFalse();
         assertThat(PublishedAnalysisProcessor.retryableAiFailure("model_timeout", 3)).isTrue();

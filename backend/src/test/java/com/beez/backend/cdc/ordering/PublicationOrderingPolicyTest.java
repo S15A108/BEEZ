@@ -17,16 +17,6 @@ class PublicationOrderingPolicyTest {
         return new PublicationOrderingPolicy.PublishedVersion(PROJECT, version, state, evidence);
     }
 
-    @Test void initialBaselineIsSkippedButOnlyWithExplicitEvidence() {
-        var target = row(2, PENDING, NONE);
-        assertThat(PublicationOrderingPolicy.evaluate(PROJECT, 2, true,
-                List.of(row(1, NOT_EVALUATED, INITIAL_BASELINE), target)).outcome()).isEqualTo(READY_FOR_ATOMIC_CLAIM);
-        var unknown = PublicationOrderingPolicy.evaluate(PROJECT, 2, true,
-                List.of(row(1, NOT_EVALUATED, NONE), target));
-        assertThat(unknown.outcome()).isEqualTo(REQUIRES_RECONCILIATION);
-        assertThat(unknown.blockingVersion()).isEqualTo(1);
-    }
-
     @Test void initialBaselinePendingRequiresReconciliationInsteadOfAutomaticClaim() {
         var decision = PublicationOrderingPolicy.evaluate(PROJECT, 1, true, List.of(row(1, PENDING, NONE)));
         assertThat(decision.outcome()).isEqualTo(REQUIRES_RECONCILIATION);
@@ -51,12 +41,21 @@ class PublicationOrderingPolicyTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test void earlierPendingRunningOrFailedBlocksTheNextVersion() {
-        for (var state : List.of(PENDING, RUNNING, FAILED)) {
+    /**
+     * 뒤 버전이 발행된 뒤에는 앞 버전을 다시 분석할 수 없으므로(현재 baseline 이 아님), 끝난 앞 버전을 기다리면 영구히 멈춘다.
+     * 아직 처리 중인 앞 버전만 기다린다 (S15P31A108-408).
+     */
+    @Test void earlierVersionWaitsOnlyWhilePendingOrRunning() {
+        for (var state : List.of(PENDING, RUNNING)) {
             var decision = PublicationOrderingPolicy.evaluate(PROJECT, 3, true,
                     List.of(row(1, NOT_EVALUATED, INITIAL_BASELINE), row(2, state, NONE), row(3, PENDING, NONE)));
             assertThat(decision.outcome()).isEqualTo(WAITING_FOR_PREDECESSOR);
             assertThat(decision.blockingVersion()).isEqualTo(2);
+        }
+        for (var finished : List.of(row(2, FAILED, NONE), row(2, NOT_EVALUATED, NONE))) {
+            assertThat(PublicationOrderingPolicy.evaluate(PROJECT, 3, true,
+                    List.of(row(1, NOT_EVALUATED, INITIAL_BASELINE), finished, row(3, PENDING, NONE))).outcome())
+                    .isEqualTo(READY_FOR_ATOMIC_CLAIM);
         }
     }
 
