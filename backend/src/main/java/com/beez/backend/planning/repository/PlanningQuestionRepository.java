@@ -205,11 +205,15 @@ public class PlanningQuestionRepository {
      *
      * <p>같은 문서의 이전 버전 질문은 답한·닫은 것만 넣는다. 이 버전은 그 문서의 기준 버전이라, 이 실행이 끝나면 이전 버전의
      * 미답변 질문은 조회할 때 대체로 판정돼 사라진다 — 넘기면 모델이 그 결정을 묻지 않아 아무도 묻지 않게 된다.
+     * 다른 문서의 미답변 질문도 지금 답할 수 있는 것(freshness CURRENT)만 넣는다. 갱신 중·갱신 실패·다시 제출 대기인 문서의
+     * 미답변 질문은 답할 수 없고(question_outdated) 그 문서가 다시 만들어지면 대체돼 사라질 수 있다 — 넘기면 이 문서도 묻지 않아
+     * 그 결정을 아무도 묻지 않게 된다. 답한·닫은 질문은 이력이라 freshness 와 상관없이 넣는다.
      * {@link #page} 를 쓰지 않은 이유: 오름차순 커서 목록이라 '최근 것부터 N개'와 '이 버전 제외'를 표현할 수 없다.
      */
     public List<Map<String, Object>> knownQuestions(long project, long version, long document, int limit) {
         String filter = " AND q.document_version_id<>:version AND (v.document_id<>:document OR q.status<>'OPEN')";
-        return jdbc.sql("SELECT question,status,answer FROM (" + live(filter) + ") x ORDER BY x.id DESC LIMIT :limit")
+        return jdbc.sql("SELECT question,status,answer FROM (" + live(filter) + ") x"
+                        + " WHERE x.status<>'OPEN' OR x.freshness='CURRENT' ORDER BY x.id DESC LIMIT :limit")
                 .param("project", project).param("version", version).param("document", document).param("limit", limit)
                 .query().listOfRows();
     }

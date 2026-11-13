@@ -116,6 +116,42 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat((List<?>) sent.getAllValues().get(0).get("known_questions")).hasSize(3);
     }
 
+    // 목록에서 빠지거나(등록 취소 문서) 지금 답할 수 없는(갱신 중인 문서) 미답변 질문은 넘기지 않는다 — 그 질문이 대체돼 사라지면
+    // 이 문서도 묻지 않았으니 그 결정을 아무도 묻지 않게 된다. 답한 질문은 이력이라 넘긴다.
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Test void leavesOutOpenQuestionsThatTheListHidesOrThatCannotBeAnsweredNow() {
+        String open = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status) VALUES(?,?,'CLARIFICATION',?,'model','OPEN')";
+        String answered = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answered_by,answered_at)"
+                + " VALUES(?,?,'CLARIFICATION',?,'model','ANSWERED','답',?,now())";
+        long settled = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id", Long.class, project, leader);
+        long settledVersion = documentVersion(settled, 1, CONTENT);
+        jdbc.update("INSERT INTO planning_question_run(document_version_id,analysis_attempt,text_hash,status,request_key) VALUES(?,1,?,'COMPLETED','seed')",
+                settledVersion, STORED_PREFIX + TEXT_HASH);
+        jdbc.update(open, project, settledVersion, "생성이 끝난 문서 미답");
+
+        long discarded = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'ERD','ERD',?) RETURNING id", Long.class, project, leader);
+        long discardedVersion = documentVersion(discarded, 1, CONTENT);
+        jdbc.update("UPDATE document SET discarded_at=now() WHERE id=?", discarded);
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", discardedVersion);
+        jdbc.update(open, project, discardedVersion, "등록 취소 문서 미답");
+        jdbc.update(answered, project, discardedVersion, "등록 취소 문서 답함", leader);
+
+        long refreshing = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'REQ_SPEC','요구사항',?) RETURNING id", Long.class, project, leader);
+        long oldVersion = documentVersion(refreshing, 1, CONTENT);
+        jdbc.update(open, project, oldVersion, "갱신 중 문서 미답");
+        jdbc.update(answered, project, oldVersion, "갱신 중 문서 답함", leader);
+        long newVersion = documentVersion(refreshing, 2, CONTENT);
+        // 새 버전은 아직 분석 중이다 — 워커가 집지 않고, 이전 버전 질문은 '갱신 중'이다.
+        jdbc.update("UPDATE document_processing SET status='PENDING' WHERE document_version_id=?", newVersion);
+
+        assertThat(generator.runOnce()).isTrue();
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
+        verify(ai).planningQuestions(sent.capture());
+        assertThat(sent.getValue().get("document")).isEqualTo(Map.of("document_id", "" + document, "document_version_id", "" + version, "version_no", 1));
+        assertThat((List<Map<String, Object>>) sent.getValue().get("known_questions")).extracting(m -> m.get("question"))
+                .containsExactly("갱신 중 문서 답함", "등록 취소 문서 답함", "생성이 끝난 문서 미답");
+    }
+
     static List<Map<String, Object>> withNullAnswers(List<Map<String, String>> rows) {
         return rows.stream().map(r -> {
             var m = new java.util.LinkedHashMap<String, Object>(r);
