@@ -25,7 +25,12 @@ public class HybridDocumentCandidateSearch {
         }
     }
 
-    /** Each search is limited independently. hasMore indicates only known truncation, not recall. */
+    /**
+     * Each search is limited independently. keywordHasMore means matching hits were cut off.
+     * semanticHasMore only means more chunks exist: SEMANTIC ranks every indexed chunk without a
+     * similarity threshold, so it is true whenever a project has more chunks than the limit and is
+     * not evidence of a dropped match (S15P31A108-410).
+     */
     public record Result(String baselineId, List<Candidate> candidates,
                          boolean keywordHasMore, boolean semanticHasMore) {
         public Result {

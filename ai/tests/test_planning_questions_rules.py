@@ -72,22 +72,60 @@ def test_present_tense_exclusion_needs_a_document_scope_marker():
     ]
 
 
-def test_placeholder_cells_quote_the_row_and_name_the_column():
+def test_blank_cells_are_not_undecided():
+    # An ERD leaves descriptions blank and puts table constraints in a row of
+    # blank cells; neither says anything is undecided (S15P31A108-413).
     document = parse(
-        "## 일정\n\n| 단계 | 담당 |\n| --- | --- |\n| 정식 운영 | 미정 |\n"
-        "| 내부 검토 | - |\n| 시범 운영 | TBD |\n"
+        "## users\n\n| 컬럼 | 타입 | 설명 |\n| --- | --- | --- |\n"
+        "| id | BIGSERIAL PK | |\n| email | TEXT | 로그인 이메일 |\n"
+        "| | | **UK (provider, provider_user_id)** |\n| status | TEXT | - |\n"
+    )
+    assert detect_rule_candidates(document, REF) == []
+
+
+def test_undecided_cells_of_one_column_are_one_question():
+    rows = ["기획", "설계", "구현", "시험", "배포", "운영"]
+    document = parse(
+        "## 일정\n\n| 단계 | 담당 | 기한 |\n| --- | --- | --- |\n"
+        + "".join(f"| {name} | 미정 | TBD |\n" for name in rows[:1])
+        + "".join(f"| {name} | TBD | 11-20 |\n" for name in rows[1:])
     )
     hits = detect_rule_candidates(document, REF)
+    # Keys name the table by its header line, so another row joining the
+    # column keeps the key stable.
     assert [c.candidate_key for c, _ in hits] == [
-        "rule-placeholder-L5-c2",
-        "rule-placeholder-L7-c2",
+        "rule-placeholder-L3-c2",
+        "rule-placeholder-L3-c3",
     ]
-    first, draft = hits[0]
-    assert first.signal == "PLACEHOLDER_CELL"
-    assert first.evidence[0].quote == "| 정식 운영 | 미정 |"
-    assert "'정식 운영'" in first.summary and "'담당'" in first.summary
-    assert draft.question_type == "SHORT_ANSWER" and "'담당'" in draft.text
+    (owner, owner_draft), (due, due_draft) = hits
+    assert {owner.signal, due.signal} == {"PLACEHOLDER_CELL"}
+    # Evidence stays within the schema bound; every row is still named.
+    assert [item.quote for item in owner.evidence] == [
+        "| 기획 | 미정 | TBD |",
+        "| 설계 | TBD | 11-20 |",
+        "| 구현 | TBD | 11-20 |",
+        "| 시험 | TBD | 11-20 |",
+        "| 배포 | TBD | 11-20 |",
+    ]
+    assert all(f"'{name}'" in owner_draft.text for name in rows)
+    # The question points at the whole run of rows, not the first one only.
+    assert "표(일정 / L5-L10)" in owner_draft.text
+    assert "'담당'" in owner.summary and "6개 행" in owner.summary
+    assert owner_draft.question_type == "ESSAY"
+    # A column undecided in one row keeps the short single-value question.
+    assert [item.quote for item in due.evidence] == ["| 기획 | 미정 | TBD |"]
+    assert "'기획'" in due.summary and "'기한'" in due.summary
+    assert due_draft.question_type == "SHORT_ANSWER"
     assert_resolvable(document, hits)
+
+
+def test_column_location_leaves_out_decided_rows_between():
+    document = parse(
+        "## 일정\n\n| 단계 | 담당 |\n| --- | --- |\n"
+        "| 기획 | 미정 |\n| 설계 | 오서현 |\n| 구현 | 미정 |\n| 시험 | TBD |\n"
+    )
+    ((_, draft),) = detect_rule_candidates(document, REF)
+    assert "표(일정 / L5-L5, L7-L8)" in draft.text
 
 
 def test_duplicate_identifiers_with_different_text_are_one_conflict():

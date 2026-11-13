@@ -132,7 +132,7 @@ async def test_rules_only_mode_returns_template_questions_without_a_model():
     assert outcome.origin == "TEMPLATE" and outcome.model is None
     assert outcome.usage == ()
     keys = [candidate.candidate_key for candidate in outcome.result.candidates]
-    assert keys == ["rule-undecided-L3-1", "rule-placeholder-L11-c2"]
+    assert keys == ["rule-undecided-L3-1", "rule-placeholder-L9-c2"]
     assert {question.origin for question in outcome.result.questions} == {"TEMPLATE"}
     assert [q.rank for q in outcome.result.questions] == [1, 2]
     assert "usage" not in outcome.to_api_dict()
@@ -169,6 +169,46 @@ async def test_verified_model_candidate_replaces_the_overlapping_rule_hit():
     assert outcome.origin == "MODEL" and outcome.model == "fake"
     assert outcome.usage[0].request_key == "call-1"
     assert proposer.documents[0].document_version_id == "211"
+
+
+@pytest.mark.asyncio
+async def test_model_question_on_one_row_keeps_the_column_question():
+    # The column question covers rows the model did not ask about (-413).
+    content = DOC + "| 삭제 주기 | 미정 |\n"
+    proposer = FakeProposer(
+        proposal(
+            "MISSING_CANDIDATE",
+            "보관 기간이 없습니다.",
+            [{"line": 11, "quote": "| 보관 기간 | 미정 |"}],
+        )
+    )
+    outcome = await generate_planning_questions(request(content), proposer)
+    keys = {candidate.candidate_key for candidate in outcome.result.candidates}
+    assert "rule-placeholder-L9-c2" in keys
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("rows", "kept"), [(5, False), (6, True)])
+async def test_column_past_the_evidence_cap_survives_a_model_quoting_all_evidence(
+    rows, kept
+):
+    # Model evidence is capped at 5 like the column's; a sixth row is asked
+    # only by the column question, so quoting the first five must not drop it.
+    names = ["보관 기간", "삭제 주기", "백업 주기", "암호화", "접근 권한", "감사 주기"]
+    content = DOC + "".join(f"| {name} | 미정 |\n" for name in names[1:rows])
+    proposer = FakeProposer(
+        proposal(
+            "MISSING_CANDIDATE",
+            "보관 정책이 없습니다.",
+            [
+                {"line": 11 + offset, "quote": f"| {name} | 미정 |"}
+                for offset, name in enumerate(names[:5])
+            ],
+        )
+    )
+    outcome = await generate_planning_questions(request(content), proposer)
+    keys = {candidate.candidate_key for candidate in outcome.result.candidates}
+    assert ("rule-placeholder-L9-c2" in keys) is kept
 
 
 @pytest.mark.asyncio
@@ -268,13 +308,13 @@ async def test_priority_order_cap_and_truncation():
     # Verified MISSING hits by position, then verified CLARIFICATION, then unverified.
     assert keys == [
         "rule-undecided-L3-1",
-        "rule-placeholder-L11-c2",
+        "rule-placeholder-L9-c2",
         clarification,
         unverified,
     ]
     assert [(q.rank, q.candidate_key) for q in outcome.result.questions] == [
         (1, "rule-undecided-L3-1"),
-        (2, "rule-placeholder-L11-c2"),
+        (2, "rule-placeholder-L9-c2"),
     ]
     assert outcome.result.truncated_candidate_keys == (clarification, unverified)
     assert outcome.result.omitted_candidates == 0
