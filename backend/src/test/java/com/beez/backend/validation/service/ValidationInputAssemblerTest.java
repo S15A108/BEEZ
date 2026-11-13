@@ -110,7 +110,9 @@ class ValidationInputAssemblerTest {
         assertTrue(out.searchComplete());
     }
 
-    @Test void oneHundredChunksCompleteButMoreThanOneHundredRemainIncomplete() {
+    // S15P31A108-410: semantic search ranks every chunk, so a project with more than 100 chunks always
+    // reports has_more. That is not a dropped match and must not fail every validation in the project.
+    @Test void moreThanOneHundredIndexedChunksDoNotBlockEvidenceCollection() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         List<HybridDocumentCandidateSearch.Candidate> chunks = new ArrayList<>();
         for (long id = 1; id <= 100; id++) {
@@ -118,13 +120,11 @@ class ValidationInputAssemblerTest {
                     "id", Long.toString(id), "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC")));
         }
         when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
-                .thenReturn(new HybridDocumentCandidateSearch.Result("2", chunks, false, false));
-        var complete = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
-        assertTrue(complete.searchComplete());
-        assertEquals("UNKNOWN", complete.coverage());
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", chunks, false, true));
-        assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
+        var out = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
+        assertTrue(out.searchComplete());
+        assertEquals(List.of(), out.searchIncompleteReasons());
+        assertEquals("UNKNOWN", out.coverage());
     }
 
     @Test void foundDocumentWithoutBaselineDesignMappingIsEvidenceAndDoesNotBlockCompletion() {
@@ -246,12 +246,12 @@ class ValidationInputAssemblerTest {
                     Instant.parse("2026-01-01T00:00:00Z"), "1", null);
             var result = ValidationInputAssembler.queries(revision);
             assertEquals(3 + scopes, result.queries().size());
-            assertTrue(result.complete());
-            assertTrue(result.incompleteReasons().isEmpty());
         }
     }
 
-    @Test void overTheBoundKeepsIncompleteReasonInsteadOfClaimingComplete() {
+    // S15P31A108-410: the query count is a call budget. A plan with many scope items stays verifiable
+    // and its overflow phrases are still searched, merged into the last query.
+    @Test void phrasesOverTheBudgetAreMergedIntoTheLastQueryInsteadOfBlockingValidation() {
         var scope = java.util.stream.IntStream.range(0, 8).mapToObj(i -> "scope-" + i).toList();
         var plan = new TaskPlanInput("title", "goal", scope, List.of(), "approach",
                 List.of("done"), List.of(), List.of(), List.of(), true, null);
@@ -259,8 +259,47 @@ class ValidationInputAssemblerTest {
                 Instant.parse("2026-01-01T00:00:00Z"), "1", null);
         var result = ValidationInputAssembler.queries(revision);
         assertEquals(10, result.queries().size());
-        assertFalse(result.complete());
-        assertEquals(List.of("search_query_limit"), result.incompleteReasons());
+        assertEquals("scope-7\napproach", result.queries().getLast());
+
+        var longScope = java.util.stream.IntStream.range(0, 12).mapToObj(i -> i + "-" + "가".repeat(300)).toList();
+        var longPlan = new TaskPlanInput("title", "goal", longScope, List.of(), "approach",
+                List.of("done"), List.of(), List.of(), List.of(), true, null);
+        var longResult = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, longPlan,
+                Instant.parse("2026-01-01T00:00:00Z"), "1", null));
+        assertEquals(10, longResult.queries().size());
+        assertTrue(longResult.queries().getLast().length() <= 1000);
+    }
+
+    // S15P31A108-410: plan fields have no length cap, so one long approach must not block validation.
+    @Test void aFieldLongerThanTheSearchLimitIsSearchedByItsLeadingText() {
+        var plan = new TaskPlanInput("title", "goal", List.of(), List.of(), "가".repeat(1500),
+                List.of("done"), List.of(), List.of(), List.of(), true, null);
+        var selected = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, plan,
+                Instant.parse("2026-01-01T00:00:00Z"), "1", null));
+        assertEquals(List.of("title", "goal", "가".repeat(1000)), selected.queries());
+    }
+
+    // PR #292 review: a long extracted API path or a long title must also fit the search API's 1000 characters.
+    @Test void longTitleAndExtractedApiPathAreCutToTheSearchLimit() {
+        String path = "/rooms/" + "a".repeat(1200);
+        var plan = new TaskPlanInput("t".repeat(1200), "goal", List.of(), List.of(), "GET " + path,
+                List.of("done"), List.of(), List.of(), List.of(), true, null);
+        var selected = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, plan,
+                Instant.parse("2026-01-01T00:00:00Z"), "1", null));
+        assertEquals(List.of("t".repeat(1000), path.substring(0, 1000), "goal", ("GET " + path).substring(0, 1000)),
+                selected.queries());
+        assertTrue(selected.queries().stream().allMatch(query -> query.length() <= 1000));
+    }
+
+    // A slash inside Korean prose ("소프트/하드") is not an API path and must not spend the query budget.
+    // A path after a host or port still is one.
+    @Test void slashAfterHangulIsNotAnApiPathButAPathAfterAPortIs() {
+        var plan = new TaskPlanInput("드롭 구현", "소프트/하드 드롭", List.of(), List.of(),
+                "localhost:8080/rooms/{roomId}/drop 호출", List.of("done"), List.of(), List.of(), List.of(), true, null);
+        var selected = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, plan,
+                Instant.parse("2026-01-01T00:00:00Z"), "1", null));
+        assertEquals(List.of("드롭 구현", "/rooms/{roomId}/drop", "소프트/하드 드롭", "localhost:8080/rooms/{roomId}/drop 호출"),
+                selected.queries());
     }
 
     @Test void includesApprovedVersionAndRejectsStaleReference() {
