@@ -30,16 +30,21 @@ import org.springframework.stereotype.Service;
 public class ValidationInputAssembler {
     private static final int MAX_CANDIDATES = 20;
     // A single snapshot avoids repeated embedding calls across pages. The API permits at
-    // most 100; more results still block completion until stable pagination is supported.
+    // most 100; more KEYWORD matches still block completion until stable pagination is supported.
+    // SEMANTIC search ranks every indexed chunk, so its has_more only says the project has more
+    // than 100 chunks, not that a match was cut off (S15P31A108-410).
     private static final int MAX_SEARCH_RESULTS = 100;
-    // Keep a bounded call budget while covering ordinary plans with multiple scopes.
+    // Bounds the number of search calls (each SEMANTIC call embeds its query); it is a cost
+    // budget, not an evidence guarantee. Phrases beyond it are merged into the last query.
     private static final int MAX_QUERIES = 10;
+    private static final int MAX_QUERY_LENGTH = 1000;
     private static final int MAX_UNRESOLVED = 100;
     private static final int MAX_UNRESOLVED_TEXT = 2000;
     private static final String PACKET_SELECTION_TRUNCATED_PREFIX = "SELECTION_TRUNCATED: ";
     // AI-A02 allows 200 KB; reserve space for JSON formatting and the snapshot hash.
     private static final int MAX_SEARCH_CONTEXT_REQUEST_BYTES = 180_000;
-    private static final Pattern API_PATH = Pattern.compile("/(?=[\\p{L}\\p{N}_{])[\\p{L}\\p{N}_{}./-]+");
+    // A path starts a token: "소프트/하드" or "TCP/IP" is prose, not an API path.
+    private static final Pattern API_PATH = Pattern.compile("(?<![\\p{L}\\p{N}])/(?=[\\p{L}\\p{N}_{])[\\p{L}\\p{N}_{}./-]+");
     private final TaskQueryService tasks;
     private final HybridDocumentCandidateSearch search;
     private final RelatedTaskCandidateFinder related;
@@ -98,7 +103,9 @@ public class ValidationInputAssembler {
             long foundBaseline = Long.parseLong(found.baselineId());
             if (baselineId != -1 && baselineId != foundBaseline) throw incomplete("baseline_changed");
             baselineId = foundBaseline;
-            if (found.keywordHasMore() || found.semanticHasMore()) {
+            // Only KEYWORD has_more means matching hits were dropped. SEMANTIC is a ranked top-k over all
+            // chunks: counting it failed every validation in a project with more than 100 chunks.
+            if (found.keywordHasMore()) {
                 searchesComplete = false;
                 incompleteReasons.add("search_results_truncated");
             }
@@ -267,15 +274,31 @@ public class ValidationInputAssembler {
         for (String field : fields) {
             if (field == null || field.isBlank()) continue;
             String phrase = field.strip();
-            if (phrase.length() > 1000) {
+            if (phrase.length() > MAX_QUERY_LENGTH) {
                 incompleteReasons.add("search_query_too_long");
                 continue;
             }
             queries.add(phrase);
         }
-        if (queries.size() > MAX_QUERIES) incompleteReasons.add("search_query_limit");
-        return new QuerySelection(queries.stream().limit(MAX_QUERIES).toList(),
+        return new QuerySelection(withinBudget(List.copyOf(queries)),
                 incompleteReasons.isEmpty(), List.copyOf(incompleteReasons));
+    }
+
+    /**
+     * A plan with many scope items must not become unverifiable (S15P31A108-410). Keep the first
+     * queries as they are and search the rest together in one merged query, cut to the search limit.
+     */
+    private static List<String> withinBudget(List<String> queries) {
+        if (queries.size() <= MAX_QUERIES) return queries;
+        List<String> kept = new ArrayList<>(queries.subList(0, MAX_QUERIES - 1));
+        String merged = String.join("\n", queries.subList(MAX_QUERIES - 1, queries.size()));
+        if (merged.length() > MAX_QUERY_LENGTH) {
+            int end = MAX_QUERY_LENGTH;
+            if (Character.isHighSurrogate(merged.charAt(end - 1))) end--;
+            merged = merged.substring(0, end).strip();
+        }
+        kept.add(merged);
+        return List.copyOf(kept);
     }
 
     private static void requireRevision(TaskPlanRevisionResponse plan, long expected) {
