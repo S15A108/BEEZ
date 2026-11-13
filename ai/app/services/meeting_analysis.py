@@ -152,36 +152,46 @@ _MAX_LIST = 100
 _DROPPED_CHANGES_NOTICE = "문서 변경 {count}건이 입력 원문·근거와 맞지 않아 제외했어요."
 
 
-def _line_offsets(text: str) -> list[int]:
-    """Character offset where each line starts, plus the end of the last line.
+class _LineIndex:
+    """Line boundaries of one input document, built once per document.
 
     Lines follow the BE rule: a final LF ends the last line instead of starting
     an empty one, so lines start..end equal text[offsets[start-1]:offsets[end]]
     including each line's LF (and no LF after an unterminated last line).
     """
-    offsets = [0] if text else []
-    offsets.extend(i + 1 for i, char in enumerate(text) if char == "\n")
-    if text and not text.endswith("\n"):
-        offsets.append(len(text))
-    return offsets
 
+    __slots__ = ("line_of", "offsets", "text")
 
-def _locate_unique(
-    text: str, offsets: list[int], before: str
-) -> tuple[int, int] | None:
-    """Line range whose exact text is `before`, only when there is exactly one."""
-    if not before:
-        return None
-    line_of = {offset: index for index, offset in enumerate(offsets)}
-    found: tuple[int, int] | None = None
-    # A match counts only when it starts and ends on line boundaries.
-    for start, offset in enumerate(offsets[:-1]):
-        end = line_of.get(offset + len(before))
-        if end is not None and text.startswith(before, offset):
-            if found is not None:
-                return None
-            found = (start + 1, end)
-    return found
+    def __init__(self, text: str) -> None:
+        offsets = [0] if text else []
+        position = text.find("\n")
+        while position != -1:
+            offsets.append(position + 1)
+            position = text.find("\n", position + 1)
+        if text and not text.endswith("\n"):
+            offsets.append(len(text))
+        self.text = text
+        self.offsets = offsets
+        self.line_of = {offset: index for index, offset in enumerate(offsets)}
+
+    def matches(self, start: int, end: int, before: str) -> bool:
+        if not 1 <= start <= end < len(self.offsets):
+            return False
+        return self.text[self.offsets[start - 1] : self.offsets[end]] == before
+
+    def locate_unique(self, before: str) -> tuple[int, int] | None:
+        """Line range whose exact text is `before`, only when there is exactly one."""
+        if not before:
+            return None
+        found: tuple[int, int] | None = None
+        # A match counts only when it starts and ends on line boundaries.
+        for start, offset in enumerate(self.offsets[:-1]):
+            end = self.line_of.get(offset + len(before))
+            if end is not None and self.text.startswith(before, offset):
+                if found is not None:
+                    return None
+                found = (start + 1, end)
+        return found
 
 
 def _keep_verified_changes(
@@ -197,7 +207,7 @@ def _keep_verified_changes(
     """
     documents = {document.document_id: document for document in body.documents or []}
     entry_ids = {entry.id for entry in body.entries}
-    offsets_by_document: dict[str, list[int]] = {}
+    indexes: dict[str, _LineIndex] = {}
     kept: list[SummaryDocumentChange] = []
     relocated = 0
     reasons: list[str] = []
@@ -211,18 +221,16 @@ def _keep_verified_changes(
         if document is None or change.base_version_id != document.document_version_id:
             reasons.append("document version not in input")
             continue
-        text = document.text
-        offsets = offsets_by_document.setdefault(
-            change.document_id, _line_offsets(text)
-        )
+        index = indexes.get(change.document_id)
+        if index is None:
+            index = indexes[change.document_id] = _LineIndex(document.text)
         start, end = change.locator.start_line, change.locator.end_line
-        in_range = start <= end < len(offsets)
-        if not in_range or text[offsets[start - 1] : offsets[end]] != change.before:
-            located = _locate_unique(text, offsets, change.before)
+        if not index.matches(start, end, change.before):
+            located = index.locate_unique(change.before)
             if located is None:
                 reasons.append(
                     "before not found in input"
-                    if change.before not in text
+                    if change.before not in document.text
                     else "before not at one line range"
                 )
                 continue
@@ -257,27 +265,38 @@ def _keep_verified_changes(
     return kept, relocated, reasons
 
 
-def _log_change_corrections(
-    body: MeetingAnalysisRequest, kept: int, relocated: int, reasons: list[str]
-) -> None:
-    # Reasons only: document text and model output stay out of the log.
-    project_id = (
-        body.project_id if re.fullmatch(r"[0-9]{1,19}", body.project_id) else None
-    )
-    logger.warning(
-        "meeting summary document changes corrected: kept=%d relocated=%d "
-        "dropped=%d reasons=%s (project_id=%s)",
-        kept,
-        relocated,
-        len(reasons),
-        sorted(set(reasons)),
-        project_id,
-    )
+# Document text and model output stay out of every log line below: only the
+# digit-only project id, fixed reason strings and pydantic field/error types.
+_RESULT_FIELDS = frozenset(MeetingSummaryResult.model_fields) | frozenset(
+    MeetingAnalysisResult.model_fields
+)
+
+
+def _log_project_id(body: MeetingAnalysisRequest) -> str | None:
+    return body.project_id if re.fullmatch(r"[0-9]{1,19}", body.project_id) else None
+
+
+def _rejection_reason(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        # pydantic messages can echo the model output, so keep field and type only.
+        details = sorted(
+            {
+                f"{loc[0] if loc and loc[0] in _RESULT_FIELDS else 'result'}"
+                f":{error['type']}"
+                for error in exc.errors(include_url=False, include_input=False)
+                for loc in [error["loc"]]
+            }
+        )
+        return "schema " + ",".join(details[:5])
+    if isinstance(exc, (ValueError, TypeError)):
+        return str(exc)  # raised in this module with fixed messages
+    return type(exc).__name__
 
 
 def _parse_summary(
     body: MeetingAnalysisRequest, output: object
-) -> MeetingSummaryResult:
+) -> tuple[MeetingSummaryResult, int, list[str]]:
+    """Return the summary with verified changes, the relocated count and drop reasons."""
     if not isinstance(output, dict) or not isinstance(
         raw_changes := output.get("document_changes"), list
     ):
@@ -286,16 +305,15 @@ def _parse_summary(
         raise ValueError("too many document changes")
     parsed = MeetingSummaryResult.model_validate({**output, "document_changes": []})
     kept, relocated, reasons = _keep_verified_changes(body, raw_changes)
-    if relocated or reasons:
-        _log_change_corrections(body, len(kept), relocated, reasons)
     unresolved = list(parsed.unresolved)
     if reasons:
         # Keep the notice even when the model already filled the list.
         unresolved = unresolved[: _MAX_LIST - 1]
         unresolved.append(_DROPPED_CHANGES_NOTICE.format(count=len(reasons)))
-    return parsed.model_copy(
+    parsed = parsed.model_copy(
         update={"document_changes": kept, "unresolved": unresolved}
     )
+    return parsed, relocated, reasons
 
 
 async def analyze(
@@ -336,9 +354,10 @@ async def analyze(
         )
     )
 
+    relocated, reasons = 0, []
     try:
         if body.mode == "SUMMARY":
-            parsed = _parse_summary(body, result.result)
+            parsed, relocated, reasons = _parse_summary(body, result.result)
         else:
             parsed = MeetingAnalysisResult.model_validate(result.result)
         # Stored source metadata is not evidence that the document is in the
@@ -356,9 +375,26 @@ async def analyze(
             for action in parsed.action_items
         ):
             raise ValueError("model returned a member not present in input")
-    except (ValidationError, ValueError, TypeError, AttributeError):
+    except (ValidationError, ValueError, TypeError, AttributeError) as exc:
+        logger.warning(
+            "meeting analysis answer rejected: %s (mode=%s project_id=%s)",
+            _rejection_reason(exc),
+            body.mode,
+            _log_project_id(body),
+        )
         # Preserve the usage of the started model call without exposing its output.
         raise result.invalid_output_error() from None
+    # Logged only for answers that are returned, after every whole-answer check.
+    if relocated or reasons:
+        logger.warning(
+            "meeting summary document changes corrected: kept=%d relocated=%d "
+            "dropped=%d reasons=%s (project_id=%s)",
+            len(parsed.document_changes),
+            relocated,
+            len(reasons),
+            sorted(set(reasons)),
+            _log_project_id(body),
+        )
 
     return {
         "result": parsed.model_dump(mode="json", exclude_none=True),

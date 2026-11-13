@@ -122,13 +122,18 @@ async def test_summary_drops_only_the_unverified_change_like_backend(mutation, c
 
 @pytest.mark.parametrize(("start", "end"), [(1, 2), (2, 4), (3, 3)])
 @pytest.mark.asyncio
-async def test_summary_moves_wrong_line_numbers_to_the_single_exact_match(start, end):
+async def test_summary_moves_wrong_line_numbers_to_the_single_exact_match(
+    start, end, caplog
+):
     # Seen on dev: the model copies `before` exactly but miscounts blank lines.
     output = summary_output()
     output["document_changes"][0]["locator"].update(start_line=start, end_line=end)
-    result = await run_summary(output)
+    with caplog.at_level("WARNING", logger="app.services.meeting_analysis"):
+        result = await run_summary(output)
     assert result["result"]["document_changes"] == summary_output()["document_changes"]
     assert result["result"]["unresolved"] == []
+    # How often the model miscounts lines must stay visible on dev.
+    assert "relocated=1 dropped=0" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -161,12 +166,27 @@ async def test_summary_keeps_sent_evidence_ids_like_backend():
     assert result["result"]["document_changes"][0]["evidence_entry_ids"] == ["911"]
 
 
-@pytest.mark.parametrize("mutation", ["source", "member", "too_many_changes"])
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("source", "no verified document evidence was supplied"),
+        ("member", "model returned a member not present in input"),
+        ("too_many_changes", "too many document changes"),
+        ("schema", "schema decisions:string_type"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_summary_rejects_unverified_model_output_and_records_usage(mutation):
+async def test_summary_rejects_unverified_model_output_and_records_usage(
+    mutation, reason, caplog
+):
     output = summary_output()
+    # A relocatable change must not be reported as corrected when the
+    # whole answer is rejected afterwards.
+    output["document_changes"][0]["locator"].update(start_line=1, end_line=2)
     if mutation == "too_many_changes":
         output["document_changes"] *= 101
+    elif mutation == "schema":
+        output["decisions"] = ["모델이 쓴 비밀 문장", 5]
     elif mutation == "source":
         output["sources"] = [
             {
@@ -178,10 +198,16 @@ async def test_summary_rejects_unverified_model_output_and_records_usage(mutatio
         ]
     else:
         output["action_items"][0]["member_id"] = "999"
-    with pytest.raises(LLMError) as caught:
+    with (
+        caplog.at_level("WARNING", logger="app.services.meeting_analysis"),
+        pytest.raises(LLMError) as caught,
+    ):
         await run_summary(output)
     assert caught.value.code == "invalid_output"
     assert caught.value.usage[0].failed is True
+    assert f"meeting analysis answer rejected: {reason}" in caplog.text
+    assert "corrected" not in caplog.text
+    assert "비밀 문장" not in caplog.text and "둘째 줄" not in caplog.text
 
 
 @pytest.mark.asyncio
