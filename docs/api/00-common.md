@@ -134,7 +134,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
-- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A06 영향 재분석(Idempotency-Key 선택, 있을 때만)·CHG-A08 검토 시작·CHG-A09 승인·발행·CHG-A10 반려·CHG-A12 의견 등록(Idempotency-Key 선택, 있을 때만)·MTG-A06 회의 텍스트 기록(Idempotency-Key 선택, 있을 때만)·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다. CHG-A09는 다른 키·보존기간 경과 후에도 기준·리비전·해시가 같으면 기존 발행 baseline을 반환하며 새 발행을 만들지 않는다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A06 영향 재분석(Idempotency-Key 선택, 있을 때만)·CHG-A08 검토 시작·CHG-A09 승인·발행·CHG-A10 반려·CHG-A12 의견 등록(Idempotency-Key 선택, 있을 때만)·MTG-A06 회의 텍스트 기록(Idempotency-Key 선택, 있을 때만)·CTX-A04 공유 작업 기록 생성(Idempotency-Key 선택, 있을 때만)·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다. CHG-A09는 다른 키·보존기간 경과 후에도 기준·리비전·해시가 같으면 기존 발행 baseline을 반환하며 새 발행을 만들지 않는다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
 - 작업 변경은 expected_revision_no/expected_lock_version, 제안 재제출·후속 심사 계약은 expected_revision/expected_snapshot_hash, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.

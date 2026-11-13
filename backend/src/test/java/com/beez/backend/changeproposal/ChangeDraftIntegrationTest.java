@@ -297,7 +297,6 @@ class ChangeDraftIntegrationTest extends IntegrationTestSupport {
         var cases = List.of(
                 new Case(HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "x", HttpHeaders.EMPTY, new byte[0], null), HttpStatus.BAD_GATEWAY, "ai_unavailable"),
                 new Case(HttpServerErrorException.create(HttpStatus.INTERNAL_SERVER_ERROR, "x", HttpHeaders.EMPTY, new byte[0], null), HttpStatus.BAD_GATEWAY, "ai_unavailable"),
-                new Case(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "x", HttpHeaders.EMPTY, new byte[0], null), HttpStatus.BAD_GATEWAY, "ai_unavailable"),
                 new Case(HttpClientErrorException.create(HttpStatus.UNPROCESSABLE_ENTITY, "x", HttpHeaders.EMPTY, new byte[0], null), HttpStatus.BAD_GATEWAY, "ai_unavailable"),
                 new Case(HttpServerErrorException.create(HttpStatus.GATEWAY_TIMEOUT, "x", HttpHeaders.EMPTY, new byte[0], null), HttpStatus.GATEWAY_TIMEOUT, "ai_timeout"),
                 new Case(new ResourceAccessException("read", new SocketTimeoutException("read timed out")), HttpStatus.GATEWAY_TIMEOUT, "ai_timeout"),
@@ -315,6 +314,21 @@ class ChangeDraftIntegrationTest extends IntegrationTestSupport {
         // 실패한 요청을 같은 키로 다시 보내면 AI 를 다시 부른다(실패는 재생하지 않는다)
         doReturn(reply("# 로그인\n복구됨\n")).when(ai).beeDraft(any());
         assertThat(generate("k-fail-0").afterContent()).contains("복구됨");
+    }
+
+    /** S15P31A108-415: AI 서버에 초안 기능이 없으면(404) 일시 장애가 아니라 "아직 사용할 수 없음"이고 사용량에 세지 않는다. */
+    @Test void missingAiRouteIsReportedAsDisabledAndNotCountedAsAFailedCall() {
+        doThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "x", HttpHeaders.EMPTY, new byte[0], null)).when(ai).beeDraft(any());
+        assertThatThrownBy(() -> generate("k-disabled")).isInstanceOfSatisfying(ApiException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+            assertThat(e.getCode()).isEqualTo("change_draft_disabled");
+            assertThat(e.getMessage()).isEqualTo("비비 초안은 아직 사용할 수 없어요.");
+        });
+        assertThat(failedUsageRows()).isZero();
+        assertThat(savedCommands()).isZero();
+        // 기능이 올라온 뒤 같은 키로 다시 보내면 초안을 받는다(꺼짐 응답은 재생하지 않는다)
+        doReturn(reply("# 로그인\n복구됨\n")).when(ai).beeDraft(any());
+        assertThat(generate("k-disabled").afterContent()).contains("복구됨");
     }
 
     @Test void unusableAiOutputIsAnErrorNotATemplate() {

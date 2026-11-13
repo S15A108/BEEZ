@@ -8197,6 +8197,7 @@ HTTP `200`.
 | 409 | `analysis_not_completed` | 기준의 승인본에 읽을 수 있는 원문이 아직 없음 |
 | 409 | `idempotency_conflict` | 같은 Idempotency-Key로 다른 본문을 보냄 |
 | 502 | `ai_unavailable` | 초안 생성 실패(AI 연결 실패·서버 오류·쓸 수 없는 출력) |
+| 503 | `change_draft_disabled` | AI 서버에 초안 기능(AI-A06)이 아직 없음. 다시 보내도 같다 |
 | 504 | `ai_timeout` | 시간 초과 |
 
 ```json
@@ -8217,7 +8218,8 @@ HTTP `200`.
 - 같은 Idempotency-Key로 요청이 동시에 들어오면 먼저 온 요청 하나만 AI를 부르고, 나머지는 그 결과(성공이든 실패든)를 기다려 그대로 받는다. 본문이 다르면 기다리지 않고 409 idempotency_conflict이다. 이 공유는 서버 프로세스 안에서만 이루어진다. 인스턴스가 둘 이상으로 늘면 서로 보지 못하므로 DB 쪽 진행 중 표시가 필요하다.
 - AI 응답이 `after_content`가 비었거나 변경 제안으로 제출할 수 없는 본문(100,000자·1 MiB 초과, 제어 문자 포함), `reason` 없음, `origin`이 MODEL/TEMPLATE이 아님이면 쓸 수 없는 출력으로 보고 502 ai_unavailable로 응답한다. 모델 호출 실패를 템플릿으로 대신하지 않는다.
 - `generation.sources`는 네 필드(`document_id`, `document_version_id`, `version_no`, `location`)가 모두 있고 요청한 문서·버전과 일치하는 것만 남긴다. `document_id`·`document_version_id`는 요청한 값과, `version_no`는 그 버전의 번호와 같아야 하고 `location`은 비어 있지 않은 문자열이어야 한다. ID는 정수로 와도 같은 값이면 받아 문자열로 맞춘다. 제외한 것이 있으면 `unresolved`에 "근거 N건이 이 요청의 문서·버전과 맞지 않거나 필수 값이 없어 제외했어요."를 남기고, 전부 제외되면 502 ai_unavailable이다.
-- 다시 시도해도 되는 오류: 502 ai_unavailable, 504 ai_timeout(잠시 뒤 같은 요청). 기준을 새로 확인한 뒤 보내야 하는 오류: 409 version_conflict. 입력을 고쳐야 하는 오류: 400 validation_failed, 404 not_found. 409 baseline_missing·analysis_not_completed는 기준 v1 발행이나 문서 준비가 끝난 뒤에 다시 보낸다.
+- AI 서버가 AI-A06 주소에 404를 주면(초안 기능이 아직 배포되지 않음) 일시 장애로 안내하지 않고 503 change_draft_disabled "비비 초안은 아직 사용할 수 없어요."로 응답한다. 모델을 부르지 않았으므로 AI 사용량에 실패로 남기지 않고, 응답을 저장하지 않아 기능이 올라온 뒤 같은 키로 다시 보내면 초안을 만든다(S15P31A108-415).
+- 다시 시도해도 되는 오류: 502 ai_unavailable, 504 ai_timeout(잠시 뒤 같은 요청). 다시 시도해도 같은 오류: 503 change_draft_disabled. 기준을 새로 확인한 뒤 보내야 하는 오류: 409 version_conflict. 입력을 고쳐야 하는 오류: 400 validation_failed, 404 not_found. 409 baseline_missing·analysis_not_completed는 기준 v1 발행이나 문서 준비가 끝난 뒤에 다시 보낸다.
 - AI 호출 한 번마다 사용량 줄을 남긴다. 모델 호출 뒤에 실패한 경우 AI가 오류 본문에 실은 `usage[]`(알려진 토큰·비용, 여러 모델 호출 포함)를 그대로 남기고(03-ai-internal 공통 규칙), 응답 본문을 받지 못했거나 `usage`가 없을 때만 토큰 수를 모르는 실패 한 줄(`tokens_known=false`, `failed=true`)을 남긴다. 0토큰으로 단정하지 않는다. 사용량 기록이 실패해도 응답은 막지 않는다.
 - 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다.
 
@@ -11797,7 +11799,7 @@ HTTP `200`.
 
 관련 요구사항: TRC-05, MCP-07  
 담당: BE: 변준성(저장·조회), 전진(MCP 계약) / AI: 박상은(검색·맥락) / FE: 박민용  
-상태: 담당자 검토 · BE 미구현(MCP `write_context`만 있음). 웹 작업 현황의 '기록 남기기'가 이 API를 부르므로 구현이 필요하다(-404 범위 밖, 별도 티켓)
+상태: 구현됨(S15P31A108-415). 저장 규칙은 MCP `write_context`(MCP-07)와 같다
 
 #### 인증
 
@@ -11907,9 +11909,12 @@ HTTP `201`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음. task_id·source_packet_id·previous_id가 이 프로젝트에 없는 경우와 남의 나만 보기 기록을 previous_id로 준 경우도 같다 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류. summary·detail이 비었거나 design_refs가 없음, plan_revision_id를 task_id 없이 보냄, design_refs에 이 프로젝트 것이 아닌 항목 버전이 있음 |
+| 400 | `invalid_json` | 본문을 읽을 수 없음(kind·visibility가 허용 값이 아닌 경우 포함) |
+| 403 | `forbidden` | previous_id가 남이 쓴 공유 기록임(작성자만 고칠 수 있음) |
 | 409 | `revision_conflict` | 같은 previous_id에 이미 후속 리비전 있음 |
+| 409 | `idempotency_conflict` | 같은 Idempotency-Key로 다른 내용을 보냄 |
 
 ```json
 {
@@ -11923,8 +11928,10 @@ HTTP `201`.
 #### 처리 규칙
 
 - 최초 작성은 previous_id를 생략한다. 수정은 본인 기록 previous_id를 참조하는 새 불변 리비전이다.
-- 작성자·토큰·프로젝트를 서버가 결정한다. 권한·공유 변경도 새 리비전으로 남긴다.
+- 작성자·토큰·프로젝트를 서버가 결정한다. 권한·공유 변경도 새 리비전으로 남긴다. 사람이 웹에서 쓴 기록은 토큰이 비어 있다.
 - DECISION은 공유 판단 기록이며 승인 설계가 아니다.
+- Idempotency-Key는 선택이다. 있으면 design_http_command에 응답을 저장해 24시간 동안 같은 계정·키·입력의 재요청에 처음 응답(201)을 그대로 돌려주고 새 기록을 만들지 않는다(공통 5절). 키 범위는 계정·프로젝트다. 재요청도 현재 프로젝트 멤버인지 먼저 확인한다. 키가 없으면 보낼 때마다 새 기록이다.
+- 프로젝트 멤버가 아니면 본문이 틀려도 404다(본문 검증보다 권한 확인이 먼저).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

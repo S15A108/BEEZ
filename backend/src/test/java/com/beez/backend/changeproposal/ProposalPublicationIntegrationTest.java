@@ -695,6 +695,29 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_item_source WHERE baseline_id=?",Integer.class,next)).isEqualTo(2);
     }
 
+    /** S15P31A108-415: 근거 없이 채택해 출처 위치가 없는 항목이 있어도 그 문서를 바꾸는 제안이 발행된다. */
+    @Test void documentChangePublishesWhenAnItemHasASourceDocumentButNoLocator() {
+        citeLines(version);
+        jdbc.update("UPDATE design_item_version SET source_locator=NULL WHERE design_item_id=?",unchanged);
+        Proposal p=createDocument(baseline,document,version,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄\n","doc-no-locator"); ready(p);
+        long next=Long.parseLong(approve(p,"doc-no-locator-approve").baseline().id());
+        long newDocumentVersion=Long.parseLong(p.documents().getFirst().proposedDocumentVersionId());
+
+        // 옮길 줄이 없으므로 확인 필요로 두고 문서 버전만 따라간다. 위치는 빈 객체다(백필 V52 와 같은 값).
+        var noLocator=sourceRow(next,unchanged);
+        assertThat(noLocator).containsEntry("source_status","NEEDS_CONFIRMATION").containsEntry("remapped_from_document_version_id",version);
+        assertThat(((Number)noLocator.get("source_document_version_id")).longValue()).isEqualTo(newDocumentVersion);
+        assertThat(locator(noLocator)).isEmpty();
+        // 위치가 있는 다른 항목은 평소대로 옮겨진다.
+        assertThat(sourceRow(next,item)).containsEntry("source_status","REMAPPED");
+
+        // 다음 발행(같은 문서를 또 고침)에서도 막히지 않고 확인 필요가 이어진다.
+        Proposal again=createDocument(next,document,newDocumentVersion,"# 제목\n새 줄\n첫줄\n둘째줄\n셋째줄\n넷째줄\n끝줄\n","doc-no-locator-2"); ready(again);
+        long third=Long.parseLong(approve(again,"doc-no-locator-2-approve").baseline().id());
+        assertThat(sourceRow(third,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION").containsEntry("remapped_from_document_version_id",version);
+        assertThat(locator(sourceRow(third,unchanged))).isEmpty();
+    }
+
     @Test void publishingWithoutADocumentChangeWritesNoSourceRows() {
         citeLines(version);
         Proposal p=create(false,true,"items-only");

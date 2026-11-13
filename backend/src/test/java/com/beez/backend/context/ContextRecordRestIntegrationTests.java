@@ -20,7 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
- * CTX-A02 공유 작업 기록 목록·검색, CTX-A03 상세 (S15P31A108-404). 실제 HTTP 로 사람 세션에서 부른다.
+ * CTX-A02 공유 작업 기록 목록·검색, CTX-A03 상세 (S15P31A108-404), CTX-A04 기록 남기기 (S15P31A108-415).
+ * 실제 HTTP 로 사람 세션에서 부른다.
  * 에이전트가 MCP write_context 로 남긴 기록이 웹 '작업 기록'에 보이는지, 남의 나만 보기 기록과 다른 프로젝트 기록은 안 보이는지 본다.
  */
 class ContextRecordRestIntegrationTests extends IntegrationTestSupport {
@@ -289,6 +290,144 @@ class ContextRecordRestIntegrationTests extends IntegrationTestSupport {
         assertThat(listed.get(0).get("is_latest_revision")).isEqualTo(true);
         assertThat(listed.get(1).get("id")).isEqualTo(first.id());
         assertThat(listed.get(1).get("is_latest_revision")).isEqualTo(false);
+    }
+
+    // ---- CTX-A04 기록 남기기 (S15P31A108-415) ----
+
+    /** 웹 '기록 남기기'가 보내는 본문. taskId 가 null 이면 작업 없이 남긴다 */
+    private String recordJson(Long taskId, String previousId, String kind, String visibility, String summary, String detail) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        if (previousId != null) {
+            body.put("previous_id", previousId);
+        }
+        if (taskId != null) {
+            body.put("task_id", String.valueOf(taskId));
+        }
+        body.put("kind", kind);
+        body.put("visibility", visibility);
+        body.put("summary", summary);
+        body.put("detail", detail);
+        body.put("design_refs", List.of(Map.of(
+                "design_item_id", String.valueOf(api.designItemId("API-01")),
+                "design_item_version_id", String.valueOf(api.currentVersionId("API-01")))));
+        return json.writeValueAsString(body);
+    }
+
+    private Integer recordCount() {
+        return api.jdbc.sql("select count(*) from context_record").query(Integer.class).single();
+    }
+
+    @Test
+    void create_byHuman_savesRecord_andItShowsInTheTaskRecordList() {
+        long task = createTask("게스트 로그인", member);
+
+        HttpResponse<String> created = api.post(base(),
+                recordJson(task, null, "HANDOVER", "SHARED", "로그인 화면 연결 끝", "오류 문구는 message 칸을 그대로 보여 줍니다."), member);
+
+        assertThat(created.statusCode()).isEqualTo(201);
+        Map<String, Object> record = body(created);
+        String id = (String) record.get("id");
+        assertThat(record.get("root_id")).isEqualTo(id);
+        assertThat(record.get("revision_no")).isEqualTo(1);
+        assertThat(record.get("task_id")).isEqualTo(String.valueOf(task));
+        assertThat(record.get("kind")).isEqualTo("HANDOVER");
+        assertThat(record.get("visibility")).isEqualTo("SHARED");
+        assertThat(record.get("summary")).isEqualTo("로그인 화면 연결 끝");
+        assertThat(record.get("detail")).isEqualTo("오류 문구는 message 칸을 그대로 보여 줍니다.");
+        assertThat(record.get("author_account_id")).isEqualTo(String.valueOf(member));
+        assertThat(record.get("is_latest_revision")).isEqualTo(true);
+        assertThat(record.get("references_current")).isEqualTo(true);
+        assertThat(record.get("created_at")).isNotNull();
+        assertThat(record).doesNotContainKeys("previous_id", "plan_revision_id", "source_packet_id");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> refs = (List<Map<String, Object>>) record.get("design_refs");
+        assertThat(refs).hasSize(1);
+        // 사람이 웹에서 쓴 기록은 토큰이 비어 있다
+        assertThat(api.jdbc.sql("select author_token_id from context_record where id = :id")
+                .param("id", Long.valueOf(id)).query().singleRow().get("author_token_id")).isNull();
+
+        // 다른 팀원(팀장)의 작업 기록 카드에 보인다
+        assertThat(ids(api.get(base() + "?task_id=" + task, leader))).containsExactly(id);
+        assertThat(body(api.get(base() + "/" + id, leader)).get("detail")).isEqualTo("오류 문구는 message 칸을 그대로 보여 줍니다.");
+    }
+
+    @Test
+    void create_sameKeyAndBody_returnsTheFirstRecord_andDifferentBodyIsConflict() {
+        String first = recordJson(null, null, "DECISION", "SHARED", "판단", "상세");
+
+        HttpResponse<String> created = api.postWithHeaders(base(), first, member, "Idempotency-Key", "rest-key-1");
+        HttpResponse<String> retried = api.postWithHeaders(base(), first, member, "Idempotency-Key", "rest-key-1");
+
+        assertThat(created.statusCode()).isEqualTo(201);
+        assertThat(retried.statusCode()).isEqualTo(201);
+        // 응답이 사라져 다시 보낸 요청은 새 기록을 만들지 않고 처음 응답을 그대로 받는다
+        assertThat(body(retried)).isEqualTo(body(created));
+        assertThat(recordCount()).isEqualTo(1);
+
+        // 같은 키로 다른 내용을 보내면 409
+        HttpResponse<String> different = api.postWithHeaders(base(),
+                recordJson(null, null, "DECISION", "SHARED", "다른 판단", "상세"), member, "Idempotency-Key", "rest-key-1");
+        assertThat(different.statusCode()).isEqualTo(409);
+        assertThat(different.body()).contains("idempotency_conflict");
+        assertThat(recordCount()).isEqualTo(1);
+
+        // 키는 계정마다 따로다 — 다른 사람이 같은 키를 써도 자기 기록이 생긴다
+        assertThat(api.postWithHeaders(base(), first, leader, "Idempotency-Key", "rest-key-1").statusCode()).isEqualTo(201);
+        // 키 없이 보내면 보낼 때마다 새 기록이다
+        assertThat(api.post(base(), first, member).statusCode()).isEqualTo(201);
+        assertThat(recordCount()).isEqualTo(3);
+    }
+
+    @Test
+    void create_withPreviousId_addsRevision_onlyForTheAuthor_andOnlyOnce() {
+        String firstId = (String) body(api.post(base(), recordJson(null, null, "DECISION", "SHARED", "처음 판단", "상세"), member)).get("id");
+
+        // 남의 기록은 고칠 수 없다 (보이는 기록이라 403)
+        HttpResponse<String> byOther = api.post(base(), recordJson(null, firstId, "DECISION", "SHARED", "남이 고침", "상세"), leader);
+        assertThat(byOther.statusCode()).isEqualTo(403);
+
+        HttpResponse<String> revised = api.post(base(), recordJson(null, firstId, "DECISION", "SHARED", "고친 판단", "상세 2"), member);
+        assertThat(revised.statusCode()).isEqualTo(201);
+        Map<String, Object> second = body(revised);
+        assertThat(second.get("previous_id")).isEqualTo(firstId);
+        assertThat(second.get("root_id")).isEqualTo(firstId);
+        assertThat(second.get("revision_no")).isEqualTo(2);
+        assertThat(body(api.get(base() + "/" + firstId, member)).get("is_latest_revision")).isEqualTo(false);
+
+        // 같은 이전 판을 두 번 고치면 409
+        HttpResponse<String> again = api.post(base(), recordJson(null, firstId, "DECISION", "SHARED", "또 고침", "상세"), member);
+        assertThat(again.statusCode()).isEqualTo(409);
+        assertThat(again.body()).contains("revision_conflict");
+        assertThat(recordCount()).isEqualTo(2);
+    }
+
+    @Test
+    void create_privateRecord_isHiddenFromOthers() {
+        String id = (String) body(api.post(base(), recordJson(null, null, "ISSUE", "PRIVATE", "나만 보는 메모", "상세"), member)).get("id");
+
+        assertThat(ids(api.get(base(), leader))).isEmpty();
+        assertThat(api.get(base() + "/" + id, leader).statusCode()).isEqualTo(404);
+        assertThat(ids(api.get(base(), member))).containsExactly(id);
+    }
+
+    @Test
+    void create_rejectsBadInput_outsiders_andAnonymous_withoutSaving() {
+        String valid = recordJson(null, null, "DECISION", "SHARED", "판단", "상세");
+
+        // 요약·상세가 비었거나 종류가 틀리면 400
+        assertThat(api.post(base(), recordJson(null, null, "DECISION", "SHARED", " ", "상세"), member).statusCode()).isEqualTo(400);
+        assertThat(api.post(base(), recordJson(null, null, "DECISION", "SHARED", "판단", ""), member).statusCode()).isEqualTo(400);
+        assertThat(api.post(base(), recordJson(null, null, "NOPE", "SHARED", "판단", "상세"), member).statusCode()).isEqualTo(400);
+        assertThat(api.post(base(), "{\"kind\":\"DECISION\",\"visibility\":\"SHARED\",\"summary\":\"판단\",\"detail\":\"상세\"}", member)
+                .statusCode()).isEqualTo(400);   // design_refs 없음
+        // 없는 작업·없는 이전 기록은 404
+        assertThat(api.post(base(), recordJson(999999L, null, "DECISION", "SHARED", "판단", "상세"), member).statusCode()).isEqualTo(404);
+        assertThat(api.post(base(), recordJson(null, "999999", "DECISION", "SHARED", "판단", "상세"), member).statusCode()).isEqualTo(404);
+        // 프로젝트 멤버가 아니면 프로젝트가 없는 것과 같은 404 (본문이 틀려도 같다), 로그인하지 않았으면 401
+        assertThat(api.post(base(), valid, outsider).statusCode()).isEqualTo(404);
+        assertThat(api.post(base(), "{}", outsider).statusCode()).isEqualTo(404);
+        assertThat(api.post(base(), valid, null).statusCode()).isEqualTo(401);
+        assertThat(recordCount()).isZero();
     }
 
     // ---- 준비 ----

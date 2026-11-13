@@ -817,9 +817,10 @@ def verify_answer(
     if request.scope.mode == "DOCUMENT_REVIEW":
         notices.append(REVIEW_NOTICE)
     if omitted:
+        # 사용자 화면에 그대로 보이는 안내라 내부 용어(상한·모델 전달)를 쓰지 않는다 (S15P31A108-415).
         notices.append(
-            f"검색 결과 {omitted}건은 상한({request.max_evidence}건)으로 모델에 "
-            "전달하지 않았습니다."
+            f"찾은 근거가 많아 앞의 {request.max_evidence}건만 참고했어요. "
+            f"나머지 {omitted}건은 답에 반영되지 않았어요."
         )
     answered = status == "ANSWERED"
     return BeeChatResult(

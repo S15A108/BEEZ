@@ -261,6 +261,20 @@ it('기준이 바뀌었다는 409 면 문서와 기준 원문을 다시 읽게 �
   expect(onConflict).toHaveBeenCalledTimes(1)
 })
 
+it('서버에 초안 기능이 없으면 다시 시도를 권하지 않고 버튼을 잠근다', async () => {
+  const { user, request, onApply } = setup({
+    request: () => Promise.reject(failure(503, 'change_draft_disabled')),
+  })
+  await ask(user)
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('비비 초안은 아직 사용할 수 없어요')
+  expect(alert).not.toHaveTextContent('다시 시도')
+  expect(alert).not.toHaveTextContent('server text')
+  expect(screen.getByRole('button', { name: '초안 만들기' })).toBeDisabled()
+  expect(request).toHaveBeenCalledTimes(1)
+  expect(onApply).not.toHaveBeenCalled()
+})
+
 it('기준 변경이 아닌 오류는 문서를 다시 읽게 하지 않는다', async () => {
   const { user, onConflict } = setup({
     request: () => Promise.reject(failure(502, 'ai_unavailable')),

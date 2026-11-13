@@ -240,6 +240,44 @@ it('이미 있는 항목과 같은 후보는 접힌 영역에 따로 두고 전�
   expect(onAdopt).toHaveBeenCalledWith({ items: [{ candidate_id: '21' }] })
 })
 
+it('숨은 후보까지 한 번에 고르되 근거 없는 후보는 빼고 고른다', async () => {
+  const user = userEvent.setup()
+  const onAdopt = vi
+    .fn()
+    .mockResolvedValue({ succeeded: 6, failed: 0, results: [] })
+  const ids = ['31', '32', '33', '34', '35', '36']
+  show(
+    [
+      job('2', '12', {
+        candidates: [
+          ...ids.map((id, index) => candidate(id, `후보 ${index + 1}`)),
+          candidate('40', '근거 없는 후보', { support: 'NONE' }),
+        ],
+      }),
+    ],
+    { onAdopt },
+  )
+  // 7개 중 5개만 보인다. 숨은 후보까지 고르되 근거 없는 후보는 건별 확인이 필요해 빠진다.
+  await user.click(screen.getByRole('button', { name: '후보 6개 모두 선택' }))
+  expect(screen.getByText('6개 선택')).toBeInTheDocument()
+  expect(
+    screen.getByText(/근거 없는 후보 1개는 모두 선택에 들어가지 않아요/),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '선택한 항목 채택' }))
+  expect(onAdopt).toHaveBeenCalledWith({
+    items: ids.map((id) => ({ candidate_id: id })),
+  })
+})
+
+it('후보가 모두 보이면 모두 선택 버튼이 없다', () => {
+  show([
+    job('2', '12', {
+      candidates: [candidate('21', '첫째'), candidate('22', '둘째')],
+    }),
+  ])
+  expect(screen.queryByRole('button', { name: /모두 선택/ })).toBeNull()
+})
+
 it('팀장이 아니면 선택은 보여도 채택·폐기 버튼은 없다', () => {
   show([job('2', '12', { candidates: [candidate('21', '첫째')] })], {
     isLeader: false,

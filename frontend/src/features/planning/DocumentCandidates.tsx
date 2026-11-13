@@ -256,6 +256,7 @@ export function DocumentCandidates({
   )
   const allFresh = latest.flatMap(fresh)
   // 후보가 많으면 5개씩 보인다. '전체 선택'은 화면에 보이는 후보만 고른다(안 보이는 후보를 모르고 채택하지 않게).
+  // 숨은 후보까지 한 번에 고르려면 '후보 N개 모두 선택'을 누른다. 근거 없는 후보는 건별 확인이 필요해 여기에 넣지 않는다.
   const freshList = useShowMore(allFresh)
   const overlapList = useShowMore(overlapped)
   const shownIds = new Set(freshList.shown.map((candidate) => candidate.id))
@@ -279,6 +280,10 @@ export function DocumentCandidates({
   const allChecked =
     freshList.shown.length > 0 &&
     freshList.shown.every((candidate) => selected.includes(candidate.id))
+  const selectable = allFresh.filter(
+    (candidate) => candidate.support !== 'NONE',
+  )
+  const unsupported = allFresh.length - selectable.length
 
   const run = async (kind: 'adopt' | 'discard') => {
     if (!chosen.length || working) return
@@ -400,10 +405,34 @@ export function DocumentCandidates({
                 />
                 전체 선택
               </label>
+              {freshList.hidden > 0 && selectable.length > 0 && (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={() =>
+                    setSelected((current) => [
+                      ...new Set([
+                        ...current,
+                        ...selectable.map((candidate) => candidate.id),
+                      ]),
+                    ])
+                  }
+                >
+                  후보 {selectable.length}개 모두 선택
+                </Button>
+              )}
               <span role="status" className="text-sm text-muted-foreground">
                 {chosen.length}개 선택
               </span>
             </div>
+            {freshList.hidden > 0 && unsupported > 0 && (
+              <p className="text-xs text-muted-foreground">
+                근거 없는 후보 {unsupported}개는 모두 선택에 들어가지 않아요.
+                내용을 확인하고 직접 골라 주세요.
+              </p>
+            )}
             {latest.map((job) => {
               const all = fresh(job)
               const rows = all.filter((candidate) => shownIds.has(candidate.id))
