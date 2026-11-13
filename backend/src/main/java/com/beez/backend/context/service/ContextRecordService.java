@@ -10,6 +10,7 @@ import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.context.dto.ContextRecordResponse;
 import com.beez.backend.context.dto.ContextRecordSummaryResponse;
+import com.beez.backend.context.dto.CreateContextRecordRequest;
 import com.beez.backend.context.dto.FindContextArgs;
 import com.beez.backend.context.dto.WriteContextArgs;
 import com.beez.backend.context.entity.ContextRecord;
@@ -17,11 +18,13 @@ import com.beez.backend.context.entity.ContextRecordKind;
 import com.beez.backend.context.repository.ContextRecordRepository;
 import com.beez.backend.context.repository.DevContextPacketRepository;
 import com.beez.backend.contextaccess.service.ContextAccessRecorder;
+import com.beez.backend.designitem.service.DesignCommandService;
 import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -30,8 +33,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 공유 작업 기록 쓰기·상세·검색 (MCP-07·06·05, S15P31A108-166). REST CTX-A02·A03(-404)도 같은 서비스를 쓴다.
- * CTX-A04(웹에서 기록 쓰기)는 아직 컨트롤러가 없다.
+ * 공유 작업 기록 쓰기·상세·검색 (MCP-07·06·05, S15P31A108-166). REST CTX-A02·A03(-404)·CTX-A04(-415)도 같은 서비스를 쓴다.
  *
  * <p>근거
  * <ul>
@@ -54,13 +56,17 @@ public class ContextRecordService {
     private final ContextAccessRecorder accessLog;
     private final JdbcClient jdbc;
     private final EntityManager entityManager;
+    private final DesignCommandService commands;
+
+    /** CTX-A04 재요청 응답을 저장할 때의 동작 이름 (design_http_command.operation) */
+    public static final String OP_REST_WRITE = "context-record:create";
 
     /** CTX-A03 조회 이력에 남기는 API 이름 (00-common ContextAccessLog.tool 예: CTX-A01) */
     public static final String TOOL_REST_DETAIL = "CTX-A03";
 
     public ContextRecordService(ProjectAccessChecker access, InputValidator validator, ContextRecordRepository records,
                                 DevContextPacketRepository packets, ContextLookup lookup, ContextAccessRecorder accessLog,
-                                JdbcClient jdbc, EntityManager entityManager) {
+                                JdbcClient jdbc, EntityManager entityManager, DesignCommandService commands) {
         this.access = access;
         this.validator = validator;
         this.records = records;
@@ -69,6 +75,7 @@ public class ContextRecordService {
         this.accessLog = accessLog;
         this.jdbc = jdbc;
         this.entityManager = entityManager;
+        this.commands = commands;
     }
 
     // ---- MCP-07 write_context ----
@@ -78,7 +85,57 @@ public class ContextRecordService {
         ProjectActor actor = access.requireMember(caller, projectId);
         validator.check(args, "arguments");
         validator.requireIdempotencyKey(args.idempotencyKey());
+        return store(actor, projectId, args);
+    }
 
+    // ---- CTX-A04 웹에서 기록 남기기 ----
+
+    /**
+     * CTX-A04 공유 작업 기록 생성·리비전 추가 (S15P31A108-415). 사람 세션용 입구 — 저장 규칙은 MCP write_context 와 같다
+     * (작성자만 고침, 같은 이전 판의 두 번째 수정은 409, 참조 설계는 이 프로젝트 것만).
+     *
+     * <p>Idempotency-Key 는 선택이다. 있으면 다른 REST 변경 요청과 같은 design_http_command(24시간)에 응답을 저장해,
+     * 같은 계정·키·입력의 재요청에는 처음 응답을 돌려주고 다른 입력이면 409 idempotency_conflict 다 (공통 5절).
+     * 재요청도 현재 권한을 먼저 확인한다.
+     */
+    @Transactional
+    public ContextRecordResponse writeForRest(CallerContext caller, Long projectId, CreateContextRecordRequest body,
+                                              String idempotencyKey) {
+        ProjectActor actor = access.requireMember(caller, projectId);
+        validator.check(body, "body");
+        WriteContextArgs args = new WriteContextArgs(body.previousId(), body.taskId(), body.planRevisionId(),
+                body.sourcePacketId(), body.kind(), body.visibility(), body.summary(), body.detail(), body.designRefs(), null);
+        String key = null;
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            key = idempotencyKey.strip();
+        }
+        if (key != null) {
+            // 같은 키의 동시 요청을 한 줄로 세운다. 두 번째 요청은 첫 요청이 저장한 응답을 본다
+            lockRestWrite(projectId, actor.accountId(), key);
+            Optional<ContextRecordResponse> replay = commands.replay(projectId, actor.accountId(), OP_REST_WRITE, key, body,
+                    ContextRecordResponse.class);
+            if (replay.isPresent()) {
+                return replay.get();
+            }
+        }
+        ContextRecordResponse result = store(actor, projectId, args);
+        if (key != null) {
+            commands.save(projectId, actor.accountId(), OP_REST_WRITE, key, body, result);
+        }
+        return result;
+    }
+
+    /**
+     * pg_advisory_xact_lock 은 PostgreSQL 의 "이름 붙은 잠금"이다. 같은 이름을 잡으려는 다른 트랜잭션은 이 트랜잭션이
+     * 끝날 때까지 기다린다. hashtextextended 는 문자열을 그 잠금 번호로 바꾼다.
+     */
+    private void lockRestWrite(Long projectId, Long accountId, String key) {
+        jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:k, 0))")
+                .param("k", "context_record:" + projectId + ":" + accountId + ":" + key).query().singleRow();
+    }
+
+    /** 권한과 입력 형식 확인을 끝낸 뒤의 저장. MCP write_context 와 CTX-A04 가 같이 쓴다 */
+    private ContextRecordResponse store(ProjectActor actor, Long projectId, WriteContextArgs args) {
         Long taskId = Ids.parse(args.taskId(), "task_id");
         Long planRevisionId = Ids.parse(args.planRevisionId(), "plan_revision_id");
         Long sourcePacketId = Ids.parse(args.sourcePacketId(), "source_packet_id");

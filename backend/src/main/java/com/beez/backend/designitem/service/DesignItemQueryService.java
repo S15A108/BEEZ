@@ -114,8 +114,20 @@ public class DesignItemQueryService {
         if (row.get("override_status") != null) {
             // 문서가 바뀐 현재 기준에서는 항목 버전의 출처가 아니라 그 기준의 유효 출처를 보여 준다(-406).
             var locator = object(row.get("override_locator"));
-            String location = Objects.toString(locator.get("location"), canonical(locator));
-            if ("NEEDS_CONFIRMATION".equals(row.get("override_status"))) location += " (출처 확인 필요)";
+            // 출처 위치 없이 채택한 항목은 위치가 빈 객체다(S15P31A108-415). "{}" 를 그대로 보여 주지 않는다.
+            String location = "";
+            if (locator.get("location") != null) {
+                location = locator.get("location").toString();
+            } else if (!locator.isEmpty()) {
+                location = canonical(locator);
+            }
+            if ("NEEDS_CONFIRMATION".equals(row.get("override_status"))) {
+                if (location.isEmpty()) {
+                    location = "출처 확인 필요";
+                } else {
+                    location += " (출처 확인 필요)";
+                }
+            }
             source = new DesignItemSourceResponse(row.get("override_document_id").toString(),
                     row.get("override_document_version_id").toString(), ((Number) row.get("override_version_no")).intValue(),
                     location);

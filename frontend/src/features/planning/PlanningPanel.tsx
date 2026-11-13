@@ -24,6 +24,7 @@ import { currentVersionJobs, publishNotice } from './draftJobs'
 import { DraftCandidates } from './DraftCandidates'
 import { TaskBreakdown } from './TaskBreakdown'
 import { hasActiveJob } from './draftJobs'
+import { sendInBatches } from './sendInBatches'
 import { useShowMore } from './useShowMore'
 import {
   checkDesignContent,
@@ -421,13 +422,20 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                     onCreate={createDocumentDrafts}
                     onAdopt={async (input) =>
                       (await action.run(
-                        () => planningApi.adoptCandidates(projectId, input),
+                        // 서버는 한 번에 50개까지 받는다. 더 많이 고르면 나눠 보낸다.
+                        () =>
+                          sendInBatches(input, (part) =>
+                            planningApi.adoptCandidates(projectId, part),
+                          ),
                         '고른 후보를 처리했어요.',
                       )) as BatchCandidatesResponse
                     }
                     onDiscard={async (input) =>
                       (await action.run(
-                        () => planningApi.discardCandidates(projectId, input),
+                        () =>
+                          sendInBatches(input, (part) =>
+                            planningApi.discardCandidates(projectId, part),
+                          ),
                         '고른 후보를 폐기 처리했어요.',
                       )) as BatchCandidatesResponse
                     }

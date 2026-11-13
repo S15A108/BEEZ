@@ -109,7 +109,10 @@ public class ChangeDraftService {
         try {
             response = gateway.draft(payload(project, requestKey, input.instruction().strip(), prepared));
         } catch (ApiException e) {
-            recordFailedCall(project, prepared, requestKey, e, elapsedMillis(started));
+            // AI 에 초안 기능이 없어 부르지 못한 것은 모델 호출이 아니다 — 사용량에 실패로 세지 않는다(S15P31A108-415)
+            if (!AiChangeDraftAdapter.DISABLED_CODE.equals(e.getCode())) {
+                recordFailedCall(project, prepared, requestKey, e, elapsedMillis(started));
+            }
             throw e;
         } catch (RuntimeException e) {
             log.error("AI-A06 call failed unexpectedly: {}", e.toString(), e);

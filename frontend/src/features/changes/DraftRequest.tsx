@@ -17,6 +17,9 @@ const draftErrors: Record<string, string> = {
     '비비가 지금 초안을 만들 수 없어요. 잠시 뒤 같은 요청으로 다시 시도해 주세요.',
   ai_timeout:
     '초안을 만드는 데 시간이 오래 걸려 멈췄어요. 문서가 길면 더 걸릴 수 있어요. 잠시 뒤 다시 시도해 주세요.',
+  // AI 서버에 초안 기능이 아직 없다. 일시 장애가 아니라 다시 시도를 권하지 않는다(S15P31A108-415).
+  change_draft_disabled:
+    '비비 초안은 아직 사용할 수 없어요. 고친 글을 직접 써서 제안을 올려 주세요.',
   version_conflict:
     '그사이 문서나 관련 설계 항목이 바뀌어 기준 원문을 다시 불러왔어요. 새 원문을 확인한 뒤 다시 만들어 주세요.',
   baseline_missing: '기준 설계가 아직 없어서 초안을 만들 수 없어요.',
@@ -93,6 +96,8 @@ export function DraftRequest({
       getApiErrorMessage(draft.error))
     : ''
   const result = draft.data
+  // 서버에 없는 기능이면 다시 눌러도 같은 결과다. 버튼을 잠가 같은 실패를 되풀이하지 않게 한다.
+  const unavailable = getApiErrorCode(draft.error) === 'change_draft_disabled'
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -240,7 +245,7 @@ export function DraftRequest({
             <Button
               type="button"
               size="sm"
-              disabled={draft.isPending || !ready}
+              disabled={draft.isPending || !ready || unavailable}
               onClick={() => void submit()}
             >
               초안 만들기

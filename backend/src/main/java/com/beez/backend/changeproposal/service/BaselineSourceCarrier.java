@@ -22,12 +22,18 @@ import tools.jackson.core.type.TypeReference;
  * 달라지지 않았으면 직전 기준에 덮어쓴 행을 그대로 이어받는다(이어받지 않으면 항목 버전의 옛 출처로 되돌아간다).
  * 이미 {@code NEEDS_CONFIRMATION} 인 항목은 인용 줄이 증명된 적이 없으므로 다시 옮기지 않고 문서 버전만 따라간다.
  * 항목 단위의 이상(본문 누락·줄 수 초과 등)은 예외가 아니라 {@code NEEDS_CONFIRMATION} 이다 — 발행을 막지 않는다.
+ *
+ * <p>출처 문서는 있는데 출처 위치가 없는 항목(근거 없이 채택한 후보)도 {@code NEEDS_CONFIRMATION} 이다. 옮길 줄이 없으므로
+ * 위치는 빈 객체({@code {}})로 적는다 — baseline_item_source.source_locator 는 NOT NULL 이고, 이미 어긋난 기준을 채우는
+ * 백필(V52)도 같은 값을 쓴다(S15P31A108-415).
  */
 @Component
 public class BaselineSourceCarrier {
     private static final Logger log = LoggerFactory.getLogger(BaselineSourceCarrier.class);
     static final String REMAPPED = "REMAPPED";
     static final String NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION";
+    /** 출처 위치가 없는 항목의 확인 필요 행에 적는 값. V52 백필과 같다. */
+    static final String NO_LOCATOR = "{}";
 
     private final PublicationRepository repository;
     private final BaselineRepository baselines;
@@ -67,7 +73,8 @@ public class BaselineSourceCarrier {
                 // 줄 번호(locator)는 처음 확인 필요가 된 버전 기준 그대로이므로 remapped_from 도 그 버전을 유지한다.
                 long locatorVersion = row.get("remapped_from_document_version_id") == null
                         ? from : id(row, "remapped_from_document_version_id");
-                baselines.insertItemSource(baseline, project, item, target, locator, NEEDS_CONFIRMATION, locatorVersion);
+                baselines.insertItemSource(baseline, project, item, target, storedLocator(locator), NEEDS_CONFIRMATION,
+                        locatorVersion);
                 needsConfirmation++;
                 continue;
             }
@@ -82,7 +89,7 @@ public class BaselineSourceCarrier {
             } else {
                 log.info("baseline {} item {} source needs confirmation: {}", baseline, item,
                         ((SourceRemapper.NeedsConfirmation) result).reason());
-                baselines.insertItemSource(baseline, project, item, target, locator, NEEDS_CONFIRMATION, from);
+                baselines.insertItemSource(baseline, project, item, target, storedLocator(locator), NEEDS_CONFIRMATION, from);
                 needsConfirmation++;
             }
         }
@@ -90,6 +97,14 @@ public class BaselineSourceCarrier {
             log.info("baseline {} source remap: {} moved, {} need confirmation, {} carried", baseline, remapped,
                     needsConfirmation, carried);
         }
+    }
+
+    /** 확인 필요 행에 적을 위치. 항목에 출처 위치가 없으면 빈 객체다(NOT NULL 칼럼). */
+    private static String storedLocator(String locator) {
+        if (locator == null) {
+            return NO_LOCATOR;
+        }
+        return locator;
     }
 
     private static SourceRemapper.Result remap(SourceRemapper remapper, String locator) {
