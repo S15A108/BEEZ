@@ -70,23 +70,24 @@ async def test_summary_accepts_be_input_with_exact_lf_evidence_and_preserves_usa
     assert provider.calls[0].response_format["json_schema"]["name"] == "meeting_summary"
 
 
+async def run_summary(output, request=None):
+    return await analyze(
+        MeetingAnalysisRequest.model_validate(request or summary_request()),
+        LLMClient(Provider(output)),
+        "test-model",
+    )
+
+
 @pytest.mark.parametrize(
     "mutation",
-    [
-        "document",
-        "version",
-        "start",
-        "end",
-        "before",
-        "evidence",
-        "overlap",
-        "source",
-        "member",
-    ],
+    ["document", "version", "start", "before", "evidence", "overlap", "malformed"],
 )
 @pytest.mark.asyncio
-async def test_summary_rejects_unverified_model_output_and_records_usage(mutation):
+async def test_summary_drops_only_the_unverified_change_like_backend(mutation, caplog):
+    # 03-ai-internal AI-A08: a wrong change is dropped with an unresolved note
+    # instead of failing the whole summary (S15P31A108-407).
     output = summary_output()
+    output["unresolved"] = ["담당자 미정"]
     change = output["document_changes"][0]
     if mutation == "document":
         change["document_id"] = "999"
@@ -94,14 +95,78 @@ async def test_summary_rejects_unverified_model_output_and_records_usage(mutatio
         change["base_version_id"] = "999"
     elif mutation == "start":
         change["locator"]["start_line"] = 0
-    elif mutation == "end":
-        change["locator"]["end_line"] = 4
     elif mutation == "before":
-        change["before"] = "둘째 줄\n마지막\n"
+        change["before"] = "원문에 없는 문장"
     elif mutation == "evidence":
-        change["evidence_entry_ids"] = ["911", "999"]
+        change["evidence_entry_ids"] = ["999"]
     elif mutation == "overlap":
         output["document_changes"].append(deepcopy(change))
+        output["document_changes"][1]["after"] = "나중 변경"
+    else:
+        del change["after"]
+    with caplog.at_level("WARNING", logger="app.services.meeting_analysis"):
+        result = await run_summary(output)
+    kept = result["result"]["document_changes"]
+    assert kept == (
+        [summary_output()["document_changes"][0]] if mutation == "overlap" else []
+    )
+    assert result["result"]["unresolved"] == [
+        "담당자 미정",
+        "문서 변경 1건이 입력 원문·근거와 맞지 않아 제외했어요.",
+    ]
+    assert result["usage"][0]["failed"] is False
+    assert "dropped=1" in caplog.text
+    # The log carries reasons only, never document text or model output.
+    assert "원문에 없는 문장" not in caplog.text and "둘째 줄" not in caplog.text
+
+
+@pytest.mark.parametrize(("start", "end"), [(1, 2), (2, 4), (3, 3)])
+@pytest.mark.asyncio
+async def test_summary_moves_wrong_line_numbers_to_the_single_exact_match(start, end):
+    # Seen on dev: the model copies `before` exactly but miscounts blank lines.
+    output = summary_output()
+    output["document_changes"][0]["locator"].update(start_line=start, end_line=end)
+    result = await run_summary(output)
+    assert result["result"]["document_changes"] == summary_output()["document_changes"]
+    assert result["result"]["unresolved"] == []
+
+
+@pytest.mark.parametrize(
+    ("text", "before"),
+    [
+        ("같은 줄\n다른 줄\n같은 줄\n", "같은 줄\n"),  # two places: cannot tell which
+        ("첫 줄\n둘째 줄\n마지막", "줄\n마지막"),  # not on a line boundary
+    ],
+)
+@pytest.mark.asyncio
+async def test_summary_drops_wrong_line_numbers_without_one_line_aligned_match(
+    text, before
+):
+    request = summary_request()
+    request["documents"][0]["text"] = text
+    output = summary_output()
+    change = output["document_changes"][0]
+    change["locator"].update(start_line=2, end_line=2)
+    change["before"] = before
+    result = await run_summary(output, request)
+    assert result["result"]["document_changes"] == []
+    assert len(result["result"]["unresolved"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_keeps_sent_evidence_ids_like_backend():
+    output = summary_output()
+    output["document_changes"][0]["evidence_entry_ids"] = ["911", "999", "911"]
+    result = await run_summary(output)
+    assert result["result"]["document_changes"][0]["evidence_entry_ids"] == ["911"]
+
+
+@pytest.mark.parametrize("mutation", ["source", "member", "too_many_changes"])
+@pytest.mark.asyncio
+async def test_summary_rejects_unverified_model_output_and_records_usage(mutation):
+    output = summary_output()
+    if mutation == "too_many_changes":
+        output["document_changes"] *= 101
     elif mutation == "source":
         output["sources"] = [
             {
@@ -114,11 +179,7 @@ async def test_summary_rejects_unverified_model_output_and_records_usage(mutatio
     else:
         output["action_items"][0]["member_id"] = "999"
     with pytest.raises(LLMError) as caught:
-        await analyze(
-            MeetingAnalysisRequest.model_validate(summary_request()),
-            LLMClient(Provider(output)),
-            "test-model",
-        )
+        await run_summary(output)
     assert caught.value.code == "invalid_output"
     assert caught.value.usage[0].failed is True
 
