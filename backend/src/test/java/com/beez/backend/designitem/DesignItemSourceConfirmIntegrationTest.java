@@ -67,7 +67,8 @@ class DesignItemSourceConfirmIntegrationTest extends IntegrationTestSupport {
     }
 
     private String body(long version, String rest) {
-        return "{\"project_id\":\"" + project + "\",\"expected_version_id\":\"" + version + "\"," + rest + "}";
+        return "{\"project_id\":\"" + project + "\",\"expected_version_id\":\"" + version
+                + "\",\"expected_document_version_id\":\"" + documentVersion + "\"," + rest + "}";
     }
 
     @Test void emptyLocationBlocksEvidenceUntilTheLeaderPicksLines() {

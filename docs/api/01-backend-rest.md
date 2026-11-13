@@ -5377,6 +5377,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `project_id` | `ID` | Y | 프로젝트 |
 | `expected_version_id` | `ID` | Y | 현재 기준에 든 항목 버전 ID(PLN-A06 `status=APPROVED`의 `id`) |
+| `expected_document_version_id` | `ID` | Y | 화면이 읽은 출처 문서 버전(PLN-A06 `source.document_version_id`). 줄 번호는 이 버전의 원문 기준이다 |
 | `start_line` | `integer` | N | 현재 기준 문서 버전 원문의 시작 줄(1부터) |
 | `end_line` | `integer` | N | 끝 줄(포함). 시작 줄 이상 |
 | `no_quote` | `boolean` | N | true면 원문에 인용할 줄이 없다고 확정한다(답변만 근거인 항목 등) |
@@ -5385,6 +5386,7 @@ HTTP `201`.
 {
   "project_id": "30",
   "expected_version_id": "888",
+  "expected_document_version_id": "104",
   "start_line": 28,
   "end_line": 28
 }
@@ -5405,6 +5407,7 @@ HTTP `200`. PLN-A08과 같은 설계 항목 응답이다. `source`는 현재 기
 | 400 | `validation_failed` | 줄 범위와 no_quote를 함께·모두 생략, 범위가 문서 밖, 발췌가 16,000바이트 초과 |
 | 409 | `baseline_required` | 기준 설계 발행 전. PLN-A08로 출처를 고친다 |
 | 409 | `version_conflict` | `expected_version_id`가 현재 기준의 항목 버전과 다름 |
+| 409 | `source_document_changed` | 출처 문서가 그 사이 새 버전으로 발행돼 `expected_document_version_id`와 다름. 원문을 다시 읽어 지정한다 |
 | 409 | `design_source_missing` | 원문 출처가 없는 수동 항목 |
 | 409 | `source_document_not_in_baseline` | 출처 문서 버전이 현재 기준 문서에 없음 |
 | 409 | `source_text_unavailable` | 원문이 없거나 저장된 해시와 다름 |
@@ -5413,6 +5416,7 @@ HTTP `200`. PLN-A08과 같은 설계 항목 응답이다. `source`는 현재 기
 
 - 출처 문서는 있는데 위치가 없거나(근거 없이 채택한 후보), 문서가 바뀌어 위치를 옮기지 못한(`NEEDS_CONFIRMATION`, S15P31A108-406) 항목은 근거 수집이 쓸 수 없어 그 항목을 참조하는 작업 검증이 `source_evidence_unavailable`로 막힌다. 이 API가 그 복구 경로다.
 - 항목 버전(`design_item_version`)은 승인 뒤 불변이고 새 버전을 만들면 작업 계획의 설계 참조가 낡으므로, 현재 기준의 유효 출처(`baseline_item_source`)만 `CONFIRMED`로 기록한다. 같은 기준·항목에 행이 있으면 같은 문서 버전에서 위치만 바꾼다. 확정한 사람·시각을 남긴다.
+- 문서만 바꾸는 변경 제안은 항목 버전을 그대로 두고 유효 출처만 새 문서 버전으로 옮긴다. 그래서 항목 버전만으로는 화면이 본 원문이 지금 원문인지 알 수 없어, 화면이 읽은 문서 버전을 함께 받아 다르면 거절한다(옛 줄 번호가 새 원문에 저장되지 않게). 인용 없음 확정도 같은 원문을 보고 내린 판단이라 함께 대조한다.
 - 줄 범위는 현재 기준 문서 버전 원문(근거 수집과 같은 정규화·해시)으로 확인하고, 표시 위치는 시작 줄 위 마크다운 제목 경로에 `Ls-Le`를 붙여 만든다.
 - 다음 기준 발행에서 문서가 같으면 확정한 사람·시각째로 이어받고, 문서가 바뀌면 다른 위치처럼 줄을 옮긴다(옮기지 못하면 다시 `NEEDS_CONFIRMATION`). 인용 없음은 옮길 줄이 없어 문서 버전만 따라간다.
 - 같은 입력을 다시 보내도 결과가 같다. 지정한 뒤 작업 담당자가 새 검증을 요청한다.

@@ -805,8 +805,13 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         long unchangedVersion=currentVersion(unchanged);
         assertThat(sourceRow(second,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
 
+        // PR #299 리뷰: 문서만 바뀌면 항목 버전은 그대로라, 옛 원문(v1)을 보고 고른 줄은 거절해야 새 원문에 엉뚱한 줄이 저장되지 않는다.
+        assertThatThrownBy(() -> designItems.confirmSource(leader,unchanged,new com.beez.backend.designitem.dto.ConfirmDesignItemSourceRequest(
+                ""+project.projectId(),""+unchangedVersion,""+version,4,5,null)))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("source_document_changed"));
+        assertThat(sourceRow(second,unchanged)).containsEntry("source_status","NEEDS_CONFIRMATION");
         var confirmed=designItems.confirmSource(leader,unchanged,new com.beez.backend.designitem.dto.ConfirmDesignItemSourceRequest(
-                ""+project.projectId(),""+unchangedVersion,5,6,null));
+                ""+project.projectId(),""+unchangedVersion,""+v2,5,6,null));
         assertThat(confirmed.source().location()).isEqualTo("제목 / L5-L6");
         assertThat(sourceRow(second,unchanged)).containsEntry("source_status","CONFIRMED").containsEntry("remapped_from_document_version_id",v2);
         var source=Map.<String,Object>of("document_id",""+document,"document_version_id",""+v2,"version_no",2,"location","제목 / L5-L6");

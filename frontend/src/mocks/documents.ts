@@ -422,6 +422,15 @@ export async function documentRoutes(
             candidate.status === 'APPROVED',
         ) ?? fail(404, 'not_found', '기준 설계에서 항목을 찾을 수 없어요.')
       expectValue(item.id, body.expected_version_id)
+      if (
+        item.source &&
+        item.source.document_version_id !== body.expected_document_version_id
+      )
+        fail(
+          409,
+          'source_document_changed',
+          '출처 문서가 새 버전으로 바뀌었어요. 원문을 다시 열어 위치를 지정해 주세요.',
+        )
       if (!item.source)
         fail(
           409,

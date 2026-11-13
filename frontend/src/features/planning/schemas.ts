@@ -338,12 +338,15 @@ export const confirmItemSourceInputSchema = z.union([
   z.object({
     project_id: common.idSchema,
     expected_version_id: common.idSchema,
+    // 화면이 읽은 출처 문서 버전. 그 사이 새 버전이 발행됐으면 409 source_document_changed.
+    expected_document_version_id: common.idSchema,
     start_line: z.number().int().min(1),
     end_line: z.number().int().min(1),
   }),
   z.object({
     project_id: common.idSchema,
     expected_version_id: common.idSchema,
+    expected_document_version_id: common.idSchema,
     no_quote: z.literal(true),
   }),
 ])

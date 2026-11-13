@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import type { Source } from '@/api/contracts/common'
-import { getApiErrorMessage } from '@/api/error'
+import { getApiErrorCode, getValidationMessage } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
 import { documentsApi, planningApi } from '@/api/services'
 import { Button } from '@/components/ui/button'
@@ -28,8 +28,11 @@ export type SourceFixTarget = {
   design_item_version_id: string
   key: string
 }
-export type SourceConfirmation =
+type SourceSelection =
   { start_line: number; end_line: number } | { no_quote: true }
+export type SourceConfirmation = SourceSelection & {
+  expected_document_version_id: string
+}
 
 // 검증이 근거 수집에서 막힌 설계 항목의 출처 위치를 팀장이 확정한다(PLN-A11, S15P31A108-422).
 // 항목 버전은 바뀌지 않으므로 작업 계획은 그대로 두고 새 검증만 요청하면 된다.
@@ -86,19 +89,29 @@ export function SourceLocationDialog({
   const {
     register,
     handleSubmit,
+    reset,
     formState: { errors },
   } = useForm<SourceLinesForm>({
     resolver: zodResolver(sourceLinesSchema(lines.length)),
     defaultValues: { start_line: '', end_line: '' },
   })
-  const confirm = async (input: SourceConfirmation) => {
+  const confirm = async (input: SourceSelection) => {
+    if (!source) return
     setError('')
     setBusy(true)
     try {
-      await onConfirm(input)
+      // 읽은 원문의 버전을 함께 보낸다. 그 사이 문서가 새로 발행되면 서버가 거절해 옛 줄 번호가 새 원문에 저장되지 않는다.
+      await onConfirm({
+        expected_document_version_id: source.document_version_id,
+        ...input,
+      })
       onClose()
     } catch (failure) {
-      setError(getApiErrorMessage(failure))
+      // 범위가 문서 밖이면 서버가 400으로 이유를 알려 주므로 그 문구를 그대로 보인다.
+      setError(getValidationMessage(failure))
+      // 문서가 바뀌었으면 새 원문을 다시 읽은 뒤 줄을 고르게 입력을 비운다(목록 갱신이 새 출처를 넘긴다).
+      if (getApiErrorCode(failure) === 'source_document_changed')
+        reset({ start_line: '', end_line: '' })
     } finally {
       setBusy(false)
     }

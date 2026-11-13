@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { documentsApi, planningApi } from '@/api/services'
 import { SourceLocationDialog } from './SourceLocationDialog'
@@ -70,7 +71,11 @@ it('원문 줄을 번호와 함께 보이고 고른 줄 범위를 숫자로 보�
   await userEvent.type(screen.getByLabelText('시작 줄'), '2')
   await userEvent.type(screen.getByLabelText('끝 줄'), '3')
   await userEvent.click(screen.getByRole('button', { name: '이 줄로 지정' }))
-  expect(onConfirm).toHaveBeenCalledWith({ start_line: 2, end_line: 3 })
+  expect(onConfirm).toHaveBeenCalledWith({
+    expected_document_version_id: '104',
+    start_line: 2,
+    end_line: 3,
+  })
   expect(onClose).toHaveBeenCalled()
 })
 
@@ -98,7 +103,10 @@ it('인용 없음으로 확정하고, 서버가 거절하면 창을 닫지 않�
   await userEvent.click(
     screen.getByRole('button', { name: '인용 없음으로 확정' }),
   )
-  expect(onConfirm).toHaveBeenCalledWith({ no_quote: true })
+  expect(onConfirm).toHaveBeenCalledWith({
+    expected_document_version_id: '104',
+    no_quote: true,
+  })
   expect(await screen.findByRole('alert')).toBeInTheDocument()
   expect(onClose).not.toHaveBeenCalled()
 })
@@ -133,4 +141,32 @@ it('화면이 출처를 모르면 승인 항목을 마지막 페이지까지 읽
     cursor: 'next',
     limit: 100,
   })
+})
+
+// PR #299 리뷰: 창을 연 사이 문서가 새로 발행되면 서버가 거절한다. 옛 원문에서 고른 줄을 그대로 다시 보내지 않게 입력을 비운다.
+it('문서가 바뀌어 거절되면 이유를 보이고 고른 줄을 비운다', async () => {
+  const changed = new AxiosError(
+    'conflict',
+    'ERR_BAD_REQUEST',
+    undefined,
+    undefined,
+    {
+      data: { error: { code: 'source_document_changed', message: '바뀜' } },
+      status: 409,
+      statusText: 'Conflict',
+      headers: new AxiosHeaders(),
+      config: { headers: new AxiosHeaders() },
+    },
+  )
+  const { onClose } = renderDialog(vi.fn().mockRejectedValue(changed))
+  await screen.findByText('방장은 준비 취소를 거부한다.')
+  await userEvent.type(screen.getByLabelText('시작 줄'), '2')
+  await userEvent.type(screen.getByLabelText('끝 줄'), '3')
+  await userEvent.click(screen.getByRole('button', { name: '이 줄로 지정' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '출처 문서가 새 버전으로 바뀌었어요.',
+  )
+  expect(screen.getByLabelText('시작 줄')).toHaveValue('')
+  expect(screen.getByLabelText('끝 줄')).toHaveValue('')
+  expect(onClose).not.toHaveBeenCalled()
 })

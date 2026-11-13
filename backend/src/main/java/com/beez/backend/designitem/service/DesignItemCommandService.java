@@ -135,6 +135,7 @@ public class DesignItemCommandService {
     public DesignItemResponse confirmSource(CallerContext caller, long item, ConfirmDesignItemSourceRequest input) {
         long project = Ids.parse(input.projectId(), "project_id");
         long version = Ids.parse(input.expectedVersionId(), "expected_version_id");
+        long expectedDocument = Ids.parse(input.expectedDocumentVersionId(), "expected_document_version_id");
         boolean noQuote = Boolean.TRUE.equals(input.noQuote());
         boolean lines = input.startLine() != null || input.endLine() != null;
         if (noQuote == lines) {
@@ -163,6 +164,12 @@ public class DesignItemCommandService {
                     "출처 문서가 현재 기준 설계에 들어 있지 않아요. 문서 상태를 확인해 주세요.");
         }
         long documentVersion = ((Number) row.get("document_version_id")).longValue();
+        // 문서만 바꾸는 변경 제안은 항목 버전을 그대로 두고 유효 출처만 새 문서 버전으로 옮긴다. 화면이 읽은 원문과 지금 원문이
+        // 다르면 옛 줄 번호가 새 원문에 저장되므로 거절하고 다시 읽게 한다(PR #299 리뷰).
+        if (documentVersion != expectedDocument) {
+            throw new ApiException(HttpStatus.CONFLICT, "source_document_changed",
+                    "출처 문서가 새 버전으로 바뀌었어요. 원문을 다시 열어 위치를 지정해 주세요.");
+        }
         String locator = noQuote ? SourceLocators.NO_QUOTE
                 : lineLocator(row.get("content_text"), row.get("text_hash"), input.startLine(), input.endLine());
         baselines.confirmItemSource(((Number) row.get("baseline_id")).longValue(), project, item, documentVersion, locator,
