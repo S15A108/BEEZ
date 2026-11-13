@@ -108,9 +108,16 @@ public class AnalysisResultApplier {
 
     @Transactional
     public void applyInputIncomplete(JobLease lease, List<String> reasonCodes, long durationMs) {
+        applyInputIncomplete(lease, reasonCodes, List.of(), durationMs);
+    }
+
+    /** @param designItems approved items whose source evidence was unavailable, shown so the leader can fix them (-422). */
+    @Transactional
+    public void applyInputIncomplete(JobLease lease, List<String> reasonCodes, List<Map<String, Object>> designItems,
+                                     long durationMs) {
         Optional<Current> active = current(lease, Mode.RESULT, Map.of(), durationMs);
         if (active.isEmpty()) return;
-        var detail = EvidenceCollectionFailure.detail(reasonCodes);
+        var detail = EvidenceCollectionFailure.detail(reasonCodes, designItems);
         boolean retryable = Boolean.TRUE.equals(detail.get("retryable"));
         fail(lease, active.get().validation(), active.get().runId(), EvidenceCollectionFailure.CODE, "ERROR",
                 (String) detail.get("message"), retryable ? "RETRY" : "HUMAN_REVIEW",
@@ -118,7 +125,7 @@ public class AnalysisResultApplier {
                         : reasonCodes.contains("source_confirmation_required") && !reasonCodes.contains("source_evidence_unavailable")
                         ? "문서가 바뀐 설계 항목의 출처 위치를 확인·정정한 뒤 새 검증을 요청해 주세요."
                         : reasonCodes.contains("source_evidence_unavailable")
-                        ? "승인 문서와 출처 위치·인용 범위를 보완한 뒤 새 검증을 요청해 주세요."
+                        ? "문서 승인 상태를 확인하고, 해당 설계 항목의 출처 위치를 지정하거나 인용 없음으로 확정한 뒤 새 검증을 요청해 주세요."
                         : "원인을 확인하고 계획·검색 범위를 보완한 뒤 새 검증을 요청해 주세요.",
                 null, durationMs, Map.of(EvidenceCollectionFailure.KEY, detail));
     }

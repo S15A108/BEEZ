@@ -430,9 +430,9 @@ describe('계약 경계', () => {
   // S15P31A108-389가 후보 여러 개 채택·폐기 2개를 더해 138개였고,
   // S15P31A108-385가 작업 계획 문서 초안(TSK-A08) 1개를 더했고, S15P31A108-400의 수정안 생성·승인(TSK-A10·A11)까지 141개다.
   it('REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(141)
+    expect(endpointRegistry).toHaveLength(142)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      141,
+      142,
     )
     expect(
       new Set(
@@ -440,7 +440,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(141)
+    ).toBe(142)
     expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
       expect.arrayContaining([
         'CHG-A07-SCOPED-BLOCKS',

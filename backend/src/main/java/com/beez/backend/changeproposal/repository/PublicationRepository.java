@@ -35,12 +35,13 @@ public class PublicationRepository {
     }
     /**
      * 그 기준에서 출처가 있는 항목의 유효 출처(S15P31A108-406). 행: design_item_id, document_id, source_document_version_id,
-     * source_locator(JSON 글자), source_status(덮어쓴 행이 없으면 null), remapped_from_document_version_id(없으면 null).
+     * source_locator(JSON 글자), source_status(덮어쓴 행이 없으면 null), remapped_from_document_version_id(없으면 null),
+     * confirmed_by·confirmed_at(사람이 확정한 CONFIRMED 행만, S15P31A108-422).
      */
     public List<Map<String, Object>> effectiveSources(long project, long baseline) {
         return jdbc.sql("""
                 SELECT e.design_item_id,dv.document_id,e.source_document_version_id,e.source_locator::text AS source_locator,
-                       e.source_status,s.remapped_from_document_version_id
+                       e.source_status,s.remapped_from_document_version_id,s.confirmed_by,s.confirmed_at
                 FROM baseline_item_effective_source e
                 JOIN document_version dv ON dv.id=e.source_document_version_id
                 LEFT JOIN baseline_item_source s ON s.baseline_id=e.baseline_id AND s.design_item_id=e.design_item_id

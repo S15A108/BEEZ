@@ -5,6 +5,7 @@ import static com.beez.backend.designitem.support.DesignJson.id;
 
 import com.beez.backend.changeproposal.repository.PublicationRepository;
 import com.beez.backend.designitem.repository.BaselineRepository;
+import com.beez.backend.designitem.support.SourceLocators;
 import com.beez.backend.designitem.support.SourceRemapper;
 import java.util.HashMap;
 import java.util.Map;
@@ -26,6 +27,9 @@ import tools.jackson.core.type.TypeReference;
  * <p>출처 문서는 있는데 출처 위치가 없는 항목(근거 없이 채택한 후보)도 {@code NEEDS_CONFIRMATION} 이다. 옮길 줄이 없으므로
  * 위치는 빈 객체({@code {}})로 적는다 — baseline_item_source.source_locator 는 NOT NULL 이고, 이미 어긋난 기준을 채우는
  * 백필(V52)도 같은 값을 쓴다(S15P31A108-415).
+ *
+ * <p>사람이 위치를 확정한 행({@code CONFIRMED}, PLN-A11)은 문서가 같으면 확정한 사람·때째로 이어받고, 문서가 바뀌면 줄 범위를
+ * 다른 위치처럼 옮긴다. 인용 없음 표시는 옮길 줄이 없으므로 문서 버전만 따라간다(S15P31A108-422).
  */
 @Component
 public class BaselineSourceCarrier {
@@ -64,9 +68,17 @@ public class BaselineSourceCarrier {
                 if (status != null) {
                     long origin = row.get("remapped_from_document_version_id") == null
                             ? from : id(row, "remapped_from_document_version_id");
-                    baselines.insertItemSource(baseline, project, item, from, locator, status, origin);
+                    Long confirmedBy = row.get("confirmed_by") == null ? null : id(row, "confirmed_by");
+                    baselines.insertItemSource(baseline, project, item, from, locator, status, origin, confirmedBy,
+                            row.get("confirmed_at"));
                     carried++;
                 }
+                continue;
+            }
+            if (SourceLocators.isNoQuote(locator)) {
+                // 인용 없음으로 확인된 항목은 옮길 줄이 없다 — 문서 버전만 따라가고 확인 필요로 만들지 않는다(S15P31A108-422).
+                baselines.insertItemSource(baseline, project, item, target, locator, REMAPPED, from);
+                remapped++;
                 continue;
             }
             if (NEEDS_CONFIRMATION.equals(status)) {

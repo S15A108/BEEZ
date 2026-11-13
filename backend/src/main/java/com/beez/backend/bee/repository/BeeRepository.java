@@ -1,6 +1,7 @@
 package com.beez.backend.bee.repository;
 
 import com.beez.backend.designitem.support.DesignJson;
+import com.beez.backend.designitem.support.SourceLocators;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,8 +67,10 @@ public class BeeRepository {
             item.put("schema_version", row.get("schema_version"));
             item.put("content", DesignJson.JSON.readValue(row.get("content").toString(), new TypeReference<Map<String, Object>>() { }));
             // 문서가 바뀌어 인용 줄을 옮기지 못한 항목의 출처는 보내지 않는다(-406).
+            // 인용 없음으로 확인된 항목도 인용할 원문 위치가 없으므로 출처를 보내지 않는다(-422).
             if (row.get("source_document_id") != null && row.get("source_locator") != null
-                    && !"NEEDS_CONFIRMATION".equals(row.get("source_status"))) {
+                    && !"NEEDS_CONFIRMATION".equals(row.get("source_status"))
+                    && !SourceLocators.isNoQuote(row.get("source_locator"))) {
                 Map<String, Object> locator = DesignJson.JSON.readValue(row.get("source_locator").toString(),
                         new TypeReference<Map<String, Object>>() { });
                 String location = Objects.toString(locator.get("location"), "");

@@ -89,6 +89,7 @@
 - [PLN-A08 설계 항목 초안 수정](#pln-a08)
 - [PLN-A09 설계 항목 초안 제외](#pln-a09)
 - [PLN-A10 최초 기준 설계 생성](#pln-a10)
+- [PLN-A11 기준 설계 항목 출처 위치 확정](#pln-a11)
 - [DOC-A08 현재 기준 설계 조회](#doc-a08)
 - [DOC-A09 기준 설계 이력 목록](#doc-a09)
 - [DOC-A10 기준 설계 특정 버전 조회](#doc-a10)
@@ -4685,6 +4686,7 @@ HTTP `202`.
 `POST /api/projects/{id}/design-draft-candidates/{candidate_id}/adopt` — `LEADER`(사람). 본문(선택): `{"confirm_no_evidence": boolean, "resolved_fields": string[], "confirm_duplicate": boolean}`.
 
 - CREATE는 새 설계 항목과 v1 DRAFT(`origin=AI_PROPOSED`, `source_document_version_id`=요청 문서 버전, `source_locator`=첫 근거 위치)를 만든다. UPDATE는 대상 DRAFT의 본문을 후보의 `after`로 바꾼다(출처·`origin`은 그대로).
+- 원문 인용이 없는 후보(`sources=[]`, 답변만 근거이거나 근거 없음을 확인하고 채택)는 출처 문서는 남기고 위치를 **인용 없음**(`{"no_quote": true, "location": "원문 인용 없음"}`)으로 적는다. 위치를 비워 두면 그 항목을 참조하는 작업 검증이 근거 수집에서 영구히 막혔다(S15P31A108-422). 근거 수집은 인용 없음 항목을 출처 없는 수동 항목처럼 건너뛴다. 인용이 있으면 위치가 있는 첫 인용을 대표 위치로 쓰고, 어느 인용에도 위치가 없으면 위치를 비워 둔다(인용이 있으니 인용 없음이 아니다 — 시작 뒤 PLN-A11로 지정).
 - `support=NONE`은 `confirm_no_evidence=true`로 근거 없음을 확인해야 채택한다. `conflicting_fields`가 있으면 모두 `resolved_fields`에 담아 사용자가 확정해야 한다. 아니면 400 `validation_failed`.
 - 반영 직전 프로젝트 잠금 뒤 후보를 만든 당시와 지금이 같은지 확인한다: 기준 설계 없음(아니면 409 `baseline_exists`), 원문 분석 텍스트 해시 동일, 쓰인 답변(`answer_refs`)의 구조 답변 동일, UPDATE는 대상 DRAFT가 그대로이고 본문 해시가 후보의 `before`와 같음. 하나라도 다르면 **그 후보만** 409 `candidate_stale`로 막고 초안을 다시 만들도록 안내한다. 사람이 고친 본문은 그대로 남는다.
 - 같은 후보를 다시 채택하면 처음 결과를 그대로 돌려준다(후보 ID 기준 멱등, 중복 반영 없음). 폐기한 후보는 409 `candidate_discarded`. 응답은 후보와 `design_item_version_id`.
@@ -4964,6 +4966,7 @@ HTTP `201`.
 - content는 [DesignItemContent v1](00-common.md#schema-designitem-content-v1)을 검증한다. 추가 JSON 필드는 보존한다.
 - 프로젝트 잠금 아래 REQ/API/ENT/POL/CON 접두사와 증가 번호로 표시 key를 발급하며 제외한 번호를 재사용하지 않는다.
 - 출처 버전은 같은 프로젝트여야 하고 source_location은 버전과 함께만 지정한다. 출처가 없으면 가짜 source를 반환하지 않는다.
+- 출처 버전만 주고 source_location을 비우면 위치가 빈 항목이 된다. 근거 수집은 이 항목을 쓸 수 없는 근거로 보므로, 기준 발행 뒤 PLN-A11로 위치를 지정하거나 인용 없음으로 확정해야 그 항목을 참조하는 작업을 검증할 수 있다(S15P31A108-422).
 - Idempotency-Key와 Origin/Referer 검사를 적용한다. 같은 사용자/프로젝트/동작/키·같은 입력은 24시간 응답을 재사용하고 다른 입력은 409 idempotency_conflict다.
 
 - ID·표시 키는 서버가 발급하며 DRAFT로 저장한다.
@@ -5098,6 +5101,7 @@ HTTP `200`.
 - 최초 baseline 생성 전 HUMAN LEADER만 수정한다. 기존 baseline이면 409 baseline_exists다.
 - DRAFT의 같은 버전 행을 수정하며 expected_version_id/expected_content_hash를 대조한다. canonical JSON은 객체 키를 재귀 정렬하고 배열 순서·문자열 공백을 보존한 UTF-8 SHA-256이다.
 - replace_source=true면 같은 프로젝트 출처로 변경하거나 null 버전으로 출처·위치를 제거한다. 생략하면 출처를 유지한다. key는 바뀌지 않는다.
+- replace_source=true로 출처 버전만 주고 source_location을 비우면 위치가 지워진다. 사람이 근거 없음을 확인한 것이 아니므로 인용 없음으로 바꾸지 않는다 — 기준 발행 뒤 PLN-A11로 지정한다(S15P31A108-422).
 - 출처 변경에는 PLN-A06의 expected_draft_snapshot_hash가 필수다. 본문이 같아도 출처 경합을 감지하고 불일치/누락은 409 draft_changed다.
 - content는 [공통 본문 스키마](00-common.md#schema-designitem-content-v1)를 따르며 Origin/Referer를 검사한다.
 
@@ -5325,6 +5329,94 @@ HTTP `201`.
 최초 발행에는 과거 baseline이 없으므로 기존 검증을 무효화하지 않는다. 변경 후 승인·발행·재검증은 CHG-A09 계약을 따른다. 타임라인 활동 이벤트 연결은 후속 104 범위로 유지하며 이 PR의 저장 성공을 이벤트 전달 완료로 보지 않는다.
 
 - (수정안 요청) 화면은 공용 문서함에서 필수 4종이 모두 승인·색인되면 팀장에게 '기준 만들기' 버튼을 보이고 이 API를 부른다. 팀원에게는 '팀장이 기준을 만들면 변경 제안과 작업 계획을 시작할 수 있어요'를 보인다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="pln-a11"></a>
+
+## PLN-A11. 기준 설계 항목 출처 위치 확정
+
+
+### PUT `/api/human/design-items/{id}/source`
+
+시작된 프로젝트에서 팀장이 현재 기준 설계 항목의 출처 위치를 지정하거나 인용 없음으로 확정한다(S15P31A108-422).
+
+관련 요구사항: PLN-07, VAL-02  
+담당: BE: 전진 / FE: 전진  
+상태: 구현
+
+#### 인증
+
+`LEADER`(사람). 세션 인증과 Origin/Referer를 검사한다. 프로젝트 행을 잠근 뒤 팀장 권한을 다시 확인한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 설계 항목 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+줄 범위(`start_line`·`end_line`)와 `no_quote=true` 중 **하나만** 보낸다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `expected_version_id` | `ID` | Y | 현재 기준에 든 항목 버전 ID(PLN-A06 `status=APPROVED`의 `id`) |
+| `start_line` | `integer` | N | 현재 기준 문서 버전 원문의 시작 줄(1부터) |
+| `end_line` | `integer` | N | 끝 줄(포함). 시작 줄 이상 |
+| `no_quote` | `boolean` | N | true면 원문에 인용할 줄이 없다고 확정한다(답변만 근거인 항목 등) |
+
+```json
+{
+  "project_id": "30",
+  "expected_version_id": "888",
+  "start_line": 28,
+  "end_line": 28
+}
+```
+
+#### Response
+
+HTTP `200`. PLN-A08과 같은 설계 항목 응답이다. `source`는 현재 기준의 유효 출처이며 `location`은 줄 범위면 `"제목 경로 / L28-L28"`, 인용 없음이면 `"원문 인용 없음"`이다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 사람 팀장이 아님 |
+| 403 | `request_origin_rejected` | Origin/Referer가 누락되었거나 허용된 출처와 일치하지 않음 |
+| 404 | `not_found` | 항목이 현재 기준에 없거나 프로젝트 소속이 아님 |
+| 400 | `validation_failed` | 줄 범위와 no_quote를 함께·모두 생략, 범위가 문서 밖, 발췌가 16,000바이트 초과 |
+| 409 | `baseline_required` | 기준 설계 발행 전. PLN-A08로 출처를 고친다 |
+| 409 | `version_conflict` | `expected_version_id`가 현재 기준의 항목 버전과 다름 |
+| 409 | `design_source_missing` | 원문 출처가 없는 수동 항목 |
+| 409 | `source_document_not_in_baseline` | 출처 문서 버전이 현재 기준 문서에 없음 |
+| 409 | `source_text_unavailable` | 원문이 없거나 저장된 해시와 다름 |
+
+#### 처리 규칙
+
+- 출처 문서는 있는데 위치가 없거나(근거 없이 채택한 후보), 문서가 바뀌어 위치를 옮기지 못한(`NEEDS_CONFIRMATION`, S15P31A108-406) 항목은 근거 수집이 쓸 수 없어 그 항목을 참조하는 작업 검증이 `source_evidence_unavailable`로 막힌다. 이 API가 그 복구 경로다.
+- 항목 버전(`design_item_version`)은 승인 뒤 불변이고 새 버전을 만들면 작업 계획의 설계 참조가 낡으므로, 현재 기준의 유효 출처(`baseline_item_source`)만 `CONFIRMED`로 기록한다. 같은 기준·항목에 행이 있으면 같은 문서 버전에서 위치만 바꾼다. 확정한 사람·시각을 남긴다.
+- 줄 범위는 현재 기준 문서 버전 원문(근거 수집과 같은 정규화·해시)으로 확인하고, 표시 위치는 시작 줄 위 마크다운 제목 경로에 `Ls-Le`를 붙여 만든다.
+- 다음 기준 발행에서 문서가 같으면 확정한 사람·시각째로 이어받고, 문서가 바뀌면 다른 위치처럼 줄을 옮긴다(옮기지 못하면 다시 `NEEDS_CONFIRMATION`). 인용 없음은 옮길 줄이 없어 문서 버전만 따라간다.
+- 같은 입력을 다시 보내도 결과가 같다. 지정한 뒤 작업 담당자가 새 검증을 요청한다.
+- 화면: 작업 검증이 근거 수집에서 막히면 실패 안내에 원인 항목(`execution_failure.design_items`)이 보이고, 팀장은 항목별 '출처 위치 지정' 창에서 원문 줄을 보고 범위를 고르거나 인용 없음으로 확정한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

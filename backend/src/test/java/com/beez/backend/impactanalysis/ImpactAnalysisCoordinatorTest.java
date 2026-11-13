@@ -72,6 +72,18 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(((Map<?, ?>) approved.get("source")).get("location")).isEqualTo("\u001clines  5-7\u001c");
     }
 
+    /** S15P31A108-422 리뷰 반영: 인용 없음 표시의 "원문 인용 없음" 이 실제 원문 위치처럼 AI 근거로 가면 안 된다. */
+    @Test
+    void noQuoteSourceIsNotSentAsADocumentLocation() {
+        var base = snapshot();
+        var noQuote = new ImpactContextQuery.ApprovedItem(10, 100, "API-1", "API_CONTRACT", 1, 1,
+                "member", "{\"path\":\"/v1\"}", 7L, 8L, 1, com.beez.backend.designitem.support.SourceLocators.NO_QUOTE);
+        var body = ImpactRequestAssembler.assemble(new ImpactContextQuery.Snapshot(base.proposal(), base.changes(),
+                List.of(noQuote), base.dependencies(), base.taskReferences(), base.ruleCandidateStatus()), "request-1");
+        var approved = (Map<?, ?>) ((List<?>) body.get("approved_items")).getFirst();
+        assertThat(approved.containsKey("source")).isFalse();
+    }
+
     @Test
     void whitespaceOnlySourceWithoutLineRangeIsNotSent() {
         var body = ImpactRequestAssembler.assemble(snapshotWithLocation("\u00a0 \u0085"), "request-1");
