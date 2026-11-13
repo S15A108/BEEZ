@@ -136,60 +136,44 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(success.recordedRetryAttempts()).isEqualTo(1);
     }
 
-    @Test void blockedProjectMetricFollowsTheWorkerPredecessorRule() {
-        long next = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
-                .param("p", project).param("a", leader).query(Long.class).single();
-        api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) VALUES(:p,:b,'PENDING')")
-                .param("p", project).param("b", next).update();
-        api.jdbc.sql("UPDATE published_change_analysis SET status='FAILED',error_code='analysis_interrupted' WHERE id=:id")
-                .param("id", intake).update();
-        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+    /**
+     * 앞 버전은 접수행이 없거나 아직 PENDING·RUNNING일 때만 뒤 버전을 막는다. FAILED·미평가로 끝난 앞 버전은 뒤 버전이
+     * 발행된 뒤에는 다시 분석할 수 없으므로(baseline_changed) 기다리면 그 프로젝트가 영구히 멈춘다.
+     * 워커 선점과 막힘 지표가 같은 판정을 쓰는지 함께 본다 (S15P31A108-408).
+     */
+    @Test void earlierVersionBlocksOnlyWhileMissingPendingOrRunning() {
+        long nextIntake = pendingLaterPublication();
+        for (String waiting : List.of("status='PENDING',attempt=0,lease_until=NULL",
+                "status='RUNNING',attempt=1,lease_until=clock_timestamp()+interval '1 minute'")) {
+            setEarlier(waiting);
+            assertThat(metricsReader.read().blockedProjects()).as(waiting).isEqualTo(1);
+            assertThat(repository.claimNow(nextIntake, 60)).as(waiting).isEmpty();
+        }
+        for (String finished : List.of(
+                "status='FAILED',attempt=4,lease_until=NULL,error_code='model_unavailable'",
+                "status='FAILED',attempt=1,lease_until=NULL,error_code='baseline_changed'",
+                "status='NOT_EVALUATED',attempt=1,lease_until=NULL,evaluation_status='NOT_EVALUATED',error_code='change_content_unavailable'",
+                "status='NOT_EVALUATED',attempt=1,lease_until=NULL,evaluation_status='NOT_EVALUATED',error_code='document_change_unavailable'",
+                "status='COMPLETED',attempt=1,lease_until=NULL,evaluation_status='INSUFFICIENT_EVIDENCE',error_code=NULL")) {
+            setEarlier(finished);
+            assertThat(metricsReader.read().blockedProjects()).as(finished).isZero();
+            assertThat(repository.claimNow(nextIntake, 60)).as(finished).isPresent();
+            api.jdbc.sql("UPDATE published_change_analysis SET status='PENDING',attempt=0,lease_until=NULL,started_at=NULL WHERE id=:id")
+                    .param("id", nextIntake).update();
+        }
 
-        // COMPLETED with insufficient evidence still satisfies the existing ordering rule.
-        api.jdbc.sql("UPDATE published_change_analysis SET status='COMPLETED',evaluation_status='INSUFFICIENT_EVIDENCE',error_code=NULL WHERE id=:id")
-                .param("id", intake).update();
-        assertThat(metricsReader.read().blockedProjects()).isZero();
-
-        api.jdbc.sql("UPDATE published_change_analysis SET status='NOT_EVALUATED',evaluation_status='NOT_EVALUATED',error_code=NULL WHERE id=:id")
-                .param("id", intake).update();
-        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+        // 막지 않아도 끝난 앞 버전의 미평가는 확인 필요 지표에 그대로 남는다
+        setEarlier("status='NOT_EVALUATED',attempt=1,lease_until=NULL,evaluation_status='NOT_EVALUATED',error_code='change_content_unavailable'");
         assertThat(metricsReader.read().notEvaluatedRequiresReview()).isEqualTo(1);
 
-        api.jdbc.sql("UPDATE published_change_analysis SET error_code='published_before_intake' WHERE id=:id")
-                .param("id", intake).update();
-        assertThat(metricsReader.read().blockedProjects()).isZero();
-        assertThat(metricsReader.read().notEvaluatedExpected()).isEqualTo(2);
+        // 앞 버전의 접수행이 없으면(데이터 이상) 지금처럼 막는다
+        api.jdbc.sql("DELETE FROM published_change_analysis WHERE id=:id").param("id", intake).update();
+        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+        assertThat(repository.claimNow(nextIntake, 60)).isEmpty();
     }
 
-    @Test void unsupportedDocumentChangeAllowsNextClaimButStillRequiresReview() {
-        long nextBaseline = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
-                .param("p", project).param("a", leader).query(Long.class).single();
-        long nextIntake = api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) "
-                + "VALUES(:p,:b,'PENDING') RETURNING id")
-                .param("p", project).param("b", nextBaseline).query(Long.class).single();
-
-        // Other failures and unexplained unevaluated results must still stop later work.
-        api.jdbc.sql("UPDATE published_change_analysis SET status='FAILED',error_code='document_change_unavailable' WHERE id=:id")
-                .param("id", intake).update();
-        assertThat(repository.claimNow(nextIntake, 60)).isEmpty();
-        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
-        api.jdbc.sql("UPDATE published_change_analysis SET status='NOT_EVALUATED',evaluation_status='NOT_EVALUATED',"
-                + "error_code='change_content_unavailable' WHERE id=:id").param("id", intake).update();
-        assertThat(repository.claimNow(nextIntake, 60)).isEmpty();
-        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
-        assertThat(metricsReader.read().notEvaluatedRequiresReview()).isEqualTo(1);
-
-        api.jdbc.sql("UPDATE published_change_analysis SET error_code='document_change_unavailable' WHERE id=:id")
-                .param("id", intake).update();
-        var metrics = metricsReader.read();
-        assertThat(metrics.blockedProjects()).isZero();
-        assertThat(metrics.notEvaluatedExpected()).isEqualTo(1);
-        assertThat(metrics.notEvaluatedRequiresReview()).isEqualTo(1);
-        assertThat(repository.claimNow(nextIntake, 60)).isPresent();
-        assertThat(api.jdbc.sql("SELECT status,evaluation_status,error_code FROM published_change_analysis WHERE id=:id")
-                .param("id", intake).query().singleRow())
-                .containsEntry("status", "NOT_EVALUATED").containsEntry("evaluation_status", "NOT_EVALUATED")
-                .containsEntry("error_code", "document_change_unavailable");
+    private void setEarlier(String assignments) {
+        api.jdbc.sql("UPDATE published_change_analysis SET " + assignments + " WHERE id=:id").param("id", intake).update();
     }
 
     @SuppressWarnings("unchecked")
@@ -383,5 +367,33 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(api.jdbc.sql("SELECT error_code FROM published_change_analysis WHERE id=:id").param("id",intake)
                 .query(String.class).single()).isEqualTo("baseline_changed");
         verify(ai,times(1)).changeImpact(any());
+    }
+
+    /**
+     * 분석 중 뒤 버전이 발행되면 앞 버전은 재시도에서 baseline_changed 로 끝난다. 뒤 버전은 앞 버전이 끝나기까지만 기다리고
+     * 그 뒤 바로 선점된다. 전에는 끝난 앞 버전(FAILED)을 계속 기다려 그 프로젝트의 발행 후 분석이 영구히 멈췄다
+     * (dev 프로젝트 20: v2 FAILED 뒤 v3·v4 PENDING 고착, S15P31A108-408).
+     */
+    @Test void aVersionSupersededDuringAnalysisDoesNotBlockTheLaterPublication() {
+        long[] later = new long[1];
+        when(ai.changeImpact(any())).thenAnswer(call -> {
+            long next = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
+                    .param("p", project).param("a", leader).query(Long.class).single();
+            api.jdbc.sql("UPDATE project SET current_baseline_id=:b WHERE id=:p").param("b", next).param("p", project).update();
+            later[0] = api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) "
+                    + "VALUES(:p,:b,'PENDING') RETURNING id").param("p", project).param("b", next).query(Long.class).single();
+            return envelope();
+        });
+        processor.process(intake);
+        // 앞 버전이 재시도를 기다리는 동안에는 순서대로 기다린다
+        assertThat(repository.claimNow(later[0], 60)).isEmpty();
+
+        api.jdbc.sql("UPDATE published_change_analysis SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id")
+                .param("id", intake).update();
+        processor.process(intake);
+        assertThat(api.jdbc.sql("SELECT status,error_code FROM published_change_analysis WHERE id=:id").param("id", intake)
+                .query().singleRow()).containsEntry("status", "FAILED").containsEntry("error_code", "baseline_changed");
+        assertThat(metricsReader.read().blockedProjects()).isZero();
+        assertThat(repository.claimNow(later[0], 60)).isPresent();
     }
 }

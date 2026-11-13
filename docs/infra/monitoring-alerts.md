@@ -102,8 +102,8 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 
 **하지 않는 것**: `FAILED`를 `PENDING`으로 바꾸거나 `attempt`를 초기화하는 등 DB 상태를
 직접 바꾸지 않습니다. 워커는 attempt 4 이상을 선점하지 않고, 시도 이력이
-`(intake_id, attempt)` 기본 키라 이력이 깨집니다. 일반 `NOT_EVALUATED`로 바꿔도 후속
-분석의 선행 조건을 채우지 못합니다. 안전한 수동 재처리는 별도 백엔드 작업(수동 재처리 API,
+`(intake_id, attempt)` 기본 키라 이력이 깨집니다. 끝난 접수는 후속 분석을 막지 않으므로
+(S15P31A108-408) 순서를 풀려고 상태를 바꿀 이유도 없습니다. 안전한 수동 재처리는 별도 백엔드 작업(수동 재처리 API,
 티켓 미생성)입니다. 근거: [243 지표 계약 "복구 경계"](../design/cdc-observability-243.md#복구-경계).
 
 ## 알림별
@@ -115,7 +115,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 - 볼 곳: `BEEZ CDC 분석`의 "가장 오래된 PENDING 경과", "재시도 예정 PENDING", "막힌
   프로젝트". backend 로그의 분석 워커 오류.
 - 재시도 예정이 같이 늘었으면 AI 호출 실패로 재시도 중일 가능성, 막힌 프로젝트가 같이
-  있으면 선행 접수 미완료로 순서 대기일 가능성이 큽니다.
+  있으면 앞선 접수가 아직 처리 중(재시도 대기 포함)이거나 접수행이 빠진 경우입니다.
 - 복구 스캔이 꺼진 환경(`BEEZ_CDC_INTAKE_ENABLED=false`)에서는 울리지 않습니다. 처리는 스캔이 맡으므로
   consumer 설정이 아니라 스캔 설정(`beez_cdc_analysis_recovery_enabled`)을 봅니다(S15P31A108-298) — Kafka가
   죽어 스캔만 도는 동안에도 지연은 알립니다.
@@ -150,13 +150,14 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 
 ### CdcBlockedProjects
 
-`PENDING`이 있지만 선행 baseline 누락·미완료로 순서상 처리할 수 없는 프로젝트가 10분 넘게
-있습니다.
+`PENDING`이 있지만 앞선 baseline·접수행이 빠졌거나 앞선 접수가 아직 `PENDING`·`RUNNING`이라
+순서상 기다리는 프로젝트가 10분 넘게 있습니다.
 
-- 볼 곳: 같은 시각의 `CdcFailedIntakes`·`CdcNotEvaluatedRequiresReview`와 선행 접수의
-  상태·사유. FAILED와 `document_change_unavailable` 이외의 확인 필요 미평가는 후속 분석을
-  막을 수 있으며 자동 재처리되지 않습니다(수동 재처리 API 없음). `document_change_unavailable`은
-  후속 분석의 순서를 막지 않지만 해당 버전의 미평가 확인은 여전히 필요합니다.
+- 끝난 앞선 접수(`FAILED`·`NOT_EVALUATED`)는 막지 않습니다(S15P31A108-408). 뒤 발행이 있으면 앞선
+  버전은 다시 분석할 수 없어, 기다리면 그 프로젝트가 영구히 멈추기 때문입니다.
+- 볼 곳: 같은 시각의 `CdcPendingDelay`·`CdcExpiredLeases`(앞선 접수가 오래 PENDING·RUNNING인지),
+  backend 로그의 분석 워커 오류. 앞선 접수행이 아예 없으면 발행·접수 데이터 이상이라 앱 담당이
+  DB를 조회해 봅니다(조회만).
 
 ### CdcFailedIntakes
 
@@ -170,11 +171,11 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 
 ### CdcNotEvaluatedRequiresReview
 
-최초 v1이나 명시적 과거 백필이 아닌 `NOT_EVALUATED`가 남아 있습니다. 모두 장애는 아니지만
-후속 분석을 막을 수 있습니다. 단, `document_change_unavailable`은 후속 분석을 막지 않아도
+최초 v1이나 명시적 과거 백필이 아닌 `NOT_EVALUATED`가 남아 있습니다. 모두 장애는 아니고
+후속 분석도 막지 않지만(S15P31A108-408), 그 버전의 영향은 평가되지 않았습니다. `document_change_unavailable`은
 해당 버전의 문서와 설계 항목을 포함한 영향 분석 전체가 미평가로 남습니다. 재통지는 24시간입니다.
 
-- 볼 곳: "확인 필요 미평가", "막힌 프로젝트". "미평가(예상된 것)"는 장애가 아닙니다.
+- 볼 곳: "확인 필요 미평가". "미평가(예상된 것)"는 장애가 아닙니다.
 
 ### CdcKafkaReceiveFailures
 
@@ -425,7 +426,7 @@ S15P31A108-229(CDC 통합·장애 복구 검증, 양지훈)가 Sprint5에 지연
 |---|---|
 | consumer·워커 중단 뒤 지연 | `CdcPendingDelay`가 약 15분 뒤 오는지, 재시작 뒤 해소 글이 오는지 |
 | 분석 실패(재시도 소진) | `CdcFailedIntakes`가 오고 24시간 재통지가 걸리는지 |
-| 선행 접수 미완료 | `CdcBlockedProjects`가 10분 뒤 오는지 |
+| 선행 접수 처리 중(PENDING·RUNNING) | `CdcBlockedProjects`가 10분 뒤 오는지, 선행이 끝나면(FAILED 포함) 풀리는지 |
 | 워커 강제 종료 | `CdcExpiredLeases` |
 | Kafka 수신 오류 | `CdcKafkaReceiveFailures`(consumer 켜진 환경에서만) |
 | Kafka 중지(261) | `CdcConsumerDown`·`CdcKafkaUnreachable`이 5분 뒤 함께 오는지, 다시 띄우면 둘 다 해소 글이 오는지 |
