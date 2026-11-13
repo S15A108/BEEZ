@@ -213,6 +213,7 @@ async def create_planning_questions(
             timeout_seconds=config.timeout_seconds,
             output_token_limit=config.output_token_limit,
             output_token_parameter=config.output_token_parameter,
+            known_questions=body.known_questions,
         )
         outcome = await generate_planning_questions(body, proposer)
     return outcome.to_api_dict()

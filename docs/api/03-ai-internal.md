@@ -53,6 +53,7 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/document-revisions](#ai-a12)
 - [/v1/document-revision-blocks](#ai-a13)
 - [/v1/development-context-selections](#ai-a14)
+- [/v1/planning-questions](#planning-questions)
 
 ---
 
@@ -2420,3 +2421,23 @@ HTTP `200` 응답은 `{result, origin: MODEL, model, usage[]}`이며 `result`는
 모델은 전체 계획 대신 칸별 변경만 반환한다. AI가 원본에 변경을 합성하고, 수정하지 않은 칸은 보존한다. 허용하지 않은 필드, 중복 변경, 없는 발견 항목, 원문과 일치하지 않는 인용은 전체 제안을 거절한다. `HUMAN_REVIEW`·`PROPOSE_CHANGE` 항목은 계획 수정의 권한으로 사용하지 않는다. BE는 반환된 5개 칸만 원본에 덮어쓰고, 나머지 필드는 기존 값을 보존한다.
 
 요청 크기·출력 토큰·입력 예산·사용량·오류 형식은 AI-A14 설정을 재사용한다. 이 엔드포인트의 모델 실행 제한은 최대 30초다. 수정안 생성 실패를 계획 저장 성공으로 표시하지 않으며 자동 추가 호출하지 않는다.
+
+---
+
+<a id="planning-questions"></a>
+
+## 기획 보완 질문 생성 (PLN-A03, `/v1/planning-questions`)
+
+요청·응답·오류 전체는 [#133 계약](../design/planning-question-answer-contract-S15P31A108-133.md) 4~9절이 정본이다. 여기는 BE 질문 워커가 보내는 요청 필드 중 S15P31A108-414에서 더한 `known_questions`만 적는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `known_questions` | `{question, status, answer?}[]` ≤ 100 | N | 같은 프로젝트에서 목록에 보이는 질문 중 이번 문서 버전이 아닌 것(다른 문서, 같은 문서 이전 버전의 답한·닫은 질문). 최근 것부터. 기본 빈 배열 |
+| `known_questions[].question` | string 1~2,000 | Y | 질문 문구 |
+| `known_questions[].status` | `OPEN\|ANSWERED\|DISMISSED` | Y | `SUPERSEDED`·조회 때 대체로 판정된 질문은 보내지 않는다 |
+| `known_questions[].answer` | string 1~200 \| null | N | `ANSWERED`일 때만 답의 앞 200자 |
+
+- 상한: 최대 100개, 질문·답 글자 수(코드 포인트) 합 30,000자. BE가 최근 것부터 담다가 상한에서 멈춘다. 넘는 요청은 AI가 전체를 거절한다(400 `validation_failed` 또는 422 `invalid_ai_input`).
+- 같은 문서 이전 버전의 미답변 질문은 이번 생성이 끝나면 대체로 판정돼 사라지므로 보내지 않는다.
+- 모델에만 넘긴다(규칙 후보는 그대로). 모델 지시는 ①이미 묻거나 답하거나 닫은 결정은 다시 묻지 않는다 ②문서가 이미 받은 답과 어긋날 때만 `CONFLICT`로 묻는다 ③한 질문에는 결정 하나만, 같은 결정은 하나로 합친다. `known_questions`는 신뢰할 수 없는 데이터로 취급하며 근거(인용)로 쓰지 않는다.
+- 모델 입력 256 KiB 상한은 문서 블록에만 적용한다. `known_questions`가 비어 있으면 모델 입력은 이전과 같다.

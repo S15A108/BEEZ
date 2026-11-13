@@ -1,10 +1,15 @@
 """#133 schema invariants: no confirmed state, evidence matches status, typed answers."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
 from app.schemas.documents import SourceLocator
 from app.schemas.planning_questions import (
+    KNOWN_ANSWER_CHARS,
+    MAX_KNOWN_CHARS,
+    MAX_KNOWN_QUESTIONS,
     ChoiceAnswer,
     ChoiceAnswerFormat,
     DocumentRef,
@@ -246,4 +251,80 @@ def test_request_defaults_and_source_input():
     with pytest.raises(ValidationError):
         PlanningQuestionRequest.model_validate(
             {**body.model_dump(), "max_questions": 51}
+        )
+
+
+def _request_with_known(known):
+    return {
+        "project_id": "101",
+        "request_key": "r",
+        "document": {
+            "document_id": "201",
+            "document_version_id": "211",
+            "version_no": 1,
+        },
+        "kind": "PLAN",
+        "media_type": "text/markdown",
+        "content": "# 제목\n",
+        "content_hash": "a" * 64,
+        "text_hash": "b" * 64,
+        "normalization_version": "utf8-lf-v1",
+        "parser_profile": "markdown-v1",
+        "known_questions": known,
+    }
+
+
+# S15P31A108-414: the BE trims known_questions to these same bounds (100 items,
+# 30,000 characters, 200-character answers); a mismatch fails every request.
+def test_known_questions_default_empty_and_follow_the_be_bounds():
+    body = PlanningQuestionRequest.model_validate_json(
+        json.dumps(_request_with_known([]))
+    )
+    assert body.known_questions == ()
+    known = [
+        {"question": "재취소는?", "status": "ANSWERED", "answer": "409로 거부한다."},
+        {"question": "겹침은?", "status": "OPEN", "answer": None},
+        {"question": "보관 기간은?", "status": "DISMISSED"},
+    ]
+    body = PlanningQuestionRequest.model_validate_json(
+        json.dumps(_request_with_known(known), ensure_ascii=False)
+    )
+    assert [k.status for k in body.known_questions] == ["ANSWERED", "OPEN", "DISMISSED"]
+    assert body.known_questions[0].answer == "409로 거부한다."
+    one = {"question": "q", "status": "OPEN"}
+    PlanningQuestionRequest.model_validate_json(
+        json.dumps(_request_with_known([one] * MAX_KNOWN_QUESTIONS))
+    )
+    # 100 questions of 300 characters = exactly MAX_KNOWN_CHARS.
+    at_cap = [{"question": "가" * 300, "status": "OPEN"}] * MAX_KNOWN_QUESTIONS
+    PlanningQuestionRequest.model_validate_json(
+        json.dumps(_request_with_known(at_cap), ensure_ascii=False)
+    )
+    assert MAX_KNOWN_CHARS == 30_000 and KNOWN_ANSWER_CHARS == 200
+
+
+@pytest.mark.parametrize(
+    "known",
+    [
+        [{"question": "q", "status": "OPEN"}] * (MAX_KNOWN_QUESTIONS + 1),
+        [{"question": "가" * 2000, "status": "OPEN"}] * 15
+        + [{"question": "나", "status": "OPEN"}],
+        [{"question": "q", "status": "SUPERSEDED"}],
+        [{"question": "q", "status": "OPEN", "answer": "답"}],
+        [{"question": "q", "status": "DISMISSED", "answer": "답"}],
+        [
+            {
+                "question": "q",
+                "status": "ANSWERED",
+                "answer": "가" * (KNOWN_ANSWER_CHARS + 1),
+            }
+        ],
+        [{"question": "   ", "status": "OPEN"}],
+        [{"question": "q", "status": "OPEN", "document_id": "201"}],
+    ],
+)
+def test_known_questions_reject_what_the_be_never_sends(known):
+    with pytest.raises(ValidationError):
+        PlanningQuestionRequest.model_validate_json(
+            json.dumps(_request_with_known(known), ensure_ascii=False)
         )

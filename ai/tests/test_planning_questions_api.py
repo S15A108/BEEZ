@@ -171,3 +171,19 @@ def test_default_settings_match_the_measured_limits():
     )
     assert config.output_token_limit == planning_questions.DEFAULT_OUTPUT_TOKEN_LIMIT
     assert config.timeout_seconds == planning_questions.DEFAULT_TIMEOUT_SECONDS
+
+
+# S15P31A108-414: the router hands the request's known questions to the model.
+def test_known_questions_reach_the_model_input(api):
+    known = [
+        {"question": "재취소는?", "status": "ANSWERED", "answer": "409로 거부한다."}
+    ]
+    response = api.post({**request_body("plan.md"), "known_questions": known})
+    assert response.status_code == 200
+    payload = json.loads(api.provider.calls[0].messages[1].content)
+    assert payload["known_questions"] == known
+    bad = [{"question": "q", "status": "SUPERSEDED"}]
+    assert (
+        api.post({**request_body("plan.md"), "known_questions": bad}).status_code == 400
+    )
+    assert len(api.provider.calls) == 1

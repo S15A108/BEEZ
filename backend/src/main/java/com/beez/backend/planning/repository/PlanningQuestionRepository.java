@@ -199,6 +199,21 @@ public class PlanningQuestionRepository {
         return jdbc.sql("SELECT count(*) FROM (" + live(filter) + ") x").params(p).query(Long.class).single();
     }
 
+    /**
+     * 질문을 만들 버전에 넘길 같은 프로젝트의 기존 질문(S15P31A108-414). 목록에 보이는 질문({@link #live}) 중 이 버전의 질문은
+     * 빼고(재분석 병합 대상이다), 최근(id 큰) 것부터 {@code limit} 개다.
+     *
+     * <p>같은 문서의 이전 버전 질문은 답한·닫은 것만 넣는다. 이 버전은 그 문서의 기준 버전이라, 이 실행이 끝나면 이전 버전의
+     * 미답변 질문은 조회할 때 대체로 판정돼 사라진다 — 넘기면 모델이 그 결정을 묻지 않아 아무도 묻지 않게 된다.
+     * {@link #page} 를 쓰지 않은 이유: 오름차순 커서 목록이라 '최근 것부터 N개'와 '이 버전 제외'를 표현할 수 없다.
+     */
+    public List<Map<String, Object>> knownQuestions(long project, long version, long document, int limit) {
+        String filter = " AND q.document_version_id<>:version AND (v.document_id<>:document OR q.status<>'OPEN')";
+        return jdbc.sql("SELECT question,status,answer FROM (" + live(filter) + ") x ORDER BY x.id DESC LIMIT :limit")
+                .param("project", project).param("version", version).param("document", document).param("limit", limit)
+                .query().listOfRows();
+    }
+
     /** 목록에 보이는 질문(저장된 SUPERSEDED 와 조회할 때 대체로 판정된 질문 제외)과 그 freshness. */
     private static String live(String filter) {
         return "SELECT * FROM (SELECT q.*,v.version_no,v.document_id," + FRESHNESS

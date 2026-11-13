@@ -76,6 +76,54 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat((String) sent.getValue().get("text_hash")).matches(HEX64);
     }
 
+    // S15P31A108-414: 다른 문서에서 이미 묻거나 답한 결정을 다시 물었다. 질문을 만들 때 같은 프로젝트의 보이는 질문을 넘긴다.
+    // 같은 문서의 이전 버전 미답변 질문은 이 실행이 끝나면 대체로 판정돼 사라지므로 넘기지 않는다(넘기면 아무도 묻지 않게 된다).
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Test void sendsTheProjectsVisibleQuestionsFromOtherDocumentsAndEarlierVersionsButNotThisVersion() {
+        long other = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id", Long.class, project, leader);
+        long otherVersion = documentVersion(other, 1, CONTENT);
+        // 다른 문서는 질문 생성이 이미 끝난 상태다 — 워커가 그 문서를 먼저 집지 않고, 그 질문은 CURRENT 다.
+        jdbc.update("INSERT INTO planning_question_run(document_version_id,analysis_attempt,text_hash,status,request_key) VALUES(?,1,?,'COMPLETED','seed')",
+                otherVersion, STORED_PREFIX + TEXT_HASH);
+        String insert = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer) VALUES(?,?,'CLARIFICATION',?,'model',?,?)";
+        jdbc.update(insert, project, otherVersion, "다른 문서 미답", "OPEN", null);
+        jdbc.update("INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answered_by,answered_at)"
+                + " VALUES(?,?,'CLARIFICATION','다른 문서 답함','model','ANSWERED',?,?,now())", project, otherVersion, "가".repeat(250), leader);
+        jdbc.update(insert, project, otherVersion, "다른 문서 닫음", "DISMISSED", null);
+        jdbc.update(insert, project, otherVersion, "다른 문서 대체", "SUPERSEDED", null);
+
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
+        generator.runOnce();
+        long[] first = ids();
+        questions.answer(leaderCaller, project, first[0], new AnswerRequest("이전 버전 답", null, null));
+        version = documentVersion(document, 2, CONTENT);
+        generator.runOnce();
+        jdbc.update("UPDATE document_processing SET attempt=2 WHERE document_version_id=?", version);
+        generator.runOnce();
+        verify(ai, times(3)).planningQuestions(sent.capture());
+
+        var expected = List.of(
+                Map.of("question", "a1 질문입니다.", "status", "ANSWERED", "answer", "이전 버전 답"),
+                Map.of("question", "다른 문서 닫음", "status", "DISMISSED"),
+                Map.of("question", "다른 문서 답함", "status", "ANSWERED", "answer", "가".repeat(200)),
+                Map.of("question", "다른 문서 미답", "status", "OPEN"));
+        var secondVersion = (List<Map<String, Object>>) sent.getAllValues().get(1).get("known_questions");
+        assertThat(secondVersion).as("최근 것부터, 이전 버전의 미답변·대체 질문 제외")
+                .containsExactlyElementsOf(withNullAnswers(expected));
+        var reanalysis = (List<Map<String, Object>>) sent.getAllValues().get(2).get("known_questions");
+        assertThat(reanalysis).as("같은 버전을 다시 분석해도 그 버전의 질문은 넣지 않는다(키 병합 대상)")
+                .containsExactlyElementsOf(withNullAnswers(expected));
+        assertThat((List<?>) sent.getAllValues().get(0).get("known_questions")).hasSize(3);
+    }
+
+    static List<Map<String, Object>> withNullAnswers(List<Map<String, String>> rows) {
+        return rows.stream().map(r -> {
+            var m = new java.util.LinkedHashMap<String, Object>(r);
+            m.putIfAbsent("answer", null);
+            return (Map<String, Object>) m;
+        }).toList();
+    }
+
     @Test void skipsDocumentsOnceAnInitialBaselineExists() {
         publishBaseline();
         assertThat(generator.runOnce()).isFalse();
