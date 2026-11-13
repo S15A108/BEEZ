@@ -11,11 +11,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class PublishedAnalysisMetricsReader {
     /**
-     * 다시 손쓸 수 있는 접수: baseline 이 프로젝트의 현재 baseline 이고 프로젝트가 보관되지 않음 (S15P31A108-412).
+     * 현재 기준 버전의 접수: baseline 이 프로젝트의 현재 baseline 이고 프로젝트가 보관되지 않음 (S15P31A108-412).
      * 발행 후 분석은 현재 baseline 에서만 돌기 때문에(ImpactContextQuery, -408) 그 밖의 FAILED·미평가는 다시 분석할 수 없다.
      */
     // NULL 비교가 양쪽 집계에서 모두 빠지지 않게 false 로 접는다
-    private static final String ACTIONABLE =
+    private static final String CURRENT =
             "COALESCE(p.current_baseline_id=a.published_baseline_id AND p.archived_at IS NULL, false)";
     private final JdbcClient jdbc;
 
@@ -42,16 +42,16 @@ public class PublishedAnalysisMetricsReader {
                        coalesce(sum(greatest(a.attempt-1,0)),0) AS started_retries,
                        COALESCE(GREATEST(0, EXTRACT(EPOCH FROM (statement_timestamp()
                            - min(a.requested_at) FILTER (WHERE a.status='PENDING')))), 0) AS oldest_pending_seconds,
-                       count(*) FILTER (WHERE a.status='FAILED' AND %2$s) AS failed_actionable,
-                       count(*) FILTER (WHERE a.status='FAILED' AND NOT %2$s) AS failed_not_actionable,
+                       count(*) FILTER (WHERE a.status='FAILED' AND %2$s) AS failed_current,
+                       count(*) FILTER (WHERE a.status='FAILED' AND NOT %2$s) AS failed_not_current,
                        count(*) FILTER (WHERE a.status='NOT_EVALUATED' AND NOT COALESCE(%1$s, false) AND %2$s)
-                         AS review_actionable,
+                         AS review_current,
                        count(*) FILTER (WHERE a.status='NOT_EVALUATED' AND NOT COALESCE(%1$s, false) AND NOT %2$s)
-                         AS review_not_actionable
+                         AS review_not_current
                   FROM published_change_analysis a JOIN baseline b
                     ON b.id=a.published_baseline_id AND b.project_id=a.project_id
                   JOIN project p ON p.id=a.project_id
-                """.formatted(PublishedAnalysisOrderingSql.expectedNotEvaluated("b", "a"), ACTIONABLE))
+                """.formatted(PublishedAnalysisOrderingSql.expectedNotEvaluated("b", "a"), CURRENT))
                 .query().singleRow();
         var attempts = jdbc.sql("""
                 SELECT count(*) FILTER (WHERE outcome='COMPLETED') AS completed,
@@ -78,10 +78,10 @@ public class PublishedAnalysisMetricsReader {
                 number(intake, "not_evaluated_expected"), number(intake, "not_evaluated_review"), blocked,
                 number(intake, "pending_retries"), number(intake, "expired_leases"), number(intake, "started_retries"), number(attempts, "retries"),
                 number(intake, "oldest_pending_seconds"),
-                Map.of(PublishedAnalysisMetricsSnapshot.unresolvedKey("FAILED", "ACTIONABLE"), number(intake, "failed_actionable"),
-                        PublishedAnalysisMetricsSnapshot.unresolvedKey("FAILED", "NOT_ACTIONABLE"), number(intake, "failed_not_actionable"),
-                        PublishedAnalysisMetricsSnapshot.unresolvedKey("NOT_EVALUATED_REVIEW", "ACTIONABLE"), number(intake, "review_actionable"),
-                        PublishedAnalysisMetricsSnapshot.unresolvedKey("NOT_EVALUATED_REVIEW", "NOT_ACTIONABLE"), number(intake, "review_not_actionable")));
+                Map.of(PublishedAnalysisMetricsSnapshot.unresolvedKey("FAILED", "CURRENT"), number(intake, "failed_current"),
+                        PublishedAnalysisMetricsSnapshot.unresolvedKey("FAILED", "NOT_CURRENT"), number(intake, "failed_not_current"),
+                        PublishedAnalysisMetricsSnapshot.unresolvedKey("NOT_EVALUATED_REVIEW", "CURRENT"), number(intake, "review_current"),
+                        PublishedAnalysisMetricsSnapshot.unresolvedKey("NOT_EVALUATED_REVIEW", "NOT_CURRENT"), number(intake, "review_not_current")));
     }
 
     private static double number(Map<String, Object> row, String key) {

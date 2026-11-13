@@ -167,6 +167,8 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 - 현재 기준 버전 = 그 접수의 baseline이 아직 프로젝트의 현재 baseline이고 프로젝트가 보관되지 않은 것입니다.
   뒤 버전에 밀렸거나 보관된 FAILED는 다시 분석할 수 없어(발행 후 분석은 현재 baseline에서만 돔) 세지 않습니다.
   그런 행은 "막힘·정체·확인 필요" 그래프의 "밀린 FAILED"에 보입니다(S15P31A108-412).
+- 이 알림과 CdcNotEvaluatedRequiresReview는 backend 지표 `unresolved`에만 기댑니다. 규칙을 바꿔 올릴 때는
+  backend 배포가 끝난 뒤에 올립니다. 지표가 없는 backend로 되돌리면 두 알림은 비고 `CdcMetricsMissing`이 대신 웁니다.
 - 볼 곳: "FAILED 남은 건", "시도 이력 결과별". 원인 확인은 권한이 있는 담당자가 DB를
   조회해서 합니다(조회만).
 - 남아 있는 것을 알고 있고 처리 계획이 정해졌으면 24시간 재통지를 그대로 두거나 일시

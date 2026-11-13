@@ -51,7 +51,7 @@ public class PublishedAnalysisMetrics {
             for (String scope : PublishedAnalysisMetricsSnapshot.UNRESOLVED_SCOPES) {
                 String key = PublishedAnalysisMetricsSnapshot.unresolvedKey(kind, scope);
                 Gauge.builder("beez.cdc.analysis.unresolved", this, m -> m.value(s -> s.unresolved().get(key)))
-                        .description("FAILED and review-required rows; ACTIONABLE means the intake baseline is still current")
+                        .description("FAILED and review-required rows; CURRENT means the intake baseline is still current")
                         .tag("kind", kind).tag("scope", scope).register(registry);
             }
         }

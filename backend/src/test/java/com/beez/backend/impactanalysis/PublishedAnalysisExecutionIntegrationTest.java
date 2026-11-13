@@ -137,27 +137,27 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
     }
 
     /**
-     * 알림은 다시 손쓸 수 있는 FAILED·확인 필요 미평가만 센다. 뒤 버전이 발행됐거나(현재 baseline 이 아님) 프로젝트가 보관된
+     * 알림은 현재 기준 버전의 FAILED·확인 필요 미평가만 센다. 뒤 버전이 발행됐거나(현재 baseline 이 아님) 프로젝트가 보관된
      * 행은 다시 분석할 수 없으므로 따로 센다. 전체 수(intakes·not_evaluated_requires_review)는 그대로다 (S15P31A108-412).
      */
     @Test void unresolvedRowsAreSplitByWhetherTheirBaselineIsStillCurrent() {
         api.jdbc.sql("UPDATE published_change_analysis SET status='FAILED',attempt=4,error_code='model_unavailable' WHERE id=:id")
                 .param("id", intake).update();
         assertThat(metricsReader.read().unresolved())
-                .containsEntry("FAILED/ACTIONABLE", 1d).containsEntry("FAILED/NOT_ACTIONABLE", 0d);
+                .containsEntry("FAILED/CURRENT", 1d).containsEntry("FAILED/NOT_CURRENT", 0d);
 
         api.jdbc.sql("UPDATE published_change_analysis SET status='NOT_EVALUATED',evaluation_status='NOT_EVALUATED',"
                 + "error_code='document_change_unavailable' WHERE id=:id").param("id", intake).update();
         assertThat(metricsReader.read().unresolved())
-                .containsEntry("NOT_EVALUATED_REVIEW/ACTIONABLE", 1d).containsEntry("FAILED/ACTIONABLE", 0d);
+                .containsEntry("NOT_EVALUATED_REVIEW/CURRENT", 1d).containsEntry("FAILED/CURRENT", 0d);
 
-        // 뒤 버전이 발행되면 같은 행이 손쓸 수 없는 쪽으로 옮겨 간다. 최초 v1(예상된 미평가)은 어느 쪽에도 세지 않는다
+        // 뒤 버전이 발행되면 같은 행이 NOT_CURRENT 로 옮겨 간다. 최초 v1(예상된 미평가)은 어느 쪽에도 세지 않는다
         long next = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
                 .param("p", project).param("a", leader).query(Long.class).single();
         api.jdbc.sql("UPDATE project SET current_baseline_id=:b WHERE id=:p").param("b", next).param("p", project).update();
         var superseded = metricsReader.read();
         assertThat(superseded.unresolved())
-                .containsEntry("NOT_EVALUATED_REVIEW/ACTIONABLE", 0d).containsEntry("NOT_EVALUATED_REVIEW/NOT_ACTIONABLE", 1d);
+                .containsEntry("NOT_EVALUATED_REVIEW/CURRENT", 0d).containsEntry("NOT_EVALUATED_REVIEW/NOT_CURRENT", 1d);
         assertThat(superseded.notEvaluatedRequiresReview()).isEqualTo(1);
 
         // 보관된 프로젝트의 현재 버전도 다시 분석할 수 없다(analysis_access_unavailable)
@@ -166,7 +166,7 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
                         .param("id", intake).query(Long.class).single()).param("p", project).update();
         api.jdbc.sql("UPDATE project SET archived_at=clock_timestamp() WHERE id=:p").param("p", project).update();
         assertThat(metricsReader.read().unresolved())
-                .containsEntry("NOT_EVALUATED_REVIEW/ACTIONABLE", 0d).containsEntry("NOT_EVALUATED_REVIEW/NOT_ACTIONABLE", 1d);
+                .containsEntry("NOT_EVALUATED_REVIEW/CURRENT", 0d).containsEntry("NOT_EVALUATED_REVIEW/NOT_CURRENT", 1d);
     }
 
     /**

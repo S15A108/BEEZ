@@ -22,8 +22,8 @@ class PublishedAnalysisMetricsTest {
                 Map.of("COMPLETED", 0d, "INSUFFICIENT_EVIDENCE", 2d, "UNKNOWN", 0d),
                 Map.of("COMPLETED", 0d, "INSUFFICIENT_EVIDENCE", 2d, "NOT_EVALUATED", 1d, "FAILED", failedAttempts),
                 1d, 1d, 1d, 1d, 0d, retries, retries, 140d,
-                Map.of("FAILED/ACTIONABLE", 1d, "FAILED/NOT_ACTIONABLE", 2d,
-                        "NOT_EVALUATED_REVIEW/ACTIONABLE", 0d, "NOT_EVALUATED_REVIEW/NOT_ACTIONABLE", 1d));
+                Map.of("FAILED/CURRENT", 1d, "FAILED/NOT_CURRENT", 2d,
+                        "NOT_EVALUATED_REVIEW/CURRENT", 0d, "NOT_EVALUATED_REVIEW/NOT_CURRENT", 1d));
     }
 
     @Test
@@ -37,7 +37,7 @@ class PublishedAnalysisMetricsTest {
         assertThat(gauge(registry, "beez.cdc.analysis.evaluations", "result", "INSUFFICIENT_EVIDENCE")).isEqualTo(2);
         assertThat(gauge(registry, "beez.cdc.analysis.attempt.records", "result", "FAILED")).isEqualTo(1);
         assertThat(registry.get("beez.cdc.analysis.snapshot.available").gauge().value()).isEqualTo(1);
-        assertThat(registry.get("beez.cdc.analysis.unresolved").tag("kind", "FAILED").tag("scope", "NOT_ACTIONABLE")
+        assertThat(registry.get("beez.cdc.analysis.unresolved").tag("kind", "FAILED").tag("scope", "NOT_CURRENT")
                 .gauge().value()).isEqualTo(2);
         verify(reader, times(1)).read();
 
