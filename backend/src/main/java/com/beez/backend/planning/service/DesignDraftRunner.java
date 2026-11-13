@@ -265,6 +265,10 @@ public class DesignDraftRunner {
             var q = (Map<String, Object>) value;
             if ("ANSWERED".equals(q.get("status"))) answered.add(((Map<String, Object>) q.get("question")).get("question_key").toString());
         }
+        // 다른 문서·이전 버전의 답도 참조할 수 있다(S15P31A108-414). 예전 작업의 스냅샷에는 이 필드가 없다.
+        if (snapshot.get("related_answers") instanceof List<?> related) {
+            for (Object value : related) answered.add(((Map<String, Object>) value).get("ref_key").toString());
+        }
         Map<String, Map<String, Object>> changes = new HashMap<>();
         for (Object value : changeList) {
             var change = (Map<String, Object>) value;

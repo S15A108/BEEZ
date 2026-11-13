@@ -1,5 +1,6 @@
 package com.beez.backend.planning.service;
 
+import static com.beez.backend.designitem.support.DesignJson.JSON;
 import static com.beez.backend.designitem.support.DesignJson.canonical;
 
 import com.beez.backend.ai.AiUsageRecorder;
@@ -25,7 +26,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 문서 분석(PLN-A01)이 끝난 문서 버전마다 요구사항 누락 후보·보완 질문(133)을 한 번 만들어 {@code planning_question} 에 저장한다.
  *
- * <p>순서(AI 호출 동안에는 트랜잭션·잠금을 잡지 않는다): ① 짧은 트랜잭션에서 차례인 버전을 잡고 실행 행을 RUNNING 으로 → ② AI 호출 →
+ * <p>순서(AI 호출 동안에는 트랜잭션·잠금을 잡지 않는다): ① 짧은 트랜잭션에서 차례인 버전을 잡고 실행 행을 RUNNING 으로, 같은 프로젝트의
+ * 기존 질문(known_questions)도 이때 읽는다 → ② AI 호출 →
  * ③ 사용량 기록 → ④ 결과 검증 → ⑤ 짧은 트랜잭션에서 프로젝트 잠금 뒤 실행이 아직 유효한지(분석이 그대로이고 기준 설계가 없는지) 확인하고 저장.
  *
  * <p><b>실패해도 문서 분석 상태는 바꾸지 않는다.</b> 실패는 {@code planning_question_run} 에만 남고, 분석 재시도(PLN-A02)가 되돌려 다시 시도한다.
@@ -39,6 +41,11 @@ public class PlanningQuestionGenerator {
     static final String FEATURE = "DOCUMENT_PARSE";
     static final int LEASE_SECONDS = 300;
     static final int MAX_QUESTIONS = 20;
+    /** known_questions 상한(133 계약 §4.1). AI 스키마와 같은 값이다 — 넘으면 AI 가 요청 전체를 거절해 질문을 하나도 만들지 못한다. */
+    static final int MAX_KNOWN_QUESTIONS = 100;
+    static final int MAX_KNOWN_CHARS = 30_000;
+    static final int KNOWN_QUESTION_CHARS = 2_000;
+    static final int KNOWN_ANSWER_CHARS = 200;
     private static final Set<String> TYPES = Set.of("CHOICE", "SHORT_ANSWER", "ESSAY");
     private static final Set<String> CANDIDATE_KINDS = Set.of("MISSING_CANDIDATE", "CLARIFICATION", "CONFLICT");
 
@@ -63,6 +70,9 @@ public class PlanningQuestionGenerator {
             String key = "planning-questions-" + row.get("document_version_id") + "-a" + row.get("attempt") + "-" + UUID.randomUUID();
             questions.startRun(num(row, "document_version_id"), ((Number) row.get("attempt")).intValue(), (String) row.get("text_hash"), key, LEASE_SECONDS);
             row.put("run_key", key);
+            // 실행을 잡은 트랜잭션에서 읽는다 — 조회가 실패하면 실행 시작도 되돌아가 다음 차례에 다시 잡힌다(가짜 AI 실패를 남기지 않는다).
+            row.put("known_questions", known(questions.knownQuestions(num(row, "project_id"), num(row, "document_version_id"),
+                    num(row, "document_id"), MAX_KNOWN_QUESTIONS)));
             return row;
         });
         if (job == null) return false;
@@ -156,7 +166,51 @@ public class PlanningQuestionGenerator {
         payload.put("parser_profile", job.get("storage_key").toString().endsWith(".md") ? "markdown-v1" : "plain-v1");
         payload.put("mode", "MODEL");
         payload.put("max_questions", MAX_QUESTIONS);
+        payload.put("known_questions", job.get("known_questions"));
         return payload;
+    }
+
+    /**
+     * 같은 프로젝트에서 이미 묻거나 답하거나 닫은 질문(S15P31A108-414). 모델이 같은 결정을 다른 문서에서 다시 묻지 않게 넘긴다.
+     * {@code rows} 는 최근 것부터다. 글자 수(코드 포인트) 합이 상한을 넘으면 거기서 끊어 최근 것만 남긴다.
+     * 답은 ANSWERED 일 때만 앞 {@value #KNOWN_ANSWER_CHARS}자를 보낸다.
+     *
+     * <p>답한 질문은 설계 초안의 related_answers({@link DesignDraftService#related})에 넘어갈 수 있는 것만 넣고, 크기도 그쪽과 같게
+     * 질문 + 구조 답 전체로 센다. 그래서 여기 넣은 답한 질문(= 모델이 다시 묻지 않을 결정)은 같은 순서·같은 상한의 초안 입력에
+     * 반드시 들어간다 — 그렇지 않으면 질문은 생략했는데 초안은 그 결정을 모르게 된다(리뷰 지적). 구조 답이 없는 예전 답과
+     * {@value #KNOWN_QUESTION_CHARS}자를 넘는 질문은 초안에 넘길 수 없어 여기서도 뺀다.
+     */
+    @SuppressWarnings("unchecked")
+    static List<Map<String, Object>> known(List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        int chars = 0;
+        for (var row : rows) {
+            if (out.size() == MAX_KNOWN_QUESTIONS) break;
+            String status = (String) row.get("status");
+            if (!(row.get("question") instanceof String full) || full.isBlank()) continue;
+            String question = head(full, KNOWN_QUESTION_CHARS);
+            int size = question.codePointCount(0, question.length());
+            String answer = null;
+            if ("ANSWERED".equals(status)) {
+                if (row.get("answer_payload") == null || !question.equals(full)) continue;
+                size += PlanningAnswers.chars(JSON.readValue(row.get("answer_payload").toString(), Map.class));
+                if (row.get("answer") instanceof String a && !a.isBlank()) answer = head(a, KNOWN_ANSWER_CHARS);
+            }
+            if (chars + size > MAX_KNOWN_CHARS) break;
+            chars += size;
+            var item = new LinkedHashMap<String, Object>();
+            item.put("question", question);
+            item.put("status", status);
+            item.put("answer", answer);
+            out.add(item);
+        }
+        return out;
+    }
+
+    /** 앞 {@code max} 코드 포인트. 서로게이트 쌍을 가르지 않는다. */
+    private static String head(String text, int max) {
+        if (text == null || text.codePointCount(0, text.length()) <= max) return text;
+        return text.substring(0, text.offsetByCodePoints(0, max));
     }
 
     /**

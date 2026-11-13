@@ -56,6 +56,36 @@ public class DesignDraftRepository {
                 """).param("project", project).param("version", version).query().listOfRows();
     }
 
+    /**
+     * 같은 프로젝트에서 이 버전이 아닌 곳(다른 문서, 같은 문서의 이전 버전)의 답변된 질문, 최근(id 큰) 것부터(S15P31A108-414).
+     * 질문 생성은 이 답들을 보고 같은 결정을 다시 묻지 않으므로, 초안이 그 결정을 알도록 원래 답과 출처를 함께 넘긴다.
+     * 답변된 질문은 조회할 때 대체로 판정되지 않으므로(대체 판정은 미답변만) 목록에 보이는 답변 질문과 같은 집합이다.
+     * 구조 답변이 없는 예전 질문은 AI 입력 모양을 만들 수 없어 빼고, 등록을 취소한(DOC-A25) 문서의 답은 철회된 결정이라 뺀다
+     * (질문 생성의 known_questions 도 같은 범위다).
+     */
+    public List<Map<String, Object>> relatedAnswers(long project, long version, int limit) {
+        return jdbc.sql("""
+                SELECT q.id,q.question,q.answer_payload,v.document_id,q.document_version_id,v.version_no
+                  FROM planning_question q JOIN document_version v ON v.id=q.document_version_id JOIN document d ON d.id=v.document_id
+                 WHERE q.project_id=:project AND q.document_version_id<>:version AND q.status='ANSWERED' AND q.answer_payload IS NOT NULL
+                   AND d.discarded_at IS NULL
+                 ORDER BY q.id DESC LIMIT :limit
+                """).param("project", project).param("version", version).param("limit", limit).query().listOfRows();
+    }
+
+    /**
+     * 다른 곳의 답변(id)이 지금도 답변 상태인지와 그 구조 답변. 채택 직전 후보가 기댄 답이 바뀌었는지 볼 때 쓴다.
+     * 그 문서가 그사이 등록 취소됐으면 철회된 결정이라 없는 것으로 본다.
+     */
+    public Optional<Map<String, Object>> currentAnswerById(long project, long id) {
+        return jdbc.sql("""
+                SELECT q.status,q.answer_payload FROM planning_question q
+                  JOIN document_version v ON v.id=q.document_version_id JOIN document d ON d.id=v.document_id
+                 WHERE q.project_id=:project AND q.id=:id AND d.discarded_at IS NULL
+                """)
+                .param("project", project).param("id", id).query().listOfRows().stream().findFirst();
+    }
+
     public boolean hasBaseline(long project) {
         return jdbc.sql("SELECT current_baseline_id IS NOT NULL FROM project WHERE id=:project").param("project", project)
                 .query(Boolean.class).optional().orElse(false);

@@ -9,6 +9,7 @@ from app.schemas.planning_questions import (
     ChoiceAnswerFormat,
     DocumentRef,
     EssayAnswerFormat,
+    KnownQuestion,
     PlanningQuestionRequest,
     ShortAnswerFormat,
 )
@@ -28,6 +29,7 @@ from app.services.planning_questions import (
     QuestionDraft,
     generate_planning_questions,
     model_candidate_key,
+    proposal_payload,
 )
 from app.services.planning_questions import proposer as proposer_module
 
@@ -594,3 +596,42 @@ async def test_provider_failure_keeps_real_failed_usage():
         await llm_proposer(provider).propose(document())
     assert error.value.code == "model_unavailable"
     assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 4
+
+
+# S15P31A108-414: known questions reach the model next to the blocks, and a
+# request without them sends exactly the payload it sent before.
+@pytest.mark.asyncio
+async def test_llm_proposer_sends_known_questions_only_when_given():
+    known = (
+        KnownQuestion(
+            question="재취소는?", status="ANSWERED", answer="409로 거부한다."
+        ),
+        KnownQuestion(question="겹침은?", status="OPEN"),
+    )
+    provider = FakeProvider({"candidates": []})
+    await llm_proposer(provider, known_questions=known).propose(document())
+    payload = json.loads(provider.calls[0].messages[1].content)
+    assert payload["known_questions"] == [
+        {"question": "재취소는?", "status": "ANSWERED", "answer": "409로 거부한다."},
+        {"question": "겹침은?", "status": "OPEN"},
+    ]
+    assert payload["blocks"] and "untrusted" in provider.calls[0].messages[0].content
+    assert "known_questions" in provider.calls[0].messages[0].content
+
+    plain = FakeProvider({"candidates": []})
+    await llm_proposer(plain).propose(document())
+    sent = plain.calls[0].messages[1].content
+    assert "known_questions" not in json.loads(sent)
+    assert sent == proposal_payload(document())
+
+
+# The payload byte bound stays on the document alone, so known questions never
+# turn a document that fit before into invalid_input.
+@pytest.mark.asyncio
+async def test_known_questions_do_not_count_against_the_document_bound(monkeypatch):
+    bound = len(proposal_payload(document()).encode("utf-8"))
+    monkeypatch.setattr(proposer_module, "MAX_PAYLOAD_BYTES", bound)
+    provider = FakeProvider({"candidates": []})
+    known = (KnownQuestion(question="가" * 2000, status="OPEN"),)
+    await llm_proposer(provider, known_questions=known).propose(document())
+    assert len(provider.calls) == 1

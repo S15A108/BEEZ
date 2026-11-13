@@ -76,6 +76,93 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat((String) sent.getValue().get("text_hash")).matches(HEX64);
     }
 
+    // S15P31A108-414: 다른 문서에서 이미 묻거나 답한 결정을 다시 물었다. 질문을 만들 때 같은 프로젝트의 보이는 질문을 넘긴다.
+    // 같은 문서의 이전 버전 미답변 질문은 이 실행이 끝나면 대체로 판정돼 사라지므로 넘기지 않는다(넘기면 아무도 묻지 않게 된다).
+    // 다른 문서에서 닫은 질문은 결정이 없어 넘기지 않고(그 문서에서만 필요 없었을 수 있다), 같은 문서 이전 버전에서 닫은 것은 넘긴다.
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Test void sendsTheProjectsVisibleQuestionsFromOtherDocumentsAndEarlierVersionsButNotThisVersion() {
+        long other = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id", Long.class, project, leader);
+        long otherVersion = documentVersion(other, 1, CONTENT);
+        // 다른 문서는 질문 생성이 이미 끝난 상태다 — 워커가 그 문서를 먼저 집지 않고, 그 질문은 CURRENT 다.
+        jdbc.update("INSERT INTO planning_question_run(document_version_id,analysis_attempt,text_hash,status,request_key) VALUES(?,1,?,'COMPLETED','seed')",
+                otherVersion, STORED_PREFIX + TEXT_HASH);
+        String insert = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer) VALUES(?,?,'CLARIFICATION',?,'model',?,?)";
+        jdbc.update(insert, project, otherVersion, "다른 문서 미답", "OPEN", null);
+        jdbc.update("INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answer_payload,answered_by,answered_at)"
+                + " VALUES(?,?,'CLARIFICATION','다른 문서 답함','model','ANSWERED',?,cast(? AS jsonb),?,now())", project, otherVersion, "가".repeat(250),
+                "{\"type\":\"ESSAY\",\"text\":\"" + "가".repeat(250) + "\"}", leader);
+        jdbc.update(insert, project, otherVersion, "다른 문서 닫음", "DISMISSED", null);
+        jdbc.update(insert, project, otherVersion, "다른 문서 대체", "SUPERSEDED", null);
+
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
+        generator.runOnce();
+        long[] first = ids();
+        questions.answer(leaderCaller, project, first[0], new AnswerRequest("이전 버전 답", null, null));
+        questions.answer(leaderCaller, project, first[1], new AnswerRequest(null, null, "DISMISSED"));
+        version = documentVersion(document, 2, CONTENT);
+        generator.runOnce();
+        jdbc.update("UPDATE document_processing SET attempt=2 WHERE document_version_id=?", version);
+        generator.runOnce();
+        verify(ai, times(3)).planningQuestions(sent.capture());
+
+        var expected = List.of(
+                Map.of("question", "a2 질문입니다.", "status", "DISMISSED"),
+                Map.of("question", "a1 질문입니다.", "status", "ANSWERED", "answer", "이전 버전 답"),
+                Map.of("question", "다른 문서 답함", "status", "ANSWERED", "answer", "가".repeat(200)),
+                Map.of("question", "다른 문서 미답", "status", "OPEN"));
+        var secondVersion = (List<Map<String, Object>>) sent.getAllValues().get(1).get("known_questions");
+        assertThat(secondVersion).as("최근 것부터, 이전 버전의 미답변·대체 질문과 다른 문서에서 닫은 질문 제외")
+                .containsExactlyElementsOf(withNullAnswers(expected));
+        var reanalysis = (List<Map<String, Object>>) sent.getAllValues().get(2).get("known_questions");
+        assertThat(reanalysis).as("같은 버전을 다시 분석해도 그 버전의 질문은 넣지 않는다(키 병합 대상)")
+                .containsExactlyElementsOf(withNullAnswers(expected));
+        assertThat((List<?>) sent.getAllValues().get(0).get("known_questions")).as("다른 문서의 미답·답함").hasSize(2);
+    }
+
+    // 목록에서 빠지거나(등록 취소 문서) 지금 답할 수 없는(갱신 중인 문서) 미답변 질문은 넘기지 않는다 — 그 질문이 대체돼 사라지면
+    // 이 문서도 묻지 않았으니 그 결정을 아무도 묻지 않게 된다. 답한 질문은 이력이라 넘기되, 등록 취소 문서의 답은 철회된 결정이라 뺀다.
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Test void leavesOutOpenQuestionsThatTheListHidesOrThatCannotBeAnsweredNow() {
+        String open = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status) VALUES(?,?,'CLARIFICATION',?,'model','OPEN')";
+        String answered = "INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,answer,answer_payload,answered_by,answered_at)"
+                + " VALUES(?,?,'CLARIFICATION',?,'model','ANSWERED','답','{\"type\":\"ESSAY\",\"text\":\"답\"}'::jsonb,?,now())";
+        long settled = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id", Long.class, project, leader);
+        long settledVersion = documentVersion(settled, 1, CONTENT);
+        jdbc.update("INSERT INTO planning_question_run(document_version_id,analysis_attempt,text_hash,status,request_key) VALUES(?,1,?,'COMPLETED','seed')",
+                settledVersion, STORED_PREFIX + TEXT_HASH);
+        jdbc.update(open, project, settledVersion, "생성이 끝난 문서 미답");
+
+        long discarded = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'ERD','ERD',?) RETURNING id", Long.class, project, leader);
+        long discardedVersion = documentVersion(discarded, 1, CONTENT);
+        jdbc.update("UPDATE document SET discarded_at=now() WHERE id=?", discarded);
+        jdbc.update("UPDATE document_version SET status='REJECTED' WHERE id=?", discardedVersion);
+        jdbc.update(open, project, discardedVersion, "등록 취소 문서 미답");
+        jdbc.update(answered, project, discardedVersion, "등록 취소 문서 답함", leader);
+
+        long refreshing = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'REQ_SPEC','요구사항',?) RETURNING id", Long.class, project, leader);
+        long oldVersion = documentVersion(refreshing, 1, CONTENT);
+        jdbc.update(open, project, oldVersion, "갱신 중 문서 미답");
+        jdbc.update(answered, project, oldVersion, "갱신 중 문서 답함", leader);
+        long newVersion = documentVersion(refreshing, 2, CONTENT);
+        // 새 버전은 아직 분석 중이다 — 워커가 집지 않고, 이전 버전 질문은 '갱신 중'이다.
+        jdbc.update("UPDATE document_processing SET status='PENDING' WHERE document_version_id=?", newVersion);
+
+        assertThat(generator.runOnce()).isTrue();
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
+        verify(ai).planningQuestions(sent.capture());
+        assertThat(sent.getValue().get("document")).isEqualTo(Map.of("document_id", "" + document, "document_version_id", "" + version, "version_no", 1));
+        assertThat((List<Map<String, Object>>) sent.getValue().get("known_questions")).extracting(m -> m.get("question"))
+                .containsExactly("갱신 중 문서 답함", "생성이 끝난 문서 미답");
+    }
+
+    static List<Map<String, Object>> withNullAnswers(List<Map<String, String>> rows) {
+        return rows.stream().map(r -> {
+            var m = new java.util.LinkedHashMap<String, Object>(r);
+            m.putIfAbsent("answer", null);
+            return (Map<String, Object>) m;
+        }).toList();
+    }
+
     @Test void skipsDocumentsOnceAnInitialBaselineExists() {
         publishBaseline();
         assertThat(generator.runOnce()).isFalse();

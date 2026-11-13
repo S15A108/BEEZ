@@ -1,9 +1,13 @@
 """#134 schema invariants: DRAFT only, kind-specific content, mirrored changes."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
 from app.schemas.design_drafts import (
+    MAX_RELATED_ANSWERS,
+    MAX_RELATED_CHARS,
     AnsweredQuestion,
     DesignDraftRequest,
     DesignDraftResult,
@@ -449,3 +453,109 @@ def test_result_round_trips_through_json():
     assert DesignDraftResult.model_validate_json(original.model_dump_json()) == (
         original
     )
+
+
+def _body(**overrides):
+    digest = "a" * 64
+    body = {
+        "project_id": "101",
+        "request_key": "d",
+        "document": {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+        },
+        "kind": "PLAN",
+        "media_type": "text/markdown",
+        "content": "# 제목\n",
+        "content_hash": digest,
+        "text_hash": digest,
+        "normalization_version": "utf8-lf-v1",
+        "parser_profile": "markdown-v1",
+    }
+    body.update(overrides)
+    return body
+
+
+def _related(ref="pq-1", version="321", answer=None, question="재취소는?"):
+    return {
+        "ref_key": ref,
+        "question": question,
+        "answer": answer or {"type": "SHORT_ANSWER", "text": "409"},
+        "source": {
+            "document_id": "302",
+            "document_version_id": version,
+            "version_no": 1,
+        },
+    }
+
+
+# S15P31A108-414: the BE trims related_answers to these same bounds and keys
+# them pq-<id>; a mismatch fails every draft request of the project.
+def test_related_answers_default_empty_and_follow_the_be_bounds():
+    plain = DesignDraftRequest.model_validate_json(json.dumps(_body()))
+    assert plain.related_answers == ()
+    choice = {"type": "CHOICE", "selected": ["팀장"], "other_text": "운영자"}
+    body = DesignDraftRequest.model_validate_json(
+        json.dumps(
+            _body(related_answers=[_related(), _related("pq-2", answer=choice)]),
+            ensure_ascii=False,
+        )
+    )
+    assert [entry.ref_key for entry in body.related_answers] == ["pq-1", "pq-2"]
+    many = [_related(f"pq-{n}") for n in range(MAX_RELATED_ANSWERS)]
+    DesignDraftRequest.model_validate_json(json.dumps(_body(related_answers=many)))
+    # 6 answers of 2,000 + 3,000 characters = exactly MAX_RELATED_CHARS.
+    big = [
+        _related(
+            f"pq-{n}",
+            question="가" * 2000,
+            answer={"type": "ESSAY", "text": "나" * 3000},
+        )
+        for n in range(6)
+    ]
+    DesignDraftRequest.model_validate_json(
+        json.dumps(_body(related_answers=big), ensure_ascii=False)
+    )
+    assert MAX_RELATED_CHARS == 30_000
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "related_answers": [
+                _related(f"pq-{n}") for n in range(MAX_RELATED_ANSWERS + 1)
+            ]
+        },
+        {
+            "related_answers": [
+                _related(
+                    f"pq-{n}",
+                    question="가" * 2000,
+                    answer={"type": "ESSAY", "text": "나" * 3000},
+                )
+                for n in range(6)
+            ]
+            + [
+                _related(
+                    "pq-9", question="다", answer={"type": "SHORT_ANSWER", "text": "x"}
+                )
+            ]
+        },
+        {"related_answers": [_related(), _related()]},
+        {
+            "related_answers": [_related("q-1")],
+            "questions": [answered("q-1").model_dump(mode="json")],
+        },
+        {"related_answers": [_related(version="311")]},
+        {"related_answers": [_related()], "mode": "DOCUMENT_ONLY"},
+        {"related_answers": [_related(question="   ")]},
+        {"related_answers": [{**_related(), "status": "ANSWERED"}]},
+    ],
+)
+def test_related_answers_reject_what_the_be_never_sends(overrides):
+    with pytest.raises(ValidationError):
+        DesignDraftRequest.model_validate_json(
+            json.dumps(_body(**overrides), ensure_ascii=False)
+        )

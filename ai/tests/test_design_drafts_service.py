@@ -1040,3 +1040,91 @@ async def test_blank_scope_makes_no_model_call():
         document_only(scope={"start_line": 2, "end_line": 2}), proposer
     )
     assert outcome.result.items == () and proposer.calls == []
+
+
+def related(ref="pq-71", question="재취소는 어떻게 하나요?", text="409로 거부한다."):
+    return {
+        "ref_key": ref,
+        "question": question,
+        "answer": {"type": "ESSAY", "text": text},
+        "source": {"document_id": "302", "document_version_id": "321", "version_no": 2},
+    }
+
+
+# S15P31A108-414: question generation no longer asks a decision the project
+# answered elsewhere, so a draft may rely on that answer through its ref_key.
+@pytest.mark.asyncio
+async def test_a_draft_may_cite_a_related_answer_and_unknown_refs_stay_dropped():
+    proposer = FakeProposer(
+        item(
+            "POLICY",
+            "이미 취소된 예약의 재취소는 409로 거부한다.",
+            sources=[{"line": 3, "quote": "단일 파일 한도는 30 MB이다."}],
+            refs=["pq-71", "pq-99", "q-1"],
+        )
+    )
+    outcome = await generate_design_drafts(
+        request(related_answers=[related()]), proposer
+    )
+    draft = outcome.result.items[0]
+    assert draft.answer_refs == ("pq-71", "q-1")
+    assert draft.support == "DOCUMENT_AND_ANSWER"
+    assert outcome.result.changes[0].answer_refs == ("pq-71", "q-1")
+    assert outcome.result.unanswered_question_keys == ("q-2",)
+
+
+@pytest.mark.asyncio
+async def test_related_answers_reach_the_model_only_when_given():
+    provider = FakeProvider({"items": [], "unresolved": []})
+    body = request(related_answers=[related()])
+    await llm_proposer(provider).propose(body, parse_source(body.to_source_input()))
+    payload = json.loads(provider.calls[0].messages[1].content)
+    assert payload["related_answers"] == [
+        {
+            "ref_key": "pq-71",
+            "question": "재취소는 어떻게 하나요?",
+            "answer": {"type": "ESSAY", "text": "409로 거부한다."},
+            "source": {"document_id": "302", "version_no": 2},
+        }
+    ]
+    assert "related_answers" in provider.calls[0].messages[0].content
+
+    plain = FakeProvider({"items": [], "unresolved": []})
+    body = request()
+    document = parse_source(body.to_source_input())
+    await llm_proposer(plain).propose(body, document)
+    sent = plain.calls[0].messages[1].content
+    assert "related_answers" not in json.loads(sent)
+    assert sent == proposer_module.draft_payload(body, document)
+
+
+# The 256 KiB bound stays on what was sent before, so related answers never
+# turn a request that fit into invalid_input.
+@pytest.mark.asyncio
+async def test_related_answers_do_not_count_against_the_payload_bound(monkeypatch):
+    body = request(related_answers=[related(text="가" * 4000)])
+    document = parse_source(body.to_source_input())
+    bound = len(
+        proposer_module.draft_payload(body, document, related=False).encode("utf-8")
+    )
+    monkeypatch.setattr(proposer_module, "MAX_PAYLOAD_BYTES", bound)
+    provider = FakeProvider({"items": [], "unresolved": []})
+    await llm_proposer(provider).propose(body, document)
+    assert len(provider.calls) == 1
+
+
+# A new item backed only by another document's answer is not this document's
+# item: dropped. An update of this document's item may rest on one.
+@pytest.mark.asyncio
+async def test_a_new_item_backed_only_by_related_answers_is_dropped():
+    proposer = FakeProposer(
+        item("POLICY", "다른 문서 답만으로 만든 새 항목", refs=["pq-71"]),
+        item("POLICY", "갱신은 다른 문서 답으로도 된다", base="1102", refs=["pq-71"]),
+        item("CONSTRAINT", "이 버전 답에 기댄 새 항목", refs=["pq-71", "q-1"]),
+    )
+    outcome = await generate_design_drafts(
+        request(related_answers=[related()]), proposer
+    )
+    kept = {entry.content.description: entry for entry in outcome.result.items}
+    assert set(kept) == {"갱신은 다른 문서 답으로도 된다", "이 버전 답에 기댄 새 항목"}
+    assert kept["갱신은 다른 문서 답으로도 된다"].support == "ANSWER"

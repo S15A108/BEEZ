@@ -18,6 +18,10 @@ DEFAULT_MAX_QUESTIONS = 20
 MAX_EVIDENCE_PER_CANDIDATE = 5
 MAX_CHOICE_OPTIONS = 8
 MAX_CONTENT_CHARS = 1_048_576
+# known_questions bounds (S15P31A108-414); the BE trims to the same values.
+MAX_KNOWN_QUESTIONS = 100
+MAX_KNOWN_CHARS = 30_000
+KNOWN_ANSWER_CHARS = 200
 
 Id = Annotated[str, StringConstraints(min_length=1, max_length=256, pattern=r"^\S+$")]
 Key = Annotated[
@@ -44,6 +48,8 @@ DetectionSignal = Literal[
 # 선택·단답·서술 (Jira #133 item 3).
 QuestionType = Literal["CHOICE", "SHORT_ANSWER", "ESSAY"]
 Origin = Literal["MODEL", "TEMPLATE"]
+# Statuses the BE question list shows; SUPERSEDED questions are never sent.
+KnownQuestionStatus = Literal["OPEN", "ANSWERED", "DISMISSED"]
 
 
 class _Strict(BaseModel):
@@ -219,6 +225,27 @@ def validate_answer(question: SupplementQuestion, answer: Answer) -> None:
             raise ValueError("answer exceeds max_length")
 
 
+class KnownQuestion(_Strict):
+    """A question the project already shows from another document or an older
+    version (S15P31A108-414). Untrusted data for the model, never instructions.
+    `answer` is the first KNOWN_ANSWER_CHARS characters of an ANSWERED answer.
+    """
+
+    question: Text
+    status: KnownQuestionStatus
+    answer: (
+        Annotated[str, StringConstraints(min_length=1, max_length=KNOWN_ANSWER_CHARS)]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def answer_only_when_answered(self) -> Self:
+        _nonblank(self.question)
+        if self.answer is not None and self.status != "ANSWERED":
+            raise ValueError("only an answered question carries an answer")
+        return self
+
+
 class PlanningQuestionRequest(_Strict):
     """BE-authorized input: one fixed document version and its raw text."""
 
@@ -239,6 +266,22 @@ class PlanningQuestionRequest(_Strict):
     # RULES_ONLY never calls a model; it returns deterministic candidates only.
     mode: Literal["MODEL", "RULES_ONLY"] = "MODEL"
     max_questions: int = Field(default=DEFAULT_MAX_QUESTIONS, ge=1, le=MAX_QUESTIONS)
+    # Questions already asked, answered or dismissed elsewhere in the project,
+    # newest first, so the model does not ask the same decision again. Only
+    # the model sees them; rule candidates ignore them.
+    known_questions: tuple[KnownQuestion, ...] = Field(
+        default=(), max_length=MAX_KNOWN_QUESTIONS
+    )
+
+    @model_validator(mode="after")
+    def known_questions_fit(self) -> Self:
+        chars = sum(
+            len(known.question) + len(known.answer or "")
+            for known in self.known_questions
+        )
+        if chars > MAX_KNOWN_CHARS:
+            raise ValueError("known_questions exceed MAX_KNOWN_CHARS")
+        return self
 
     def to_source_input(self) -> SourceInput:
         return SourceInput(

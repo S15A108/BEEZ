@@ -183,6 +183,8 @@ class DocumentOnlyDraftIntegrationTest extends PlanningTestSupport {
             assertThat(input).containsEntry("mode", "DOCUMENT_ONLY").containsEntry("max_items", 5);
             assertThat((List<?>) input.get("questions")).isEmpty();
             assertThat((List<?>) input.get("existing_items")).isEmpty();
+            // AI 는 문서 단독 요청에 다른 곳의 답(related_answers)이 있으면 요청 전체를 거절한다(S15P31A108-414).
+            assertThat(input).doesNotContainKey("related_answers");
         });
         assertThat(sent.stream().map(i -> ((Map<?, ?>) i.get("scope")).get("start_line")).distinct().count()).isEqualTo(parts);
         assertThat(jdbc.queryForObject("SELECT status FROM design_draft_job WHERE document_version_id=?", String.class, longVersion)).isEqualTo("COMPLETED");

@@ -24,6 +24,8 @@ from pydantic import (
 from app.schemas.documents import DocumentKind, Sha256, SourceInput
 from app.schemas.planning_questions import (
     MAX_CONTENT_CHARS,
+    Answer,
+    ChoiceAnswer,
     DocumentRef,
     EvidenceItem,
     Id,
@@ -39,12 +41,16 @@ MAX_ITEMS = 100
 DEFAULT_MAX_ITEMS = 50
 MAX_EXISTING_ITEMS = 500
 MAX_QUESTIONS = 200
+# related_answers bounds (S15P31A108-414); the BE trims to the same values.
+MAX_RELATED_ANSWERS = 100
+MAX_RELATED_CHARS = 30_000
 # Per model proposal. A draft merges every proposal for one base item, so its
 # own bounds are the natural ones: nothing a proposal verified is dropped.
 MAX_SOURCES_PER_ITEM = 5
 MAX_ANSWER_REFS_PER_ITEM = 10
 MAX_SOURCES_PER_DRAFT = MAX_SOURCES_PER_ITEM * MAX_ITEMS
-MAX_ANSWER_REFS_PER_DRAFT = MAX_QUESTIONS
+# Every answer a draft may cite: this version's questions and related answers.
+MAX_ANSWER_REFS_PER_DRAFT = MAX_QUESTIONS + MAX_RELATED_ANSWERS
 MAX_UNRESOLVED = 50
 MAX_DESCRIPTION_CHARS = 10_000
 # The BE DesignJson.canonical rejects content nested deeper than this, any
@@ -229,6 +235,37 @@ class AnsweredQuestion(_Strict):
         return self
 
 
+def answer_chars(answer: Answer) -> int:
+    """Characters of an answer's own text: options and free text, or the text."""
+    if isinstance(answer, ChoiceAnswer):
+        return sum(len(option) for option in answer.selected) + len(
+            answer.other_text or ""
+        )
+    return len(answer.text)
+
+
+class RelatedAnswer(_Strict):
+    """An answered #133 question from another document or an earlier version
+    of this document in the same project (S15P31A108-414).
+
+    Question generation does not ask a decision again once the project has
+    answered it elsewhere, so the draft receives the original answer and its
+    source here. A draft may cite `ref_key` in `answer_refs`. Untrusted data,
+    like every other input.
+    """
+
+    ref_key: Key
+    question: Text
+    answer: Answer
+    source: DocumentRef
+
+    @model_validator(mode="after")
+    def nonblank_question(self) -> Self:
+        if not self.question.strip():
+            raise ValueError("blank related question")
+        return self
+
+
 class DocumentScope(_Strict):
     """1-based inclusive line range of the normalized text the model may read.
 
@@ -270,6 +307,11 @@ class DesignDraftRequest(_Strict):
     questions: tuple[AnsweredQuestion, ...] = Field(
         default=(), max_length=MAX_QUESTIONS
     )
+    # Answers from the project's other documents and earlier versions, newest
+    # first (S15P31A108-414). Empty unless the BE sends them.
+    related_answers: tuple[RelatedAnswer, ...] = Field(
+        default=(), max_length=MAX_RELATED_ANSWERS
+    )
     max_items: int = Field(default=DEFAULT_MAX_ITEMS, ge=1, le=MAX_ITEMS)
     # WITH_ANSWERS is the original behaviour. DOCUMENT_ONLY drafts new items from
     # the document alone (no answers, no existing items) for the auto generation.
@@ -278,8 +320,12 @@ class DesignDraftRequest(_Strict):
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
-        if self.mode == "DOCUMENT_ONLY" and (self.existing_items or self.questions):
-            raise ValueError("DOCUMENT_ONLY takes no existing items or questions")
+        if self.mode == "DOCUMENT_ONLY" and (
+            self.existing_items or self.questions or self.related_answers
+        ):
+            raise ValueError(
+                "DOCUMENT_ONLY takes no existing items, questions or answers"
+            )
         if (
             self.scope is not None
             and self.scope.end_line > self.content.count(chr(10)) + 1
@@ -307,6 +353,22 @@ class DesignDraftRequest(_Strict):
                     or item.version_no != self.document.version_no
                 ):
                     raise ValueError("question evidence outside the document")
+        related_keys = [entry.ref_key for entry in self.related_answers]
+        if len(set(related_keys)) != len(related_keys) or set(related_keys) & set(
+            question_keys
+        ):
+            raise ValueError("duplicate answer reference key")
+        for entry in self.related_answers:
+            if entry.source.document_version_id == self.document.document_version_id:
+                raise ValueError("this version's answers go in questions")
+        if (
+            sum(
+                len(entry.question) + answer_chars(entry.answer)
+                for entry in self.related_answers
+            )
+            > MAX_RELATED_CHARS
+        ):
+            raise ValueError("related_answers exceed MAX_RELATED_CHARS")
         return self
 
     def to_source_input(self) -> SourceInput:
