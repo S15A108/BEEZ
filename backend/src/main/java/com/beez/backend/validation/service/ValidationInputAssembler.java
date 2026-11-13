@@ -265,12 +265,13 @@ public class ValidationInputAssembler {
         fields.add(plan.plan().approach());
         Set<String> queries = new LinkedHashSet<>();
         String title = plan.plan().title().strip();
-        if (title.isEmpty() || title.length() > MAX_QUERY_LENGTH) throw incomplete("invalid_search_title");
-        queries.add(title);
+        if (title.isEmpty()) throw incomplete("invalid_search_title");
+        // Every query, including the title and extracted paths, must fit the search API limit (S15P31A108-410).
+        queries.add(cut(title));
         for (String field : fields) {
             if (field == null || field.isBlank()) continue;
             var paths = API_PATH.matcher(field);
-            while (paths.find()) queries.add(paths.group());
+            while (paths.find()) queries.add(cut(paths.group()));
         }
         for (String field : fields) {
             if (field == null || field.isBlank()) continue;

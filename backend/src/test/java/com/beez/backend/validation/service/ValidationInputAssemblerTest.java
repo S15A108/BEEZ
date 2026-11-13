@@ -279,6 +279,18 @@ class ValidationInputAssemblerTest {
         assertEquals(List.of("title", "goal", "가".repeat(1000)), selected.queries());
     }
 
+    // PR #292 review: a long extracted API path or a long title must also fit the search API's 1000 characters.
+    @Test void longTitleAndExtractedApiPathAreCutToTheSearchLimit() {
+        String path = "/rooms/" + "a".repeat(1200);
+        var plan = new TaskPlanInput("t".repeat(1200), "goal", List.of(), List.of(), "GET " + path,
+                List.of("done"), List.of(), List.of(), List.of(), true, null);
+        var selected = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, plan,
+                Instant.parse("2026-01-01T00:00:00Z"), "1", null));
+        assertEquals(List.of("t".repeat(1000), path.substring(0, 1000), "goal", ("GET " + path).substring(0, 1000)),
+                selected.queries());
+        assertTrue(selected.queries().stream().allMatch(query -> query.length() <= 1000));
+    }
+
     // A slash inside Korean prose ("소프트/하드") is not an API path and must not spend the query budget.
     // A path after a host or port still is one.
     @Test void slashAfterHangulIsNotAnApiPathButAPathAfterAPortIs() {
