@@ -230,6 +230,10 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
 - **켜도 남는 실패(2026-11-10 기준)**: 보완 질문·설계 초안은 ai가 400 `validation_failed`로 거절합니다(BE가
   해시를 `sha256:` 접두어째 보냄, S15P31A108-373). 비비 질문은 모델이 답해도 ai 검증에서 거절돼 템플릿으로
   끝납니다(S15P31A108-374). 이 둘은 env로 고칠 수 없으니 설정을 다시 의심하지 않습니다.
+- 역할 분담 추천(작업 현황의 '후보 추천받기')은 위 넷과 달리 기본으로 꺼 둡니다. 꺼져 있으면 ai가 503
+  `assignment_recommendation_not_configured`로 거절하고, 화면·API에는 503 `assignment_suggestion_disabled`
+  ("담당 후보 추천은 아직 사용할 수 없어요.")로 보이며 버튼이 잠깁니다(S15P31A108-405). 켜기로 정하면 아래 명령의
+  `vals`에 `ASSIGNMENT_RECOMMENDATION_ENABLED=true` 한 줄을 적습니다.
 - **새 서버(운영·발표 환경)에도 같은 줄이 필요합니다.** [cd.md 서버 준비](cd.md#2-env-파일)의 명령이 만드는 파일에는
   이 줄들이 없습니다.
 
@@ -242,7 +246,7 @@ ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같�
 DESIGN_DRAFTS_ENABLED=true
 BEE_CHAT_ENABLED=true
 IMPACT_LLM_MODEL=gpt-6-luna'
-  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL|IMPACT_LLM_TIMEOUT_SECONDS|IMPACT_LLM_OUTPUT_TOKEN_LIMIT|BEEZ_CHANGE_IMPACT_READ_TIMEOUT)=[A-Za-z0-9._-]*$' \
+  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL|IMPACT_LLM_TIMEOUT_SECONDS|IMPACT_LLM_OUTPUT_TOKEN_LIMIT|BEEZ_CHANGE_IMPACT_READ_TIMEOUT|ASSIGNMENT_RECOMMENDATION_ENABLED)=[A-Za-z0-9._-]*$' \
     && { echo "vals 형식이 다름(아래 허용 이름=값만) — 바꾸지 않음"; exit 1; }
   keys=$(printf '%s\n' "$vals" | cut -d= -f1 | paste -sd'|')
   [ -n "$keys" ] || { echo "vals 가 비었음 — 바꾸지 않음"; exit 1; }
@@ -259,9 +263,10 @@ IMPACT_LLM_MODEL=gpt-6-luna'
 
 - `vals`에 적은 이름만 옛 줄을 지우고 끝에 새로 씁니다. 적지 않은 스위치는 그대로 둡니다(이미 켠 기능을 빼고
   돌려도 꺼지지 않습니다). 여러 번 돌려도 줄이 겹치지 않습니다.
-- `vals`에 허용한 일곱 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다. 위 네 스위치에 더해
-  영향 분석 한도 `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_CHANGE_IMPACT_READ_TIMEOUT`을
-  받습니다(기본값으로 충분하면 적지 않습니다). 마지막 값은 backend 설정이라 적용할 때 backend도 다시 만들어집니다.
+- `vals`에 허용한 여덟 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다. 위 네 스위치에 더해
+  영향 분석 한도 `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_CHANGE_IMPACT_READ_TIMEOUT`과
+  역할 분담 추천 스위치 `ASSIGNMENT_RECOMMENDATION_ENABLED`를 받습니다(기본값으로 충분하면 적지 않습니다).
+  `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`은 backend 설정이라 적용할 때 backend도 다시 만들어집니다.
 - 원본이 개행 없이 끝나면 한 줄을 먼저 넣습니다. 그러지 않으면 새 줄이 마지막 줄 뒤에 붙어 두 값이 함께 깨집니다.
 - 실패하면 `jenkins can read`를 찍지 않습니다. 이 줄이 보여야 반영된 것입니다.
 - 끄려면 그 줄의 값을 `false`(모델은 빈 값, `IMPACT_LLM_MODEL=`)로 바꿔 같은 명령을 돌립니다. 줄을 지우면 그

@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
@@ -26,6 +28,9 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 public class AssignmentSuggestionService {
     private static final String FEATURE = "TASK_ASSIGNMENT";
+    private static final Logger log = LoggerFactory.getLogger(AssignmentSuggestionService.class);
+    /** AI-A07 이 기능 스위치(ASSIGNMENT_RECOMMENDATION_ENABLED)가 꺼졌거나 설정값이 잘못됐을 때 503 과 함께 주는 코드 */
+    static final String AI_NOT_CONFIGURED = "assignment_recommendation_not_configured";
     private final ProjectAccessChecker access;
     private final AssignmentSnapshotService snapshots;
     private final AiClient ai;
@@ -54,6 +59,12 @@ public class AssignmentSuggestionService {
         try {
             response = ai.assignmentRecommendations(input);
         } catch (RestClientResponseException e) {
+            // 꺼진 기능은 일시 장애가 아니다. 다시 눌러도 같은 결과라 "잠시 뒤 다시"(ai_unavailable)로 알리지 않고,
+            // 모델을 부르지 않았으므로 실패 사용량도 남기지 않는다 — 누를 때마다 실패가 쌓였다 (S15P31A108-405).
+            if (e.getStatusCode().value() == 503 && AI_NOT_CONFIGURED.equals(AiErrorBodies.codeIn(e))) {
+                log.warn("AI-A07 is switched off or misconfigured (AI 서버의 ASSIGNMENT_RECOMMENDATION_ENABLED 를 확인): project={}", projectId);
+                throw disabled();
+            }
             List<Map<String, Object>> entries = AiErrorBodies.usageIn(e);
             long elapsed = elapsed(start);
             if (entries == null || usage.recordLines(FEATURE, projectId, null, key, entries, false, null, elapsed) == 0) {
@@ -155,6 +166,10 @@ public class AssignmentSuggestionService {
     private static long elapsed(long start) { return (System.nanoTime() - start) / 1_000_000; }
     private static ApiException unavailable() {
         return new ApiException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "추천을 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.");
+    }
+    private static ApiException disabled() {
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "assignment_suggestion_disabled",
+                "담당 후보 추천은 아직 사용할 수 없어요.");
     }
     private static ApiException timeout() {
         return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", "추천 응답이 늦어지고 있어요. 다시 시도해 주세요.");

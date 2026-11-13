@@ -12400,6 +12400,7 @@ HTTP `200`.
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `recommendation_stale` | AI 호출 중 작업 또는 팀원 정보가 바뀜 |
 | 502 | `ai_unavailable` | 분석 실패 |
+| 503 | `assignment_suggestion_disabled` | AI 서버에서 이 기능이 꺼져 있거나 설정이 잘못됨. 다시 시도해도 같은 결과 |
 | 504 | `ai_timeout` | 시간 초과 |
 
 ```json
@@ -12417,6 +12418,7 @@ HTTP `200`.
 - CORS에서 먼저 차단하는 출처 오류도 HTTP 403이며 본문은 공통 CORS 구현을 따른다. REST API는 사람 세션으로 인증하므로 에이전트 토큰만으로 호출하면 401이다.
 - 추천으로 작업 담당자를 자동 변경하지 않는다. 확정은 TSK-A06이다.
 - BE는 같은 프로젝트의 열린 담당 작업과 선행 작업 스냅샷을 구성하고, 호출 전후 변경되면 결과를 버린다.
+- (BE 구현, -405) AI-A07이 503 `assignment_recommendation_not_configured`(기능 스위치 `ASSIGNMENT_RECOMMENDATION_ENABLED`가 꺼짐·설정값 오류)를 주면 503 `assignment_suggestion_disabled`로 알린다. 일시 장애(`ai_unavailable`)와 달리 다시 시도를 권하지 않고, 모델을 부르지 않았으므로 실패 사용량(`llm_usage`)도 남기지 않는다. 화면은 "담당 후보 추천은 아직 사용할 수 없어요."를 보이고 버튼을 잠근다. 그 밖의 AI 5xx는 그대로 502 `ai_unavailable`이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

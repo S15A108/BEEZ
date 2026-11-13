@@ -18,7 +18,10 @@ import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import java.nio.charset.StandardCharsets;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpServerErrorException;
 
 class AssignmentSuggestionServiceTest {
     private final ProjectAccessChecker access = mock(ProjectAccessChecker.class);
@@ -76,6 +79,42 @@ class AssignmentSuggestionServiceTest {
         verify(usage).recordLines(eq("TASK_ASSIGNMENT"), eq(101L), isNull(), anyString(),
                 argThat(lines -> lines.size() == 1 && Boolean.TRUE.equals(((Map<?, ?>) lines.getFirst()).get("failed"))),
                 eq(false), eq("model"), anyLong());
+    }
+
+    private static HttpServerErrorException aiError(HttpStatus status, String code) {
+        byte[] body = ("{\"error\":{\"code\":\"" + code + "\",\"message\":\"x\"}}").getBytes(StandardCharsets.UTF_8);
+        return HttpServerErrorException.create(status, status.getReasonPhrase(), new HttpHeaders(), body, StandardCharsets.UTF_8);
+    }
+
+    @Test void switchedOffFeatureIsReportedAsDisabledAndLeavesNoFailedUsage() {
+        when(ai.assignmentRecommendations(anyMap()))
+                .thenThrow(aiError(HttpStatus.SERVICE_UNAVAILABLE, "assignment_recommendation_not_configured"));
+        assertThatThrownBy(() -> service.suggest(caller, 101, List.of("501")))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                    assertThat(e.getCode()).isEqualTo("assignment_suggestion_disabled");
+                    assertThat(e.getMessage()).doesNotContain("다시");
+                });
+        // 모델을 부르지 않았으니 사용량·실패 기록을 남기지 않는다
+        verify(usage, never()).recordFailure(anyString(), anyLong(), any(), anyString(), anyLong());
+        verify(usage, never()).recordLines(anyString(), anyLong(), any(), anyString(), anyList(), anyBoolean(), any(), anyLong());
+        verify(usage, never()).record(anyString(), anyLong(), any(), anyString(), anyMap(), anyLong());
+        verify(snapshots, never()).capture(caller, 101, List.of(501L), false);
+    }
+
+    @Test void otherAiFailuresStayRetryableAndAreRecorded() {
+        // 같은 503 이라도 꺼짐 코드가 아니면 일시 장애로 본다
+        when(ai.assignmentRecommendations(anyMap()))
+                .thenThrow(aiError(HttpStatus.SERVICE_UNAVAILABLE, "something_else"))
+                .thenThrow(aiError(HttpStatus.BAD_GATEWAY, "model_unavailable"));
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> service.suggest(caller, 101, List.of("501")))
+                    .isInstanceOfSatisfying(ApiException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                        assertThat(e.getCode()).isEqualTo("ai_unavailable");
+                    });
+        }
+        verify(usage, times(2)).recordFailure(eq("TASK_ASSIGNMENT"), eq(101L), isNull(), anyString(), anyLong());
     }
 
     @Test void duplicateTargetsNeverCallAi() {
