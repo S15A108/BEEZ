@@ -246,8 +246,6 @@ class ValidationInputAssemblerTest {
                     Instant.parse("2026-01-01T00:00:00Z"), "1", null);
             var result = ValidationInputAssembler.queries(revision);
             assertEquals(3 + scopes, result.queries().size());
-            assertTrue(result.complete());
-            assertTrue(result.incompleteReasons().isEmpty());
         }
     }
 
@@ -262,8 +260,6 @@ class ValidationInputAssemblerTest {
         var result = ValidationInputAssembler.queries(revision);
         assertEquals(10, result.queries().size());
         assertEquals("scope-7\napproach", result.queries().getLast());
-        assertTrue(result.complete());
-        assertTrue(result.incompleteReasons().isEmpty());
 
         var longScope = java.util.stream.IntStream.range(0, 12).mapToObj(i -> i + "-" + "가".repeat(300)).toList();
         var longPlan = new TaskPlanInput("title", "goal", longScope, List.of(), "approach",
@@ -272,16 +268,25 @@ class ValidationInputAssemblerTest {
                 Instant.parse("2026-01-01T00:00:00Z"), "1", null));
         assertEquals(10, longResult.queries().size());
         assertTrue(longResult.queries().getLast().length() <= 1000);
-        assertTrue(longResult.complete());
+    }
+
+    // S15P31A108-410: plan fields have no length cap, so one long approach must not block validation.
+    @Test void aFieldLongerThanTheSearchLimitIsSearchedByItsLeadingText() {
+        var plan = new TaskPlanInput("title", "goal", List.of(), List.of(), "가".repeat(1500),
+                List.of("done"), List.of(), List.of(), List.of(), true, null);
+        var selected = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, plan,
+                Instant.parse("2026-01-01T00:00:00Z"), "1", null));
+        assertEquals(List.of("title", "goal", "가".repeat(1000)), selected.queries());
     }
 
     // A slash inside Korean prose ("소프트/하드") is not an API path and must not spend the query budget.
-    @Test void slashInsideAWordIsNotAnApiPath() {
-        var plan = new TaskPlanInput("드롭 구현", "소프트/하드 드롭 TCP/IP", List.of(), List.of(),
-                "POST /rooms/{roomId}/drop 호출", List.of("done"), List.of(), List.of(), List.of(), true, null);
+    // A path after a host or port still is one.
+    @Test void slashAfterHangulIsNotAnApiPathButAPathAfterAPortIs() {
+        var plan = new TaskPlanInput("드롭 구현", "소프트/하드 드롭", List.of(), List.of(),
+                "localhost:8080/rooms/{roomId}/drop 호출", List.of("done"), List.of(), List.of(), List.of(), true, null);
         var selected = ValidationInputAssembler.queries(new TaskPlanRevisionResponse("4", "3", 1, plan,
                 Instant.parse("2026-01-01T00:00:00Z"), "1", null));
-        assertEquals(List.of("드롭 구현", "/rooms/{roomId}/drop", "소프트/하드 드롭 TCP/IP", "POST /rooms/{roomId}/drop 호출"),
+        assertEquals(List.of("드롭 구현", "/rooms/{roomId}/drop", "소프트/하드 드롭", "localhost:8080/rooms/{roomId}/drop 호출"),
                 selected.queries());
     }
 

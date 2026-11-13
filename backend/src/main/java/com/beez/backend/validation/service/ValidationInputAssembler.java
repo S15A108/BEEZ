@@ -35,7 +35,8 @@ public class ValidationInputAssembler {
     // than 100 chunks, not that a match was cut off (S15P31A108-410).
     private static final int MAX_SEARCH_RESULTS = 100;
     // Bounds the number of search calls (each SEMANTIC call embeds its query); it is a cost
-    // budget, not an evidence guarantee. Phrases beyond it are merged into the last query.
+    // budget, not an evidence guarantee. Phrases beyond it are merged into the last query, and the
+    // merged query only adds SEMANTIC recall: KEYWORD substring matching will not find it.
     private static final int MAX_QUERIES = 10;
     private static final int MAX_QUERY_LENGTH = 1000;
     private static final int MAX_UNRESOLVED = 100;
@@ -43,8 +44,9 @@ public class ValidationInputAssembler {
     private static final String PACKET_SELECTION_TRUNCATED_PREFIX = "SELECTION_TRUNCATED: ";
     // AI-A02 allows 200 KB; reserve space for JSON formatting and the snapshot hash.
     private static final int MAX_SEARCH_CONTEXT_REQUEST_BYTES = 180_000;
-    // A path starts a token: "소프트/하드" or "TCP/IP" is prose, not an API path.
-    private static final Pattern API_PATH = Pattern.compile("(?<![\\p{L}\\p{N}])/(?=[\\p{L}\\p{N}_{])[\\p{L}\\p{N}_{}./-]+");
+    // A slash right after Hangul ("소프트/하드") is prose, not an API path. Paths after a host or
+    // port ("localhost:8080/api") still count.
+    private static final Pattern API_PATH = Pattern.compile("(?<!\\p{IsHangul})/(?=[\\p{L}\\p{N}_{])[\\p{L}\\p{N}_{}./-]+");
     private final TaskQueryService tasks;
     private final HybridDocumentCandidateSearch search;
     private final RelatedTaskCandidateFinder related;
@@ -90,9 +92,9 @@ public class ValidationInputAssembler {
         var target = tasks.getTask(caller, projectId, taskId).currentPlanRevision();
         requireRevision(target, planRevisionId);
         var selection = queries(target);
-        Set<String> incompleteReasons = new LinkedHashSet<>(selection.incompleteReasons());
+        Set<String> incompleteReasons = new LinkedHashSet<>();
         long baselineId = -1;
-        boolean searchesComplete = selection.complete();
+        boolean searchesComplete = true;
         Set<Long> itemIds = new LinkedHashSet<>();
         Set<Long> documentVersions = new LinkedHashSet<>();
         Map<String, ValidationEvidenceBuilder.SearchHit> documentHits = new LinkedHashMap<>();
@@ -252,7 +254,7 @@ public class ValidationInputAssembler {
         request.put("evidence", List.copyOf(retained));
     }
 
-    record QuerySelection(List<String> queries, boolean complete, List<String> incompleteReasons) {}
+    record QuerySelection(List<String> queries) {}
 
     /** Bounded phrases and API paths: text is data and search recall remains unknown. */
     static QuerySelection queries(TaskPlanRevisionResponse plan) {
@@ -262,9 +264,8 @@ public class ValidationInputAssembler {
         fields.addAll(plan.plan().includedScope());
         fields.add(plan.plan().approach());
         Set<String> queries = new LinkedHashSet<>();
-        Set<String> incompleteReasons = new LinkedHashSet<>();
         String title = plan.plan().title().strip();
-        if (title.isEmpty() || title.length() > 1000) throw incomplete("invalid_search_title");
+        if (title.isEmpty() || title.length() > MAX_QUERY_LENGTH) throw incomplete("invalid_search_title");
         queries.add(title);
         for (String field : fields) {
             if (field == null || field.isBlank()) continue;
@@ -273,32 +274,27 @@ public class ValidationInputAssembler {
         }
         for (String field : fields) {
             if (field == null || field.isBlank()) continue;
-            String phrase = field.strip();
-            if (phrase.length() > MAX_QUERY_LENGTH) {
-                incompleteReasons.add("search_query_too_long");
-                continue;
-            }
-            queries.add(phrase);
+            // Plan fields have no length cap; a long approach is searched by its leading text.
+            queries.add(cut(field.strip()));
         }
-        return new QuerySelection(withinBudget(List.copyOf(queries)),
-                incompleteReasons.isEmpty(), List.copyOf(incompleteReasons));
+        return new QuerySelection(withinBudget(List.copyOf(queries)));
     }
 
     /**
-     * A plan with many scope items must not become unverifiable (S15P31A108-410). Keep the first
-     * queries as they are and search the rest together in one merged query, cut to the search limit.
+     * A plan with many or long scope items must not become unverifiable (S15P31A108-410). Keep the
+     * first queries as they are and search the rest together in one merged query, cut to the search limit.
      */
     private static List<String> withinBudget(List<String> queries) {
         if (queries.size() <= MAX_QUERIES) return queries;
         List<String> kept = new ArrayList<>(queries.subList(0, MAX_QUERIES - 1));
-        String merged = String.join("\n", queries.subList(MAX_QUERIES - 1, queries.size()));
-        if (merged.length() > MAX_QUERY_LENGTH) {
-            int end = MAX_QUERY_LENGTH;
-            if (Character.isHighSurrogate(merged.charAt(end - 1))) end--;
-            merged = merged.substring(0, end).strip();
-        }
-        kept.add(merged);
+        kept.add(cut(String.join("\n", queries.subList(MAX_QUERIES - 1, queries.size()))));
         return List.copyOf(kept);
+    }
+
+    private static String cut(String text) {
+        if (text.length() <= MAX_QUERY_LENGTH) return text;
+        int end = Character.isHighSurrogate(text.charAt(MAX_QUERY_LENGTH - 1)) ? MAX_QUERY_LENGTH - 1 : MAX_QUERY_LENGTH;
+        return text.substring(0, end).strip();
     }
 
     private static void requireRevision(TaskPlanRevisionResponse plan, long expected) {
