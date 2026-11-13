@@ -85,6 +85,9 @@ class QuestionDraft:
     text: str
     answer_format: AnswerFormat
     origin: Origin
+    # The question covers more passages than its evidence could cite, so a
+    # model question quoting all the evidence still leaves some uncovered.
+    evidence_truncated: bool = False
 
 
 def heading_titles(document: SourceDocument) -> dict[str, str]:
@@ -214,13 +217,23 @@ def _row_label(block: SourceBlock) -> str:
 
 
 def _rows_location(column: _PlaceholderColumn) -> str:
-    """First row's display path, its line span widened to the last row."""
-    (first, _, location), (last, _, _) = column.rows[0], column.rows[-1]
+    """First row's display path, its line span replaced by the undecided rows.
+
+    Adjacent rows share one span; a gap starts a new one, so the location
+    never takes in a row whose value is decided.
+    """
+    first, _, location = column.rows[0]
     own = f"L{first.locator.start_line}-L{first.locator.end_line}"
-    if last is first or not location.endswith(own):
+    if len(column.rows) == 1 or not location.endswith(own):
         return location
-    span = f"L{first.locator.start_line}-L{last.locator.end_line}"
-    return location[: -len(own)] + span
+    runs: list[list[int]] = []
+    for block, _, _ in column.rows:
+        if runs and block.locator.start_line == runs[-1][1] + 1:
+            runs[-1][1] = block.locator.end_line
+        else:
+            runs.append([block.locator.start_line, block.locator.end_line])
+    spans = ", ".join(f"L{start}-L{end}" for start, end in runs)
+    return location[: -len(own)] + spans
 
 
 def _placeholder_column(
@@ -269,7 +282,11 @@ def _placeholder_column(
         evidence=evidence,
     )
     return candidate, QuestionDraft(
-        answer_type, clip(question), answer_format, "TEMPLATE"
+        answer_type,
+        clip(question),
+        answer_format,
+        "TEMPLATE",
+        evidence_truncated=len(column.rows) > len(evidence),
     )
 
 

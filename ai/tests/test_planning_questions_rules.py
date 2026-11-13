@@ -119,6 +119,15 @@ def test_undecided_cells_of_one_column_are_one_question():
     assert_resolvable(document, hits)
 
 
+def test_column_location_leaves_out_decided_rows_between():
+    document = parse(
+        "## 일정\n\n| 단계 | 담당 |\n| --- | --- |\n"
+        "| 기획 | 미정 |\n| 설계 | 오서현 |\n| 구현 | 미정 |\n| 시험 | TBD |\n"
+    )
+    ((_, draft),) = detect_rule_candidates(document, REF)
+    assert "표(일정 / L5-L5, L7-L8)" in draft.text
+
+
 def test_duplicate_identifiers_with_different_text_are_one_conflict():
     content = (FIXTURES / "requirements.md").read_bytes().decode("utf-8")
     document = parse(content, kind="REQUIREMENTS")

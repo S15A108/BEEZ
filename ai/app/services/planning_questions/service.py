@@ -195,10 +195,14 @@ def verify_model_candidate(
     return candidate, draft
 
 
-def _covered_by(rule: ReviewCandidate, model: ReviewCandidate) -> bool:
+def _covered_by(rule_item: Item, model: ReviewCandidate) -> bool:
     # A verified model candidate that quotes the same passage replaces the
     # template question for that rule hit; its question is written for it.
+    rule, draft = rule_item
     if rule.kind != model.kind or model.status != "REVIEW_CANDIDATE":
+        return False
+    if rule.signal == "PLACEHOLDER_CELL" and draft.evidence_truncated:
+        # Rows past the evidence cap are asked only by the column question.
         return False
     quoted = [
         any(
@@ -216,7 +220,7 @@ def merge_items(rule_items: list[Item], model_items: list[Item]) -> list[Item]:
     kept = [
         item
         for item in rule_items
-        if not any(_covered_by(item[0], model[0]) for model in model_items)
+        if not any(_covered_by(item, model[0]) for model in model_items)
     ]
     return [*kept, *model_items]
 

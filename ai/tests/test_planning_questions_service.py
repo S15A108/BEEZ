@@ -186,6 +186,30 @@ async def test_model_question_on_one_row_keeps_the_column_question():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("rows", "kept"), [(5, False), (6, True)])
+async def test_column_past_the_evidence_cap_survives_a_model_quoting_all_evidence(
+    rows, kept
+):
+    # Model evidence is capped at 5 like the column's; a sixth row is asked
+    # only by the column question, so quoting the first five must not drop it.
+    names = ["보관 기간", "삭제 주기", "백업 주기", "암호화", "접근 권한", "감사 주기"]
+    content = DOC + "".join(f"| {name} | 미정 |\n" for name in names[1:rows])
+    proposer = FakeProposer(
+        proposal(
+            "MISSING_CANDIDATE",
+            "보관 정책이 없습니다.",
+            [
+                {"line": 11 + offset, "quote": f"| {name} | 미정 |"}
+                for offset, name in enumerate(names[:5])
+            ],
+        )
+    )
+    outcome = await generate_planning_questions(request(content), proposer)
+    keys = {candidate.candidate_key for candidate in outcome.result.candidates}
+    assert ("rule-placeholder-L9-c2" in keys) is kept
+
+
+@pytest.mark.asyncio
 async def test_fabricated_quote_is_unverified_and_never_output():
     proposer = FakeProposer(
         proposal(
