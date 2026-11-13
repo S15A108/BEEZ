@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { beeApi } from '@/api/services'
 import type { Member } from '@/api/contracts/common'
-import { getApiErrorMessage } from '@/api/error'
+import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -25,6 +25,9 @@ export function AssignmentRecommendations({
   const suggestion = recommendation.data?.suggestions.find(
     (item) => item.task_id === taskId,
   )
+  // 서버에서 꺼 둔 기능이면 다시 눌러도 같은 결과다. 버튼을 잠가 같은 실패를 되풀이하지 않게 한다(S15P31A108-405).
+  const disabled =
+    getApiErrorCode(recommendation.error) === 'assignment_suggestion_disabled'
 
   return (
     <Card>
@@ -32,7 +35,7 @@ export function AssignmentRecommendations({
         <CardTitle>비비의 담당 후보 추천</CardTitle>
         <Button
           variant="outline"
-          disabled={recommendation.isPending}
+          disabled={recommendation.isPending || disabled}
           onClick={() => recommendation.mutate()}
         >
           {recommendation.isPending

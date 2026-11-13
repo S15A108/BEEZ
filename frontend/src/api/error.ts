@@ -99,6 +99,8 @@ const messages: Record<string, string> = {
   task_conflict: '같은 설계를 변경하는 작업을 확인해 주세요.',
   ai_unavailable: '분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   ai_timeout: '분석 시간이 초과되었습니다. 다시 시도해 주세요.',
+  // 역할 분담 추천(BEE-A02)이 서버에서 꺼져 있다. 일시 장애가 아니라 다시 시도를 권하지 않는다(S15P31A108-405).
+  assignment_suggestion_disabled: '담당 후보 추천은 아직 사용할 수 없어요.',
   // 작업 계획 문서 초안(TSK-A08, S15P31A108-385)
   draft_in_progress: '이미 초안을 만드는 중이에요. 끝날 때까지 기다려 주세요.',
   draft_limit_exceeded:

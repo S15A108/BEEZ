@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, expect, it, vi } from 'vitest'
 import { beeApi, tasksApi } from '@/api/services'
 import { AssignmentRecommendations } from './AssignmentRecommendations'
@@ -123,4 +124,55 @@ it('이 작업의 후보가 없으면 빈 결과와 확인할 사항을 표시�
   ).toBeInTheDocument()
   expect(screen.getByText('작업을 다시 확인해 주세요.')).toBeInTheDocument()
   expect(screen.queryByLabelText('담당 후보 추천 결과')).not.toBeInTheDocument()
+})
+
+const apiError = (status: number, code: string) =>
+  new AxiosError('failed', 'ERR_BAD_RESPONSE', undefined, undefined, {
+    status,
+    statusText: 'failed',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+    data: { error: { code, message: 'x' } },
+  })
+
+it('서버에서 꺼 둔 기능이면 사용할 수 없다고 알리고 다시 누르지 못하게 한다', async () => {
+  const suggest = vi
+    .spyOn(beeApi, 'suggestAssignments')
+    .mockRejectedValue(apiError(503, 'assignment_suggestion_disabled'))
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+      }
+    >
+      <AssignmentRecommendations projectId="101" taskId="501" members={[]} />
+    </QueryClientProvider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: '후보 추천받기' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '담당 후보 추천은 아직 사용할 수 없어요.',
+  )
+  expect(screen.getByRole('alert')).not.toHaveTextContent('다시')
+  const button = screen.getByRole('button', { name: '후보 추천받기' })
+  expect(button).toBeDisabled()
+  fireEvent.click(button)
+  expect(suggest).toHaveBeenCalledTimes(1)
+})
+
+it('일시 장애면 다시 시도하라고 알리고 버튼을 잠그지 않는다', async () => {
+  vi.spyOn(beeApi, 'suggestAssignments').mockRejectedValue(
+    apiError(502, 'ai_unavailable'),
+  )
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+      }
+    >
+      <AssignmentRecommendations projectId="101" taskId="501" members={[]} />
+    </QueryClientProvider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: '후보 추천받기' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('다시 시도')
+  expect(screen.getByRole('button', { name: '후보 추천받기' })).toBeEnabled()
 })
