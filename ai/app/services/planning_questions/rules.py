@@ -213,6 +213,16 @@ def _row_label(block: SourceBlock) -> str:
     )
 
 
+def _rows_location(column: _PlaceholderColumn) -> str:
+    """First row's display path, its line span widened to the last row."""
+    (first, _, location), (last, _, _) = column.rows[0], column.rows[-1]
+    own = f"L{first.locator.start_line}-L{first.locator.end_line}"
+    if last is first or not location.endswith(own):
+        return location
+    span = f"L{first.locator.start_line}-L{last.locator.end_line}"
+    return location[: -len(own)] + span
+
+
 def _placeholder_column(
     ref: DocumentRef, column: _PlaceholderColumn
 ) -> tuple[ReviewCandidate, QuestionDraft]:
@@ -228,7 +238,7 @@ def _placeholder_column(
         _evidence(ref, block, location, text.strip()[:MAX_QUOTE_CHARS].strip())
         for block, text, location in column.rows[:MAX_DUPLICATE_EVIDENCE]
     )
-    where = shorten(column.rows[0][2])
+    where = shorten(_rows_location(column))
     key = f"rule-placeholder-L{column.anchor_line}-c{index + 1}"
     if len(labels) == 1:
         summary = f"표의 '{labels[0]}' 행에서 '{name}' 값이 미정으로 표시돼 있습니다."

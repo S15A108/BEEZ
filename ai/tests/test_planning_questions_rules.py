@@ -101,11 +101,15 @@ def test_undecided_cells_of_one_column_are_one_question():
     assert {owner.signal, due.signal} == {"PLACEHOLDER_CELL"}
     # Evidence stays within the schema bound; every row is still named.
     assert [item.quote for item in owner.evidence] == [
-        f"| {name} | {'미정' if name == '기획' else 'TBD'} | "
-        f"{'TBD' if name == '기획' else '11-20'} |"
-        for name in rows[:5]
+        "| 기획 | 미정 | TBD |",
+        "| 설계 | TBD | 11-20 |",
+        "| 구현 | TBD | 11-20 |",
+        "| 시험 | TBD | 11-20 |",
+        "| 배포 | TBD | 11-20 |",
     ]
     assert all(f"'{name}'" in owner_draft.text for name in rows)
+    # The question points at the whole run of rows, not the first one only.
+    assert "표(일정 / L5-L10)" in owner_draft.text
     assert "'담당'" in owner.summary and "6개 행" in owner.summary
     assert owner_draft.question_type == "ESSAY"
     # A column undecided in one row keeps the short single-value question.
