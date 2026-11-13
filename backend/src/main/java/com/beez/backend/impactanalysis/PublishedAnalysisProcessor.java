@@ -44,8 +44,8 @@ public class PublishedAnalysisProcessor {
     /**
      * 자동 재시도할 AI 실패. 일시 장애(시간 초과·연결 실패)는 재시도 정책의 횟수(최대 4회)대로 다시 시도한다.
      * 출력 상한 잘림(model_output_truncated)은 첫 시도에서만 한 번 더 시도한다. 추론 길이가 매번 달라 다음 시도는 들어갈 수 있지만,
-     * 같은 상한으로 계속 끊기면 시도마다 입력 전체 비용만 나간다(11-11 잘림 4회 반복). 최종 FAILED 는 같은 프로젝트의
-     * 후속 발행 분석을 멈추게 하므로(PublishedAnalysisOrderingSql.PREDECESSORS_READY) 첫 잘림에 바로 닫지 않는다 (S15P31A108-402, #286 리뷰).
+     * 같은 상한으로 계속 끊기면 시도마다 입력 전체 비용만 나간다(11-11 잘림 4회 반복). 최종 FAILED 는 그 버전을 다시 평가할 수
+     * 없게 남기므로(뒤 발행이 나오면 baseline_changed) 첫 잘림에 바로 닫지 않는다 (S15P31A108-402, #286 리뷰, -408).
      */
     static boolean retryableAiFailure(String code, int attempt) {
         if ("model_output_truncated".equals(code)) return attempt == 1;

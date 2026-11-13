@@ -522,7 +522,7 @@
     {
       "type": "stat",
       "title": "막힌 프로젝트",
-      "description": "선행 baseline 누락·미완료로 순서상 막힌 프로젝트 수. 10분 지속되면 CdcBlockedProjects",
+      "description": "선행 baseline·접수행 누락 또는 선행 접수 처리 중(PENDING·RUNNING)으로 순서상 기다리는 프로젝트 수. 끝난 선행(FAILED·미평가)은 막지 않음(S15P31A108-408). 10분 지속되면 CdcBlockedProjects",
       "targets": [
         {
           "refId": "A",

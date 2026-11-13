@@ -49,9 +49,10 @@ public final class PublicationOrderingPolicy {
      *     current, project-scoped view; final claim must still be atomic with it
      * @param versions version records at or before targetVersion
      * @return READY only when target is PENDING and every earlier published
-     *     version is complete or explicitly verified as v1/pre-197 skipped or
-     *     unevaluated because document changes are unsupported. The latter
-     *     remains an incomplete analysis requiring review.
+     *     version has reached a final state (COMPLETED, FAILED or NOT_EVALUATED).
+     *     A final earlier version can never be analyzed again once a later
+     *     baseline exists, so waiting on it would block the project forever
+     *     (S15P31A108-408). Its failure or unevaluated result still requires review.
      */
     public static Decision evaluate(long projectId, int targetVersion, boolean authoritativeSnapshot,
                                     List<PublishedVersion> versions) {
@@ -94,13 +95,9 @@ public final class PublicationOrderingPolicy {
             }
             if (entry.getKey() == targetVersion) break;
             var previous = entry.getValue();
-            if (previous.state() == State.NOT_EVALUATED) {
-                if (previous.skipEvidence() == SkipEvidence.NONE) {
-                    return new Decision(Outcome.REQUIRES_RECONCILIATION, previous.version());
-                }
-            } else if (previous.state() == State.UNKNOWN) {
+            if (previous.state() == State.UNKNOWN) {
                 return new Decision(Outcome.REQUIRES_RECONCILIATION, previous.version());
-            } else if (previous.state() != State.COMPLETED) {
+            } else if (previous.state() == State.PENDING || previous.state() == State.RUNNING) {
                 return new Decision(Outcome.WAITING_FOR_PREDECESSOR, previous.version());
             }
             expected++;

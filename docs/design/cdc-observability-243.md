@@ -15,8 +15,8 @@ Micrometer 이름은 `beez.cdc.*`이고 Prometheus 형식에서는 `beez_cdc_*`�
 | `beez.cdc.analysis.intakes{status}` | `beez_cdc_analysis_intakes{status}` | gauge | `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `NOT_EVALUATED` 현재 접수행 수 |
 | `beez.cdc.analysis.evaluations{result}` | `beez_cdc_analysis_evaluations{result}` | gauge | 완료 행의 `COMPLETED`, `INSUFFICIENT_EVIDENCE`, 평가값이 없거나 완료와 맞지 않는 `UNKNOWN` 수 |
 | `beez.cdc.analysis.not.evaluated.expected` | `beez_cdc_analysis_not_evaluated_expected` | gauge | 최초 v1 및 `published_before_intake`로 명시된 과거 백필 |
-| `beez.cdc.analysis.not.evaluated.requires.review` | `beez_cdc_analysis_not_evaluated_requires_review` | gauge | 그 외 미평가. 모두 장애라고 단정하지 않지만 후속 분석을 막을 수 있다 |
-| `beez.cdc.analysis.blocked.projects` | `beez_cdc_analysis_blocked_projects` | gauge | `PENDING`이 있고 선행 baseline 누락·미완료 등으로 순서상 막힌 프로젝트 수. 워커와 같은 선행 검사 사용 |
+| `beez.cdc.analysis.not.evaluated.requires.review` | `beez_cdc_analysis_not_evaluated_requires_review` | gauge | 그 외 미평가. 모두 장애라고 단정하지 않는다. 후속 분석은 막지 않는다(S15P31A108-408) |
+| `beez.cdc.analysis.blocked.projects` | `beez_cdc_analysis_blocked_projects` | gauge | `PENDING`이 있고 앞선 baseline·접수행이 빠졌거나 앞선 접수가 아직 `PENDING`·`RUNNING`이라 순서상 기다리는 프로젝트 수. 워커와 같은 선행 검사 사용 |
 | `beez.cdc.analysis.pending.retries` | `beez_cdc_analysis_pending_retries` | gauge | 다음 재시각이 예약됐거나 도래한 `PENDING` 수 |
 | `beez.cdc.analysis.expired.leases` | `beez_cdc_analysis_expired_leases` | gauge | `RUNNING` 중 lease가 만료된 행 수 |
 | `beez.cdc.analysis.started.retries` | `beez_cdc_analysis_started_retries` | gauge | 보관 중인 접수행의 `max(attempt - 1, 0)` 합계. 시작된 재시도 수 |
@@ -41,9 +41,9 @@ Kafka 실패 counter는 consumer를 켰을 때만 등록된다. 꺼져 있으면
 
 ### 복구 경계
 
-발행 후 접수의 `FAILED`와 확인 필요 `NOT_EVALUATED`는 자동으로 재처리되지 않는다. 현재 수동 재처리 API는 없다. `document_change_unavailable`인 미평가는 후속 분석의 순서 검사만 통과하며, 해당 버전은 미평가와 확인 필요 지표에 남는다. 문서 변경이 포함된 제안은 같은 제안의 설계 항목 변경까지 영향 분석 전체가 평가되지 않으므로 담당자가 따로 확인해야 한다. 다른 확인 필요 미평가나 실패는 후속 분석을 계속 막을 수 있다. 이 변경은 반복 알림을 해소하지 않으며 알림을 일시 중지하면 새 미평가도 함께 가려진다.
+발행 후 접수의 `FAILED`와 확인 필요 `NOT_EVALUATED`는 자동으로 재처리되지 않는다. 현재 수동 재처리 API는 없다. 끝난 접수(`FAILED`·`NOT_EVALUATED`)는 후속 분석의 순서를 막지 않으며, 해당 버전은 실패·미평가 지표에 남는다(S15P31A108-408). 뒤 발행이 있으면 앞선 버전은 현재 baseline이 아니어서 수동 재처리 API가 생겨도 다시 분석할 수 없다. 문서 변경이 포함된 제안은 같은 제안의 설계 항목 변경까지 영향 분석 전체가 평가되지 않으므로 담당자가 따로 확인해야 한다. 이 변경은 반복 알림을 해소하지 않으며 알림을 일시 중지하면 새 미평가도 함께 가려진다.
 
-원인·상태 확인은 권한이 있는 담당자가 수행하고, 앱 담당과 DB 접근 담당이 협의한다. 필요하면 알림을 일시 중지할 수 있으나 이는 문제 해결이 아니다. `FAILED`를 임의로 `PENDING`으로 바꾸거나 시도 횟수를 초기화하지 않는다. 워커는 attempt 4 이상을 선점하지 않고, 완료된 시도 이력은 `(intake_id, attempt)`를 기본 키로 사용하기 때문이다. 임의의 `NOT_EVALUATED`는 최초 v1, 명시적 과거 백필, 문서 변경 미지원 사유 중 하나가 아니면 후속 분석의 선행 조건을 만족하지 않는다.
+원인·상태 확인은 권한이 있는 담당자가 수행하고, 앱 담당과 DB 접근 담당이 협의한다. 필요하면 알림을 일시 중지할 수 있으나 이는 문제 해결이 아니다. `FAILED`를 임의로 `PENDING`으로 바꾸거나 시도 횟수를 초기화하지 않는다. 워커는 attempt 4 이상을 선점하지 않고, 완료된 시도 이력은 `(intake_id, attempt)`를 기본 키로 사용하기 때문이다. 끝난 접수는 이미 후속 분석을 막지 않으므로 순서를 풀려고 상태를 바꿀 이유도 없다.
 
 수동 재처리 API와 필요한 상태 전이·시도 이력·권한·감사·중복 실행 방지는 별도 백엔드 작업으로 정하고 검증한다. Kafka 배포 후속 작업에는 consumer factory의 `MicrometerConsumerListener` 연결과 Kafka client 지표 라벨 범위 확인을 포함한다.
 

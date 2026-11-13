@@ -58,7 +58,8 @@ class PublishedAnalysisIntegrationTest extends IntegrationTestSupport {
         repository.fail(fourth,now.plusSeconds(99),"model_timeout",true);
         assertThat(jdbc.queryForObject("SELECT status FROM published_change_analysis WHERE id=?",String.class,first)).isEqualTo("FAILED");
         assertThat(repository.claim(first,now.plusSeconds(100),60)).isEmpty();
-        assertThat(repository.claim(second,now.plusSeconds(100),60)).isEmpty();
+        // 끝난(FAILED) 앞 버전은 다시 분석할 수 없으므로 뒤 버전을 막지 않는다 (S15P31A108-408)
+        assertThat(repository.claim(second,now.plusSeconds(100),60)).isPresent();
     }
     @Test void concurrentClaimsHaveExactlyOneOwnerAndOneSecondRetryWorks() throws Exception {
         long id=pending(baseline(1)); Instant now=Instant.now();
@@ -90,17 +91,17 @@ class PublishedAnalysisIntegrationTest extends IntegrationTestSupport {
                 .isInstanceOf(org.springframework.dao.InvalidDataAccessApiUsageException.class).hasMessageContaining("Analysis intake missing");
     }
 
-    @Test void missingBaselinesAndUnexplainedNotEvaluatedBlockLaterVersions() {
+    @Test void missingBaselineOrIntakeBlocksLaterVersions() {
         long firstBaseline=baseline(1), thirdBaseline=baseline(3);
         tx.executeWithoutResult(s -> intake.accept(project,firstBaseline,null));
         long third=pending(thirdBaseline);
         Instant now=Instant.now();
         assertThat(repository.claim(third,now,60)).isEmpty(); // version 2 is absent
         long secondBaseline=baseline(2);
-        long second=jdbc.queryForObject("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) VALUES(?,?,'NOT_EVALUATED') RETURNING id",
-                Long.class,project,secondBaseline);
-        assertThat(repository.claim(third,now,60)).isEmpty(); // not a known initial/backfill skip
-        jdbc.update("UPDATE published_change_analysis SET error_code='published_before_intake' WHERE id=?",second);
+        assertThat(repository.claim(third,now,60)).isEmpty(); // version 2 has no intake row
+        // 끝난 앞 버전은 사유와 관계없이(사유 없는 미평가 포함) 막지 않는다 (S15P31A108-408)
+        jdbc.update("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) VALUES(?,?,'NOT_EVALUATED')",
+                project,secondBaseline);
         assertThat(repository.claim(third,now,60)).isPresent();
     }
 
