@@ -1926,6 +1926,90 @@ it('검색하면 키나 제목이 맞는 작업만 남기고, 없으면 안내�
   ).toBeInTheDocument()
 })
 
+const tileCounts = () =>
+  within(screen.getByRole('list', { name: '상태별 작업 수' }))
+    .getAllByRole('listitem')
+    .map((tile) => tile.textContent)
+
+it('팀 전체 탭에서 담당자를 고르면 목록·타일·검색이 그 담당자의 작업만 보고, 탭을 바꾸면 전체로 돌아간다', async () => {
+  const user = userEvent.setup()
+  const unassigned: Record<string, unknown> = {
+    ...listed('503', 'TASK-003', 'WAITING', '빈 자리 작업'),
+    waiting_reason: 'INPUT',
+  }
+  delete unassigned.assignee_member_id
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [
+      task,
+      {
+        ...listed('502', 'TASK-002', 'IN_PROGRESS', '로그인 화면'),
+        assignee_member_id: '22',
+      },
+      taskDetailSchema.parse(unassigned),
+    ],
+    has_more: false,
+  })
+  show(false)
+  await screen.findByRole('button', { name: /사용자 프로필 구현/ })
+  // 내 작업 탭에는 담당자 선택이 없다.
+  expect(screen.queryByRole('combobox', { name: '담당자' })).toBeNull()
+  await user.click(screen.getByRole('tab', { name: '팀 전체' }))
+  const picker = screen.getByRole('combobox', { name: '담당자' })
+  await within(picker).findByRole('option', { name: '다른 팀원' })
+  expect(
+    within(picker)
+      .getAllByRole('option')
+      .map((option) => option.textContent),
+  ).toEqual(['담당자 전체', '담당자 (나)', '다른 팀원', '담당자 없음'])
+  expect(tileCounts()).toEqual(['1할 것', '1진행 중', '1대기', '0끝남'])
+
+  await user.selectOptions(picker, '다른 팀원')
+  expect(
+    screen.getByRole('button', { name: /로그인 화면/ }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: /사용자 프로필 구현/ }),
+  ).toBeNull()
+  expect(screen.queryByRole('button', { name: /빈 자리 작업/ })).toBeNull()
+  expect(tileCounts()).toEqual(['0할 것', '1진행 중', '0대기', '0끝남'])
+  // 검색은 고른 담당자의 작업 안에서만 찾는다.
+  const search = screen.getByRole('searchbox', { name: '작업 검색' })
+  await user.type(search, 'task-001')
+  expect(
+    screen.getByText('찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'),
+  ).toBeInTheDocument()
+  await user.clear(search)
+
+  await user.selectOptions(picker, '담당자 없음')
+  expect(
+    screen.getByRole('button', { name: /빈 자리 작업/ }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /로그인 화면/ })).toBeNull()
+  expect(tileCounts()).toEqual(['0할 것', '0진행 중', '1대기', '0끝남'])
+
+  await user.click(screen.getByRole('tab', { name: '내 작업' }))
+  await user.click(screen.getByRole('tab', { name: '팀 전체' }))
+  expect(screen.getByRole('combobox', { name: '담당자' })).toHaveValue('')
+  expect(tileCounts()).toEqual(['1할 것', '1진행 중', '1대기', '0끝남'])
+})
+
+it('고른 담당자에게 작업이 없으면 빈 상태 문구를 보인다', async () => {
+  const user = userEvent.setup()
+  show(false)
+  await user.click(await screen.findByRole('tab', { name: '팀 전체' }))
+  const picker = screen.getByRole('combobox', { name: '담당자' })
+  await within(picker).findByRole('option', { name: '다른 팀원' })
+  await user.selectOptions(picker, '다른 팀원')
+  expect(
+    screen.getByText(
+      '이 팀원이 맡은 작업이 없어요. 다른 담당자를 골라 보세요.',
+    ),
+  ).toBeInTheDocument()
+  expect(tileCounts()).toEqual(['0할 것', '0진행 중', '0대기', '0끝남'])
+  await user.selectOptions(picker, '담당자 없음')
+  expect(screen.getByText('담당자 없는 작업이 없어요.')).toBeInTheDocument()
+})
+
 it('작업이 한 페이지(50개)를 넘으면 뒤 페이지까지 받아 타일을 세고 검색한다', async () => {
   const first = [
     task,
