@@ -48,8 +48,21 @@ function renderPanel(isLeader = true, projectId = '102') {
 }
 const CONFLICT_QUESTION =
   '기획서의 "팀원은 문서를 직접 승인한다"와 요구사항의 "승인은 팀장만 한다"가 달라요. 어느 쪽이 맞나요?'
-const cardOf = (text: string) =>
-  screen.getByText(text).closest('article') as HTMLElement
+type User = ReturnType<typeof userEvent.setup>
+// 탭(문서 후보·보완 질문·답변 보완 후보·설계 항목 초안)을 연다
+const openTab = async (user: User, name: RegExp) =>
+  user.click(await screen.findByRole('tab', { name }))
+// 왼쪽 목록에서 글자가 든 줄을 눌러 오른쪽 상세에 연다
+const openRow = async (user: User, text: string) =>
+  user.click(
+    await screen.findByRole('button', {
+      name: (name) => name.includes(text),
+    }),
+  )
+// 지금 보이는 탭의 내용(숨은 탭은 빠진다)
+const visiblePanel = () => within(screen.getByRole('tabpanel'))
+// 보완 질문 목록이 다 읽혔는지: 필터의 '전체' 개수
+const questionsLoaded = () => screen.findByRole('button', { name: '전체 5' })
 
 it('승인 설계에서 배정 작업을 만들고 같은 요청의 작업을 다시 사용한다', async () => {
   const user = renderPanel(true, '101')
@@ -99,88 +112,89 @@ it('문서 4종이 모두 승인되기 전에는 발행을 끄고 공용 문서�
 })
 
 // S15P31A108-202: 232 이후 질문은 유형·종류·근거 상태를 가진다.
-it('질문 카드에 종류·유형·근거 미확인 칩과 전체 개수를 보인다', async () => {
-  renderPanel()
-  expect(await screen.findByText('전체 질문 5개')).toBeInTheDocument()
-  const conflict = cardOf(CONFLICT_QUESTION)
-  expect(within(conflict).getByText('문서 간 충돌')).toBeInTheDocument()
-  expect(within(conflict).getByText('서술형')).toBeInTheDocument()
-  expect(within(conflict).getByText('근거 미확인')).toBeInTheDocument()
-  expect(
-    within(cardOf('다국어를 지원할 계획이 있나요?')).getByText(
-      '답변 없이 닫음',
-    ),
-  ).toBeInTheDocument()
-  expect(
-    within(cardOf('프로젝트 삭제는 누가 할 수 있나요?')).queryByText(
-      '근거 미확인',
-    ),
-  ).not.toBeInTheDocument()
+it('질문 상세에 종류·유형·근거 미확인 칩을 보이고 필터에 전체 개수를 센다', async () => {
+  const user = renderPanel()
+  expect(await questionsLoaded()).toBeInTheDocument()
+  // 답할 질문이 남아 있으면 그것부터 보인다. 닫은 질문은 '전체'에만 있다.
+  expect(screen.getByRole('button', { name: '답할 질문 4' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await openRow(user, CONFLICT_QUESTION)
+  expect(visiblePanel().getByText('문서 간 충돌')).toBeInTheDocument()
+  expect(visiblePanel().getByText('서술형')).toBeInTheDocument()
+  expect(visiblePanel().getByText('근거 미확인')).toBeInTheDocument()
+  await openRow(user, '프로젝트 삭제는 누가 할 수 있나요?')
+  expect(visiblePanel().queryByText('근거 미확인')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '전체 5' }))
+  await openRow(user, '다국어를 지원할 계획이 있나요?')
+  expect(visiblePanel().getByText('답변 없이 닫음')).toBeInTheDocument()
 })
 
 it('하나만 고르는 선택형은 선택지나 기타 입력으로 답한다', async () => {
   const user = renderPanel()
-  await screen.findByText('전체 질문 5개')
-  await user.click(cardOf('프로젝트 삭제는 누가 할 수 있나요?'))
-  const dialog = await screen.findByRole('dialog')
-  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
+  await questionsLoaded()
+  await openRow(user, '프로젝트 삭제는 누가 할 수 있나요?')
+  const panel = visiblePanel()
+  await user.click(panel.getByRole('button', { name: /^저장/ }))
   expect(
-    await within(dialog).findByText('답변을 하나 이상 골라 주세요.'),
+    await panel.findByText('답변을 하나 이상 골라 주세요.'),
   ).toBeInTheDocument()
-  await user.click(within(dialog).getByLabelText('기타'))
-  await user.type(
-    within(dialog).getByLabelText('기타 답변'),
-    '팀장이 정한 사람',
-  )
-  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
+  await user.click(panel.getByLabelText('기타'))
+  await user.type(panel.getByLabelText('기타 답변'), '팀장이 정한 사람')
+  await user.click(panel.getByRole('button', { name: /^저장/ }))
   expect(await screen.findByText('답변을 저장했어요.')).toBeInTheDocument()
-  expect(
-    within(cardOf('프로젝트 삭제는 누가 할 수 있나요?')).getByText(
-      '팀장이 정한 사람',
-    ),
-  ).toBeInTheDocument()
+  // 답한 질문은 '답함'으로 옮겨 가고, 열면 저장한 답이 채워져 있다.
+  await user.click(await screen.findByRole('button', { name: '답함 1' }))
+  await openRow(user, '프로젝트 삭제는 누가 할 수 있나요?')
+  expect(panel.getByLabelText('기타 답변')).toHaveValue('팀장이 정한 사람')
+  expect(panel.getByText('답변 완료')).toBeInTheDocument()
 })
 
 it('여러 개 고르는 선택형은 기타 없이 선택지를 모두 보여 준다', async () => {
   const user = renderPanel()
-  await screen.findByText('전체 질문 5개')
-  await user.click(cardOf('알림은 어떤 방식으로 보낼까요?'))
-  const dialog = await screen.findByRole('dialog')
-  expect(within(dialog).queryByLabelText('기타')).not.toBeInTheDocument()
-  await user.click(within(dialog).getByLabelText('앱 안 알림'))
-  await user.click(within(dialog).getByLabelText('이메일'))
-  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
-  expect(
-    await within(cardOf('알림은 어떤 방식으로 보낼까요?')).findByText(
-      '앱 안 알림, 이메일',
-    ),
-  ).toBeInTheDocument()
+  await questionsLoaded()
+  await openRow(user, '알림은 어떤 방식으로 보낼까요?')
+  const panel = visiblePanel()
+  expect(panel.queryByLabelText('기타')).not.toBeInTheDocument()
+  await user.click(panel.getByLabelText('앱 안 알림'))
+  await user.click(panel.getByLabelText('이메일'))
+  await user.click(panel.getByRole('button', { name: /^저장/ }))
+  expect(await screen.findByText('답변을 저장했어요.')).toBeInTheDocument()
+  await user.click(await screen.findByRole('button', { name: '답함 1' }))
+  await openRow(user, '알림은 어떤 방식으로 보낼까요?')
+  expect(panel.getByLabelText('앱 안 알림')).toBeChecked()
+  expect(panel.getByLabelText('이메일')).toBeChecked()
+  expect(panel.getByLabelText('메신저')).not.toBeChecked()
 })
 
 it('서술형 질문은 답하지 않고 닫을 수 있다', async () => {
   const user = renderPanel()
-  await screen.findByText('전체 질문 5개')
-  const text = CONFLICT_QUESTION
-  await user.click(cardOf(text))
-  const dialog = await screen.findByRole('dialog')
-  expect(within(dialog).getByText('0 / 500')).toBeInTheDocument()
-  await user.click(
-    within(dialog).getByRole('button', { name: '답변하지 않고 닫기' }),
-  )
+  await questionsLoaded()
+  await openRow(user, CONFLICT_QUESTION)
+  const panel = visiblePanel()
+  expect(panel.getByText('0 / 500')).toBeInTheDocument()
+  await user.click(panel.getByRole('button', { name: '답변하지 않고 닫기' }))
   expect(
     await screen.findByText('질문을 답변 없이 닫았어요.'),
   ).toBeInTheDocument()
-  expect(within(cardOf(text)).getByText('답변 없이 닫음')).toBeInTheDocument()
+  // 예시 API 는 닫은 뒤 질문을 다시 만들어 개수가 바뀔 수 있다.
+  await user.click(screen.getByRole('button', { name: /^전체 \d+$/ }))
+  await openRow(user, CONFLICT_QUESTION)
+  expect(panel.getByText('답변 없이 닫음')).toBeInTheDocument()
 })
 
 it('팀원에게는 답변 입력을 보이지 않는다', async () => {
-  renderPanel(false)
-  await screen.findByText('전체 질문 5개')
-  expect(cardOf('프로젝트 삭제는 누가 할 수 있나요?')).not.toHaveAttribute(
-    'role',
-    'button',
-  )
-  expect(screen.queryByText('눌러서 답변하기')).not.toBeInTheDocument()
+  const user = renderPanel(false)
+  await questionsLoaded()
+  await openRow(user, '프로젝트 삭제는 누가 할 수 있나요?')
+  expect(
+    visiblePanel().getByRole('heading', {
+      name: '프로젝트 삭제는 누가 할 수 있나요?',
+    }),
+  ).toBeInTheDocument()
+  expect(visiblePanel().queryByRole('button', { name: /^저장/ })).toBeNull()
+  expect(visiblePanel().queryByRole('radio')).toBeNull()
 })
 
 it('질문 생성이 실패하면 안내하고 다시 만들 수 있다', async () => {
@@ -224,9 +238,9 @@ it('초안을 만드는 동안에는 진행 안내를 보이고 만들기 버튼
     return result
   })
   const user = renderPanel()
-  await screen.findByText('전체 질문 5개')
+  await openTab(user, /답변 보완 후보/)
   await user.click(
-    screen.getByRole('button', { name: '답변으로 보완 초안 만들기' }),
+    await screen.findByRole('button', { name: '답변으로 보완 초안 만들기' }),
   )
   expect(
     (await screen.findAllByText(/초안을 만들고 있어요/)).length,
@@ -236,12 +250,19 @@ it('초안을 만드는 동안에는 진행 안내를 보이고 만들기 버튼
   ).toBeDisabled()
 })
 
+// 답변 보완 후보 탭을 열고 목록에서 후보를 골라 오른쪽 상세(article)를 돌려준다.
+async function openAnswerCandidate(user: User, text: string) {
+  await openTab(user, /답변 보완 후보/)
+  await openRow(user, text)
+  return screen.getByRole('article')
+}
+// 목록 줄: '{키}수정, {종류}'(기존 항목 수정)·'policy-…'(근거 없는 새 항목)
+const UPDATE_ROW = '수정, '
+
 it('수정 후보는 바뀐 필드를 이전과 이후로 나란히 보인다', async () => {
   await prepareCandidates()
-  renderPanel()
-  const card = (await screen.findByText('기존 항목 수정')).closest(
-    'article',
-  ) as HTMLElement
+  const user = renderPanel()
+  const card = await openAnswerCandidate(user, UPDATE_ROW)
   expect(within(card).getByText('기존 항목 수정')).toBeInTheDocument()
   expect(within(card).getByText('문서 근거')).toBeInTheDocument()
   expect(within(card).getByText('이전')).toBeInTheDocument()
@@ -257,9 +278,7 @@ it('충돌한 필드는 확정해야 채택하고 채택하면 설계 항목이 
   await planningApi.answerQuestion('102', '65', { answer: '팀장만 승인해요.' })
   await prepareCandidates()
   const user = renderPanel()
-  const card = (await screen.findByText('기존 항목 수정')).closest(
-    'article',
-  ) as HTMLElement
+  const card = await openAnswerCandidate(user, UPDATE_ROW)
   expect(within(card).getByText('원문과 답변이 달라요')).toBeInTheDocument()
   // changed_fields 는 {field, change, before, after} 객체다. 답변으로 새로 생긴 필드는 '추가'로 보인다.
   expect(within(card).getByText('추가')).toBeInTheDocument()
@@ -275,19 +294,17 @@ it('충돌한 필드는 확정해야 채택하고 채택하면 설계 항목이 
     await screen.findByText('후보를 채택했어요. 설계 항목 초안에 반영했어요.'),
   ).toBeInTheDocument()
   expect(await screen.findByText(/처리한 후보 \d+개/)).toBeInTheDocument()
+  // 채택한 내용이 설계 항목 초안 탭에 들어간다.
+  await openTab(user, /설계 항목 초안/)
   expect(
-    await screen.findByText(/\(답변을 반영해 구체화\)/, {
-      selector: 'p.text-sm',
-    }),
-  ).toBeInTheDocument()
+    (await visiblePanel().findAllByText(/\(답변을 반영해 구체화\)/)).length,
+  ).toBeGreaterThan(0)
 })
 
 it('근거가 없는 후보는 확인 체크를 해야 채택할 수 있다', async () => {
   await prepareCandidates()
   const user = renderPanel()
-  const card = (
-    await screen.findByText('policy-', { exact: false, selector: 'strong' })
-  ).closest('article') as HTMLElement
+  const card = await openAnswerCandidate(user, 'policy-')
   expect(within(card).getAllByText('근거 없음').length).toBeGreaterThan(0)
   const adopt = within(card).getByRole('button', { name: '채택' })
   expect(adopt).toBeDisabled()
@@ -300,9 +317,7 @@ it('근거가 없는 후보는 확인 체크를 해야 채택할 수 있다', as
 it('후보를 폐기하면 처리한 후보로 옮겨 간다', async () => {
   await prepareCandidates()
   const user = renderPanel()
-  const card = (
-    await screen.findByText('policy-', { exact: false, selector: 'strong' })
-  ).closest('article') as HTMLElement
+  const card = await openAnswerCandidate(user, 'policy-')
   await user.click(within(card).getByRole('button', { name: '폐기' }))
   expect(await screen.findByText('후보를 폐기했어요.')).toBeInTheDocument()
   expect(await screen.findByText(/처리한 후보 1개/)).toBeInTheDocument()
@@ -312,9 +327,7 @@ it('후보가 낡았으면 그 후보만 막고 초안을 다시 만들게 안�
   await prepareCandidates()
   localStorage.setItem('beez.mock.planDraft', 'stale')
   const user = renderPanel()
-  const card = (
-    await screen.findByText('policy-', { exact: false, selector: 'strong' })
-  ).closest('article') as HTMLElement
+  const card = await openAnswerCandidate(user, 'policy-')
   await user.click(
     within(card).getByLabelText(/근거를 찾지 못한 제안이라는 점을 확인했어요/),
   )
@@ -344,6 +357,11 @@ it('초안 작업이 실패하면 이유를 알리고 다시 만들 수 있다',
   expect(
     (await screen.findAllByText(/초안을 만들지 못했어요/)).length,
   ).toBeGreaterThan(0)
+  // 다른 탭에 있어도 탭에 실패를 알린다.
+  expect(
+    screen.getByRole('tab', { name: /답변 보완 후보.*실패 있음/ }),
+  ).toBeInTheDocument()
+  await openTab(user, /답변 보완 후보/)
   expect(
     screen.getAllByRole('button', { name: '다시 만들기' })[0],
   ).toBeEnabled()
@@ -365,6 +383,7 @@ it('초안 만들기 버튼은 모든 문서를, 낡은 후보의 다시 만들�
   await prepareCandidates()
   const generate = vi.spyOn(planningApi, 'generateDrafts')
   const user = renderPanel()
+  await openTab(user, /답변 보완 후보/)
   await user.click(
     await screen.findByRole('button', { name: '답변으로 보완 초안 만들기' }),
   )
@@ -376,8 +395,9 @@ it('초안 만들기 버튼은 모든 문서를, 낡은 후보의 다시 만들�
 
 it('팀원은 후보를 볼 수 있지만 채택·폐기·만들기는 할 수 없다', async () => {
   await prepareCandidates()
-  renderPanel(false)
-  await screen.findByText('기존 항목 수정')
+  const user = renderPanel(false)
+  const card = await openAnswerCandidate(user, UPDATE_ROW)
+  expect(within(card).getByText('기존 항목 수정')).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '채택' })).toBeNull()
   expect(screen.queryByRole('button', { name: '폐기' })).toBeNull()
   expect(
@@ -390,24 +410,26 @@ it('다시 만들기가 실패해도 이전에 완료된 후보를 계속 보인
   await prepareCandidates()
   localStorage.setItem('beez.mock.planDraft', 'failed')
   await prepareCandidates()
-  renderPanel()
-  expect(await screen.findByText('기존 항목 수정')).toBeInTheDocument()
+  const user = renderPanel()
+  const card = await openAnswerCandidate(user, UPDATE_ROW)
+  expect(within(card).getByText('기존 항목 수정')).toBeInTheDocument()
   expect(
     (await screen.findAllByText(/초안을 만들지 못했어요/)).length,
   ).toBeGreaterThan(0)
 })
 
 // 리뷰 반영: 닫으면 서버가 이전 답변을 지우므로 이미 답한 질문에는 닫기를 보이지 않는다.
-it('이미 답한 질문의 수정 창에는 답하지 않고 닫기를 보이지 않는다', async () => {
+it('이미 답한 질문을 고칠 때는 답하지 않고 닫기를 보이지 않는다', async () => {
   await planningApi.answerQuestion('102', '65', { answer: '팀장만 승인해요.' })
   const user = renderPanel()
-  await screen.findByText('전체 질문 5개')
-  await user.click(cardOf(CONFLICT_QUESTION))
-  const dialog = await screen.findByRole('dialog')
+  await questionsLoaded()
+  await user.click(screen.getByRole('button', { name: '답함 1' }))
+  await openRow(user, CONFLICT_QUESTION)
+  const panel = visiblePanel()
   expect(
-    within(dialog).queryByRole('button', { name: '답변하지 않고 닫기' }),
+    panel.queryByRole('button', { name: '답변하지 않고 닫기' }),
   ).not.toBeInTheDocument()
-  expect(within(dialog).getByRole('textbox', { name: '답변' })).toHaveValue(
+  expect(panel.getByRole('textbox', { name: '답변' })).toHaveValue(
     '팀장만 승인해요.',
   )
 })
@@ -457,41 +479,40 @@ it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변
     has_more: false,
     total_count: 5,
   })
-  renderPanel()
-  await screen.findByText('갱신 중인 질문')
-  const refreshing = cardOf('갱신 중인 질문')
+  const user = renderPanel()
+  await screen.findByRole('button', { name: '전체 5' })
+  // 답할 수 없는 미답변 질문은 목록에 잠금 표시가 붙는다.
   expect(
-    within(refreshing).getByText('이전 본문 기준 · 갱신 중'),
-  ).toBeInTheDocument()
-  expect(refreshing).not.toHaveAttribute('role', 'button')
-  expect(
-    within(refreshing).getByText(/끝난 뒤 답할 수 있어요/),
-  ).toBeInTheDocument()
+    screen.getAllByRole('img', { name: '지금은 답할 수 없음' }),
+  ).toHaveLength(3)
+  const panel = visiblePanel()
+  const answerable = () => panel.queryByRole('button', { name: /^저장/ })
 
-  const failed = cardOf('갱신 실패한 질문')
-  expect(
-    within(failed).getByText('최신 본문으로 갱신하지 못함'),
-  ).toBeInTheDocument()
-  expect(failed).not.toHaveAttribute('role', 'button')
+  await openRow(user, '갱신 중인 질문')
+  expect(panel.getByText('이전 본문 기준 · 갱신 중')).toBeInTheDocument()
+  expect(panel.getByText(/끝난 뒤 답할 수 있어요/)).toBeInTheDocument()
+  expect(answerable()).toBeNull()
 
-  const answered = cardOf('이미 답한 질문')
-  expect(
-    within(answered).getByText('최신 본문으로 갱신하지 못함'),
-  ).toBeInTheDocument()
-  expect(answered).toHaveAttribute('role', 'button')
+  await openRow(user, '갱신 실패한 질문')
+  expect(panel.getByText('최신 본문으로 갱신하지 못함')).toBeInTheDocument()
+  expect(answerable()).toBeNull()
 
-  const current = cardOf('최신 질문')
+  await openRow(user, '반려된 문서의 질문')
+  expect(panel.getByText('반려된 문서 · 다시 제출 대기')).toBeInTheDocument()
+  expect(panel.getByText(/문서를 다시 제출하면/)).toBeInTheDocument()
+  expect(answerable()).toBeNull()
+
+  await openRow(user, '최신 질문')
   expect(
-    within(current).queryByText(/이전 본문 기준|갱신하지 못함/),
+    panel.queryByText(/이전 본문 기준|갱신하지 못함/),
   ).not.toBeInTheDocument()
-  expect(current).toHaveAttribute('role', 'button')
+  expect(answerable()).toBeInTheDocument()
 
-  const awaiting = cardOf('반려된 문서의 질문')
-  expect(
-    within(awaiting).getByText('반려된 문서 · 다시 제출 대기'),
-  ).toBeInTheDocument()
-  expect(awaiting).not.toHaveAttribute('role', 'button')
-  expect(within(awaiting).getByText(/문서를 다시 제출하면/)).toBeInTheDocument()
+  // 답한 질문은 이력이라 이전 본문 기준이어도 고칠 수 있다.
+  await user.click(screen.getByRole('button', { name: '답함 1' }))
+  await openRow(user, '이미 답한 질문')
+  expect(panel.getByText('최신 본문으로 갱신하지 못함')).toBeInTheDocument()
+  expect(answerable()).toBeInTheDocument()
 })
 
 // 질문 생성이 시작되기 전 문서 재분석 단계에는 진행 안내가 없어 목록을 다시 읽지 않았다. '갱신 중' 질문이 있으면 끝날 때까지 따라간다.
@@ -514,13 +535,16 @@ it('갱신 중인 질문이 있으면 목록을 다시 읽어 갱신이 끝난 �
   expect(
     await screen.findByText('이전 본문 기준 · 갱신 중'),
   ).toBeInTheDocument()
+  expect(visiblePanel().queryByRole('button', { name: /^저장/ })).toBeNull()
   refreshed = true
   await waitFor(() =>
     expect(
       screen.queryByText('이전 본문 기준 · 갱신 중'),
     ).not.toBeInTheDocument(),
   )
-  expect(cardOf('다시 만드는 질문')).toHaveAttribute('role', 'button')
+  expect(
+    visiblePanel().getByRole('button', { name: /^저장/ }),
+  ).toBeInTheDocument()
 })
 
 // 답하는 동안 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠지면 창이 안내 없이 닫히고 쓰던 답이 사라졌다.
@@ -552,41 +576,41 @@ it('답하던 질문이 목록에서 빠져도 답변 창과 쓰던 답을 그�
       total_count: gone ? 1 : 2,
     }))
   const user = renderPanel()
-  await screen.findByText('답하던 질문')
-  await user.click(cardOf('답하던 질문'))
-  const dialog = await screen.findByRole('dialog')
-  await user.type(
-    within(dialog).getByRole('textbox', { name: '답변' }),
-    '쓰던 답',
-  )
+  await openRow(user, '답하던 질문')
+  const panel = visiblePanel()
+  await user.type(panel.getByRole('textbox', { name: '답변' }), '쓰던 답')
   gone = true
   const calls = questions.mock.calls.length
   await waitFor(() =>
     expect(questions.mock.calls.length).toBeGreaterThan(calls + 1),
   )
+  // 목록에서는 빠졌지만 오른쪽 상세와 쓰던 답은 그대로다.
   expect(
-    screen.queryByText('답하던 질문', { selector: 'article *' }),
+    screen.queryByRole('button', {
+      name: (name) => name.includes('답하던 질문'),
+    }),
   ).not.toBeInTheDocument()
-  expect(screen.getByRole('dialog')).toBeInTheDocument()
   expect(
-    within(screen.getByRole('dialog')).getByRole('textbox', { name: '답변' }),
-  ).toHaveValue('쓰던 답')
+    panel.getByRole('heading', { name: '답하던 질문' }),
+  ).toBeInTheDocument()
+  expect(panel.getByRole('textbox', { name: '답변' })).toHaveValue('쓰던 답')
 })
 
-it('기준 설계가 발행된 프로젝트에서는 질문 카드를 눌러 답할 수 없다', async () => {
-  renderPanel(true, '101')
-  const question = await screen.findByText(
-    '프로젝트 삭제 권한은 인간 팀장만 가지나요?',
-  )
+it('기준 설계가 발행된 프로젝트에서는 질문에 답할 수 없다', async () => {
+  const user = renderPanel(true, '101')
+  await openRow(user, '프로젝트 삭제 권한은 인간 팀장만 가지나요?')
   expect(
     await screen.findByText('기준 설계가 발행되어 답변을 바꿀 수 없어요.'),
   ).toBeInTheDocument()
-  expect(question.closest('article')).not.toHaveAttribute('role', 'button')
+  expect(visiblePanel().queryByRole('button', { name: /^저장/ })).toBeNull()
+  // 발행 뒤에는 후보 탭이 없다.
+  expect(screen.queryByRole('tab', { name: /문서 후보/ })).toBeNull()
 })
 
 it('초안 작업 조회에 실패하면 후보 자리에 안내와 다시 불러오기를 보인다', async () => {
   vi.spyOn(planningApi, 'drafts').mockRejectedValue(new Error('network'))
-  renderPanel()
+  const user = renderPanel()
+  await openTab(user, /문서 후보/)
   expect(
     await screen.findByRole('button', { name: '다시 불러오기' }),
   ).toBeInTheDocument()
@@ -655,7 +679,7 @@ it('분석 직후 질문 생성 행이 아직 없어도 기다렸다가 진행·
       screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
     ).not.toBeInTheDocument(),
   )
-  expect(await screen.findByText('전체 질문 5개')).toBeInTheDocument()
+  expect(await questionsLoaded()).toBeInTheDocument()
 })
 
 it('한 문서의 질문 생성이 실패해도 다른 문서의 진행을 따라가고 끝나면 목록을 갱신한다', async () => {
@@ -757,6 +781,7 @@ it('기준 설계가 발행된 프로젝트는 질문 생성을 기다리지 않
 it('항목 추가 폼은 내용 구조 버전 칸 없이 안내와 예시를 보이고 버전 1로 저장한다', async () => {
   const create = vi.spyOn(planningApi, 'createItem')
   const user = renderPanel()
+  await openTab(user, /설계 항목 초안/)
   await user.click(await screen.findByRole('button', { name: '항목 추가' }))
   expect(screen.queryByLabelText(/내용 구조 버전/)).toBeNull()
   expect(screen.getByText(/API 계약은 description·method·path/)).toBeVisible()
@@ -774,6 +799,7 @@ it('항목 추가 폼은 내용 구조 버전 칸 없이 안내와 예시를 보
 it('항목 추가 폼에 일반 글을 쓰면 JSON 형식 안내를 보이고 저장하지 않는다', async () => {
   const create = vi.spyOn(planningApi, 'createItem')
   const user = renderPanel()
+  await openTab(user, /설계 항목 초안/)
   await user.click(await screen.findByRole('button', { name: '항목 추가' }))
   await user.click(screen.getByLabelText(/설계 내용/))
   await user.paste('로그인할 수 있어야 한다')
@@ -784,6 +810,7 @@ it('항목 추가 폼에 일반 글을 쓰면 JSON 형식 안내를 보이고 �
 
 it('서버가 내용을 거절하면 서버 문구를 폼에만 보이고 위쪽에 틀린 안내를 띄우지 않는다', async () => {
   const user = renderPanel()
+  await openTab(user, /설계 항목 초안/)
   await user.click(await screen.findByRole('button', { name: '항목 추가' }))
   await user.click(screen.getByLabelText(/설계 내용/))
   // 폼 검사를 통과해 서버까지 가는 경우(종류별 필수 키 누락)를 만들려고 서버 응답을 거절로 바꾼다.
@@ -849,6 +876,7 @@ it('보완 질문 생성이 전부 실패한 상태에서도 초안 만들기를
   expect(
     (await screen.findAllByText(/보완 질문을 만들지 못했어요/)).length,
   ).toBe(4)
+  await openTab(user, /답변 보완 후보/)
   await user.click(
     await screen.findByRole('button', { name: '답변으로 보완 초안 만들기' }),
   )
@@ -879,8 +907,13 @@ it('문서에서 뽑은 후보를 골라 채택하면 고른 것만 설계 항�
       name: '문서에서 뽑은 예시 1 선택',
     })
   )[0]
-  expect(screen.getByText('문서에서 뽑은 후보')).toBeInTheDocument()
-  expect(screen.getByText('질문·답변으로 보완한 후보')).toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: /문서 후보/ })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  expect(
+    screen.getByRole('tab', { name: /답변 보완 후보/ }),
+  ).toBeInTheDocument()
   await user.click(first)
   await user.click(screen.getByRole('button', { name: '선택한 항목 채택' }))
   expect(

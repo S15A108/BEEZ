@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ShowMoreButton } from './ShowMoreButton'
 import { useShowMore } from './useShowMore'
-import { RefreshCw, Sparkles } from 'lucide-react'
+import { RefreshCw, Sparkles, TriangleAlert } from 'lucide-react'
 import type { Source } from '@/api/contracts/common'
 import {
   getApiErrorCode,
@@ -11,13 +11,6 @@ import {
 import { EmptyState } from '@/components/EmptyState'
 import { SourceLinks } from '@/components/SourceLinks'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Tag } from '@/features/changes/Tag'
 import { operationTone } from '@/features/changes/tagTones'
 import { statusLabel } from '@/lib/display'
@@ -28,7 +21,15 @@ import {
   isActiveJob,
   latestJobs,
 } from './draftJobs'
+import { Notice } from './Notice'
 import type { AdoptCandidateInput, DraftCandidate, DraftJob } from './schemas'
+import {
+  DETAIL_FOOTER,
+  SPLIT_HEIGHT,
+  TAB_BODY,
+  listRowClass,
+} from './splitLayout'
+import { SplitView } from './SplitView'
 
 const supportLabel = {
   DOCUMENT: '문서 근거',
@@ -36,6 +37,7 @@ const supportLabel = {
   DOCUMENT_AND_ANSWER: '문서·답변 근거',
   NONE: '근거 없음',
 } as const
+const changeLabel = { CREATE: '새 항목', UPDATE: '기존 항목 수정' } as const
 const fieldLabel: Record<string, string> = {
   description: '설명',
   method: '메서드',
@@ -55,7 +57,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
   const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
   if (candidate.change === 'CREATE')
     return (
-      <dl className="grid gap-2 rounded-md bg-muted/50 p-3 text-sm">
+      <dl className="grid gap-3 rounded-lg bg-muted/60 px-4 py-3 text-[15px] leading-7">
         {keys.map((key) => (
           <div key={key}>
             <dt className="text-xs font-semibold text-muted-foreground">
@@ -85,7 +87,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
     return key in content ? textOf(content[key]) : '(없음)'
   }
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-3">
       {changed.map((key) => {
         const conflict = candidate.conflicting_fields.includes(key)
         return (
@@ -93,8 +95,8 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
             key={key}
             className={
               conflict
-                ? 'rounded-md border border-amber-300 bg-amber-50 p-3'
-                : 'rounded-md border p-3'
+                ? 'rounded-lg border border-amber-300 bg-amber-50 p-3'
+                : 'rounded-lg border p-3'
             }
           >
             <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -106,19 +108,19 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
               )}
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <div className="rounded bg-muted/50 p-2 text-sm">
+              <div className="rounded-md bg-muted/60 px-3 py-2.5">
                 <p className="mb-1 text-xs font-semibold text-muted-foreground">
                   이전
                 </p>
-                <p className="break-words whitespace-pre-wrap">
+                <p className="text-sm leading-6 break-words whitespace-pre-wrap text-foreground/75">
                   {valueOf(key, 'before')}
                 </p>
               </div>
-              <div className="rounded bg-[#e8f3ec] p-2 text-sm">
+              <div className="rounded-md bg-[#e8f3ec] px-3 py-2.5">
                 <p className="mb-1 text-xs font-semibold text-[#00753a]">
                   이후
                 </p>
-                <p className="break-words whitespace-pre-wrap">
+                <p className="text-sm leading-6 break-words whitespace-pre-wrap">
                   {valueOf(key, 'after')}
                 </p>
               </div>
@@ -131,7 +133,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
           <summary className="cursor-pointer text-xs text-muted-foreground">
             바뀌지 않은 내용 {same.length}개
           </summary>
-          <dl className="mt-2 grid gap-2 rounded-md bg-muted/50 p-3">
+          <dl className="mt-2 grid gap-2 rounded-lg bg-muted/60 p-3">
             {same.map((key) => (
               <div key={key}>
                 <dt className="text-xs font-semibold text-muted-foreground">
@@ -149,6 +151,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
   )
 }
 
+// 오른쪽 상세: 후보 하나의 전후 비교·근거와 채택·폐기
 function CandidateCard({
   candidate,
   titleOf,
@@ -193,129 +196,188 @@ function CandidateCard({
     }
   }
   return (
-    <article className="rounded-lg border p-4">
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <Tag
-          tone={
-            candidate.change === 'CREATE'
-              ? operationTone.CREATE
-              : operationTone.UPDATE
-          }
-        >
-          {candidate.change === 'CREATE' ? '새 항목' : '기존 항목 수정'}
-        </Tag>
-        <Tag>{statusLabel(candidate.kind)}</Tag>
-        <Tag tone={noEvidence ? operationTone.RETIRE : undefined}>
-          {supportLabel[candidate.support]}
-        </Tag>
-        {candidate.status === 'ADOPTED' && (
-          <Tag tone={operationTone.CREATE}>채택함</Tag>
+    <article
+      aria-label={candidate.candidate_key}
+      className="flex flex-1 flex-col"
+    >
+      <div className="px-8 pt-5 pb-6">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Tag
+            tone={
+              candidate.change === 'CREATE'
+                ? operationTone.CREATE
+                : operationTone.UPDATE
+            }
+          >
+            {changeLabel[candidate.change]}
+          </Tag>
+          <Tag>{statusLabel(candidate.kind)}</Tag>
+          <Tag tone={noEvidence ? operationTone.RETIRE : undefined}>
+            {supportLabel[candidate.support]}
+          </Tag>
+          {candidate.status === 'ADOPTED' && (
+            <Tag tone={operationTone.CREATE}>채택함</Tag>
+          )}
+          {candidate.status === 'DISCARDED' && <Tag>폐기함</Tag>}
+          {candidate.answer_refs.length > 0 && (
+            <span className="ml-auto text-xs text-muted-foreground">
+              답변 {candidate.answer_refs.length}개를 반영했어요.
+            </span>
+          )}
+        </div>
+        <h3 className="mt-3 text-xl leading-8 font-semibold tracking-tight break-words">
+          {candidate.candidate_key}
+        </h3>
+        {candidate.rationale && (
+          <p className="mt-2 text-[15px] leading-7 text-muted-foreground">
+            {candidate.rationale}
+          </p>
         )}
-        {candidate.status === 'DISCARDED' && <Tag>폐기함</Tag>}
-        <strong className="ml-1 text-sm">{candidate.candidate_key}</strong>
-      </div>
-      {candidate.rationale && (
-        <p className="mb-3 text-sm leading-6 text-muted-foreground">
-          {candidate.rationale}
-        </p>
-      )}
-      <Compare candidate={candidate} />
-      {candidate.sources.some((source) => source.quote) && (
-        <ul className="mt-3 grid gap-1 text-xs text-muted-foreground">
-          {candidate.sources
-            .filter((source) => source.quote)
-            .map((source, index) => (
-              <li key={index} className="break-words">
-                “{source.quote}”
-              </li>
+        <div className="mt-5">
+          <Compare candidate={candidate} />
+        </div>
+        {candidate.sources.some((source) => source.quote) && (
+          <ul className="mt-4 grid gap-1 text-[13px] leading-6 text-muted-foreground">
+            {candidate.sources
+              .filter((source) => source.quote)
+              .map((source, index) => (
+                <li key={index} className="break-words">
+                  “{source.quote}”
+                </li>
+              ))}
+          </ul>
+        )}
+        {sources.length > 0 && (
+          <SourceLinks sources={sources} titleOf={titleOf} />
+        )}
+        {pending && isLeader && (
+          <div className="mt-5 grid gap-3">
+            {noEvidence && (
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1 accent-primary"
+                  checked={confirmed}
+                  onChange={(event) => setConfirmed(event.target.checked)}
+                />
+                문서와 답변에서 근거를 찾지 못한 제안이라는 점을 확인했어요.
+              </label>
+            )}
+            {candidate.conflicting_fields.map((field) => (
+              <label key={field} className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1 accent-primary"
+                  checked={resolved.includes(field)}
+                  onChange={(event) =>
+                    setResolved((current) =>
+                      event.target.checked
+                        ? [...current, field]
+                        : current.filter((item) => item !== field),
+                    )
+                  }
+                />
+                ‘{labelOf(field)}’은 이후 내용으로 확정해요.
+              </label>
             ))}
-        </ul>
-      )}
-      {sources.length > 0 && (
-        <SourceLinks sources={sources} titleOf={titleOf} />
-      )}
-      {candidate.answer_refs.length > 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          답변 {candidate.answer_refs.length}개를 반영했어요.
-        </p>
-      )}
-      {pending && isLeader && (
-        <div className="mt-4 grid gap-3 border-t pt-3">
-          {noEvidence && (
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={confirmed}
-                onChange={(event) => setConfirmed(event.target.checked)}
-              />
-              문서와 답변에서 근거를 찾지 못한 제안이라는 점을 확인했어요.
-            </label>
-          )}
-          {candidate.conflicting_fields.map((field) => (
-            <label key={field} className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={resolved.includes(field)}
-                onChange={(event) =>
-                  setResolved((current) =>
-                    event.target.checked
-                      ? [...current, field]
-                      : current.filter((item) => item !== field),
-                  )
-                }
-              />
-              ‘{labelOf(field)}’은 이후 내용으로 확정해요.
-            </label>
-          ))}
-          {error && (
-            <div
-              role="alert"
-              className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-            >
-              <p>{error.message}</p>
-              {error.code === 'candidate_stale' && (
-                <Button
-                  className="mt-2"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={onRegenerate}
-                >
-                  <RefreshCw />
-                  초안 다시 만들기
-                </Button>
-              )}
-            </div>
-          )}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => void run(onDiscard)}
-            >
-              폐기
-            </Button>
-            <Button
-              disabled={busy || !ready}
-              onClick={() =>
-                void run(() =>
-                  onAdopt({
-                    ...(noEvidence ? { confirm_no_evidence: true } : {}),
-                    ...(candidate.conflicting_fields.length
-                      ? { resolved_fields: resolved }
-                      : {}),
-                  }),
-                )
-              }
-            >
-              채택
-            </Button>
+            {error && (
+              <div
+                role="alert"
+                className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+              >
+                <p>{error.message}</p>
+                {error.code === 'candidate_stale' && (
+                  <Button
+                    className="mt-2"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={onRegenerate}
+                  >
+                    <RefreshCw />
+                    초안 다시 만들기
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
+        )}
+      </div>
+      {pending && isLeader && (
+        <div className={DETAIL_FOOTER}>
+          <Button
+            variant="outline"
+            className="ml-auto"
+            disabled={busy}
+            onClick={() => void run(onDiscard)}
+          >
+            폐기
+          </Button>
+          <Button
+            disabled={busy || !ready}
+            onClick={() =>
+              void run(() =>
+                onAdopt({
+                  ...(noEvidence ? { confirm_no_evidence: true } : {}),
+                  ...(candidate.conflicting_fields.length
+                    ? { resolved_fields: resolved }
+                    : {}),
+                }),
+              )
+            }
+          >
+            채택
+          </Button>
         </div>
       )}
     </article>
+  )
+}
+
+function CandidateRow({
+  candidate,
+  active,
+  onClick,
+}: {
+  candidate: DraftCandidate
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={active || undefined}
+      onClick={onClick}
+      className={listRowClass(active)}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">
+          {candidate.candidate_key}
+        </span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          <span
+            className={
+              candidate.change === 'CREATE'
+                ? 'text-[#00753a]'
+                : 'text-[#6e5200]'
+            }
+          >
+            {candidate.change === 'CREATE' ? '새 항목' : '수정'}
+          </span>
+          , {statusLabel(candidate.kind)}
+          {candidate.support === 'NONE' && (
+            <span className="text-destructive">, 근거 없음</span>
+          )}
+        </span>
+      </span>
+      {candidate.conflicting_fields.length > 0 && (
+        <TriangleAlert
+          role="img"
+          aria-label="원문과 답변이 달라요"
+          className="mt-0.5 size-4 shrink-0 text-amber-600"
+        />
+      )}
+    </button>
   )
 }
 
@@ -326,6 +388,7 @@ export function DraftCandidates({
   isLeader,
   busy,
   canGenerate,
+  answerSummary,
   onGenerate,
   onAdopt,
   onDiscard,
@@ -338,6 +401,8 @@ export function DraftCandidates({
   isLeader: boolean
   busy: boolean
   canGenerate: boolean
+  /** 지금 만들면 반영할 답변 수 안내(예: 답한 질문 3개를 반영해요) */
+  answerSummary?: string
   /** versionIds 가 없으면 모든 문서, 있으면 그 문서만 초안을 만든다 */
   onGenerate: (versionIds?: string[]) => void
   onAdopt: (
@@ -346,6 +411,7 @@ export function DraftCandidates({
   ) => Promise<unknown>
   onDiscard: (candidate: DraftCandidate) => Promise<unknown>
 }) {
+  const [focusedId, setFocusedId] = useState<string>()
   // 문서에서 자동으로 뽑은 후보는 DocumentCandidates 가 보여 준다. 여기는 질문·답변으로 보완한 후보만 다룬다.
   const answered = answerJobs(jobs)
   const latest = latestJobs(answered)
@@ -370,60 +436,47 @@ export function DraftCandidates({
   const done = candidates.filter((candidate) => candidate.status !== 'PENDING')
   const waitingList = useShowMore(waiting)
   const doneList = useShowMore(done)
+  const focused =
+    candidates.find((candidate) => candidate.id === focusedId) ??
+    waiting[0] ??
+    done[0]
+  const generateButton = isLeader && (
+    <Button
+      disabled={busy || active || waitingForDocuments || !canGenerate}
+      onClick={() => onGenerate()}
+    >
+      <Sparkles />
+      답변으로 보완 초안 만들기
+    </Button>
+  )
+  const row = (candidate: DraftCandidate) => (
+    <li key={candidate.id}>
+      <CandidateRow
+        candidate={candidate}
+        active={candidate.id === focused?.id}
+        onClick={() => setFocusedId(candidate.id)}
+      />
+    </li>
+  )
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle>질문·답변으로 보완한 후보</CardTitle>
-          {isLeader && (
-            <Button
-              size="sm"
-              disabled={busy || active || waitingForDocuments || !canGenerate}
-              onClick={() => onGenerate()}
-            >
-              <Sparkles />
-              답변으로 보완 초안 만들기
-            </Button>
-          )}
-        </div>
-        {waitingForDocuments && (
-          <p role="status" className="text-sm text-muted-foreground">
-            문서에서 후보를 만드는 중이라 끝난 뒤에 누를 수 있어요.
-          </p>
-        )}
-        <CardDescription>
-          문서에서 정하지 못한 모호한 부분을 질문에 답한 뒤 보완하는 단계예요.
-          비비가 문서와 답변으로 제안한 후보를 팀장이 채택해야 설계 항목 초안이
-          돼요.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {latest.map((job) => {
-          const label = labelOfVersion(job.document_version_id)
-          if (isActiveJob(job))
-            return (
-              <p
-                key={job.id}
-                role="status"
-                className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
-              >
-                {label} 초안을 만들고 있어요. 잠시만 기다려 주세요.
-              </p>
-            )
-          if (job.status === 'FAILED')
-            return (
-              <div
-                key={job.id}
-                role="alert"
-                className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-              >
-                <p>
-                  {label} 초안을 만들지 못했어요.{' '}
-                  {getErrorCodeMessage(job.error_code) ?? ''}
-                </p>
-                {isLeader && job.retryable !== false && (
+    <div className={TAB_BODY}>
+      {latest.map((job) => {
+        const label = labelOfVersion(job.document_version_id)
+        if (isActiveJob(job))
+          return (
+            <Notice key={job.id} tone="run">
+              {label} 초안을 만들고 있어요. 잠시만 기다려 주세요.
+            </Notice>
+          )
+        if (job.status === 'FAILED')
+          return (
+            <Notice
+              key={job.id}
+              tone="fail"
+              action={
+                isLeader &&
+                job.retryable !== false && (
                   <Button
-                    className="mt-2"
                     size="sm"
                     variant="outline"
                     // 실패한 이 문서만 다시 만든다. 다른 문서가 만드는 중이어도 이 문서는 다시 요청할 수 있다.
@@ -433,71 +486,100 @@ export function DraftCandidates({
                     <RefreshCw />
                     다시 만들기
                   </Button>
+                )
+              }
+            >
+              {label} 초안을 만들지 못했어요.{' '}
+              {getErrorCodeMessage(job.error_code) ?? ''}
+            </Notice>
+          )
+        return null
+      })}
+      {waitingForDocuments && (
+        <Notice tone="wait">
+          문서에서 후보를 만드는 중이라 끝난 뒤에 누를 수 있어요.
+        </Notice>
+      )}
+      {candidateJobs(answered).some(
+        (job) => job.unanswered_question_keys?.length || job.unresolved?.length,
+      ) && (
+        <p className="text-xs text-muted-foreground">
+          답하지 않은 질문과 정하지 못한 내용은 후보에 반영하지 못했어요.
+        </p>
+      )}
+      {candidates.length === 0 ? (
+        <EmptyState className={SPLIT_HEIGHT}>
+          <p>
+            {latest.length === 0
+              ? '‘답변으로 보완 초안 만들기’를 누르면 후보가 여기에 나와요.'
+              : active
+                ? '만드는 중인 후보는 끝나면 여기에 나와요.'
+                : '이번에는 제안할 후보가 없어요.'}
+          </p>
+          {answerSummary && <p className="text-xs">{answerSummary}</p>}
+          {generateButton}
+        </EmptyState>
+      ) : (
+        <SplitView
+          header={
+            generateButton && (
+              <div className="grid w-full gap-1.5 py-0.5">
+                {generateButton}
+                {answerSummary && (
+                  <p className="text-center text-xs text-muted-foreground">
+                    {answerSummary}
+                  </p>
                 )}
               </div>
             )
-          return null
-        })}
-        {candidateJobs(answered).some(
-          (job) =>
-            job.unanswered_question_keys?.length || job.unresolved?.length,
-        ) && (
-          <p className="text-xs text-muted-foreground">
-            답하지 않은 질문과 정하지 못한 내용은 후보에 반영하지 못했어요.
-          </p>
-        )}
-        {latest.length === 0 && (
-          <EmptyState>
-            ‘답변으로 보완 초안 만들기’를 누르면 후보가 여기에 나와요.
-          </EmptyState>
-        )}
-        {latest.length > 0 && !active && candidates.length === 0 && (
-          <EmptyState>이번에는 제안할 후보가 없어요.</EmptyState>
-        )}
-        {waitingList.shown.map((candidate) => (
-          <CandidateCard
-            key={candidate.id}
-            candidate={candidate}
-            titleOf={titleOf}
-            isLeader={isLeader}
-            busy={busy}
-            onAdopt={(input) => onAdopt(candidate, input)}
-            onDiscard={() => onDiscard(candidate)}
-            onRegenerate={() => regenerate(candidate)}
-          />
-        ))}
-        <ShowMoreButton
-          hidden={waitingList.hidden}
-          label="후보"
-          onClick={waitingList.more}
-        />
-        {done.length > 0 && (
-          <details>
-            <summary className="cursor-pointer text-sm text-muted-foreground">
-              처리한 후보 {done.length}개
-            </summary>
-            <div className="mt-3 space-y-3">
-              {doneList.shown.map((candidate) => (
-                <CandidateCard
-                  key={candidate.id}
-                  candidate={candidate}
-                  titleOf={titleOf}
-                  isLeader={isLeader}
-                  busy={busy}
-                  onAdopt={(input) => onAdopt(candidate, input)}
-                  onDiscard={() => onDiscard(candidate)}
-                  onRegenerate={() => regenerate(candidate)}
-                />
-              ))}
-              <ShowMoreButton
-                hidden={doneList.hidden}
-                label="처리한 후보"
-                onClick={doneList.more}
+          }
+          list={
+            <>
+              <ul>{waitingList.shown.map(row)}</ul>
+              {waitingList.hidden > 0 && (
+                <div className="grid p-3">
+                  <ShowMoreButton
+                    hidden={waitingList.hidden}
+                    label="후보"
+                    onClick={waitingList.more}
+                  />
+                </div>
+              )}
+              {done.length > 0 && (
+                <details>
+                  <summary className="cursor-pointer border-b px-4 py-2.5 text-sm text-muted-foreground">
+                    처리한 후보 {done.length}개
+                  </summary>
+                  <ul>{doneList.shown.map(row)}</ul>
+                  {doneList.hidden > 0 && (
+                    <div className="grid p-3">
+                      <ShowMoreButton
+                        hidden={doneList.hidden}
+                        label="처리한 후보"
+                        onClick={doneList.more}
+                      />
+                    </div>
+                  )}
+                </details>
+              )}
+            </>
+          }
+          detail={
+            focused && (
+              <CandidateCard
+                key={focused.id}
+                candidate={focused}
+                titleOf={titleOf}
+                isLeader={isLeader}
+                busy={busy}
+                onAdopt={(input) => onAdopt(focused, input)}
+                onDiscard={() => onDiscard(focused)}
+                onRegenerate={() => regenerate(focused)}
               />
-            </div>
-          </details>
-        )}
-      </CardContent>
-    </Card>
+            )
+          }
+        />
+      )}
+    </div>
   )
 }

@@ -1,27 +1,28 @@
-import { ACTIVE_POLL_MS, SLOW_GENERATION_MS } from '@/lib/pollIntervals'
+import { SLOW_GENERATION_MS } from '@/lib/pollIntervals'
 import { useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent, ReactNode } from 'react'
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { Lightbulb, RefreshCw } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  CircleCheck,
+  CircleMinus,
+  FileText,
+  Lock,
+  RefreshCw,
+} from 'lucide-react'
 import type { PlanningQuestion } from '@/api/contracts/common'
-import { planningApi } from '@/api/services'
 import { getErrorCodeMessage } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Tag } from '@/features/changes/Tag'
 import { operationTone } from '@/features/changes/tagTones'
 import { cn } from '@/lib/utils'
+import { Notice } from './Notice'
 import { QuestionAnswerForm } from './QuestionAnswerForm'
 import type { GenerationStatus } from './questionGeneration'
 import type { AnswerQuestionInput } from './schemas'
+import { SPLIT_HEIGHT, TAB_BODY, listRowClass } from './splitLayout'
+import { SplitView } from './SplitView'
+import { usePlanningQuestions } from './usePlanningQuestions'
 import { useShowMore } from './useShowMore'
 
 const kindLabel = {
@@ -58,6 +59,26 @@ const isOutdated = (question: PlanningQuestion) =>
 // 서버는 이전 본문으로 만든 미답변 질문의 답변·닫기를 막는다(409 question_outdated). 답한·닫은 질문은 이력이라 고칠 수 있다.
 const isLocked = (question: PlanningQuestion) =>
   isOutdated(question) && !question.answer && question.status !== 'DISMISSED'
+const isDismissed = (question: PlanningQuestion) =>
+  question.status === 'DISMISSED'
+const isAnswered = (question: PlanningQuestion) =>
+  !!question.answer && !isDismissed(question)
+const isOpen = (question: PlanningQuestion) =>
+  !isAnswered(question) && !isDismissed(question)
+
+type Filter = 'open' | 'answered' | 'all'
+const filters: [Filter, string][] = [
+  ['open', '답할 질문'],
+  ['answered', '답함'],
+  ['all', '전체'],
+]
+const matches: Record<Filter, (question: PlanningQuestion) => boolean> = {
+  open: isOpen,
+  answered: isAnswered,
+  all: () => true,
+}
+// 목록은 칸 안에서 스크롤하므로 한 번에 넉넉히 보인다.
+const QUESTION_STEP = 20
 
 export interface QuestionGenerationView {
   /** 질문 생성이 도는 중이거나 실패한 문서 하나(문서 버전마다 따로 온다) */
@@ -69,28 +90,24 @@ export interface QuestionGenerationView {
   onRetry: () => void
 }
 
-export function PlanningQuestions({
-  projectId,
-  isLeader,
-  busy,
-  generations,
-  answerable,
-  published,
-  onAnswer,
-}: {
-  projectId: string
+interface AnswerProps {
   isLeader: boolean
   busy: boolean
-  generations: QuestionGenerationView[]
   /** 기준 설계가 발행되면 서버가 답변을 막는다(409 design_already_published) */
   answerable: boolean
   published: boolean
   onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
+}
+
+export function PlanningQuestions({
+  projectId,
+  generations,
+  ...answer
+}: AnswerProps & {
+  projectId: string
+  generations: QuestionGenerationView[]
 }) {
-  // 답하는 중인 질문. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 질문을 바꿔 넘긴다.
-  // 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠져도 창을 닫지 않고 연 때의 질문을 보인다 — 쓰던 답이 사라지지 않고,
-  // 저장하면 서버가 409(question_superseded 등)로 이유를 알려 준다(S15P31A108-396).
-  const [opened, setOpened] = useState<PlanningQuestion | null>(null)
+  const { isLeader, busy } = answer
   const failed = generations.filter((item) => item.status === 'FAILED')
   const activeIds = generations
     .filter((item) => item.status !== 'FAILED')
@@ -121,51 +138,17 @@ export function PlanningQuestions({
       })
     previousActive.current = now
   }, [activeKey, projectId, queryClient])
-  const questions = useInfiniteQuery({
-    queryKey: ['projects', projectId, 'planning-questions'],
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      planningApi.questions(projectId, { cursor: pageParam, limit: 100 }),
-    getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
-    // 질문을 만드는 동안에는 끝날 때까지 목록을 다시 불러온다. 질문 생성이 시작되기 전 문서 재분석 단계에도
-    // 서버가 '갱신 중'으로 표시한 질문이 있으면 끝날 때까지 따라간다(S15P31A108-396).
-    refetchInterval: (query) =>
-      generating ||
-      query.state.data?.pages.some((page) =>
-        page.items.some((item) => item.freshness === 'REFRESHING'),
-      )
-        ? ACTIVE_POLL_MS
-        : false,
-  })
-  const allQuestions = questions.data?.pages.flatMap((page) => page.items) ?? []
-  const answering = opened
-    ? (allQuestions.find((item) => item.id === opened.id) ?? opened)
-    : undefined
+  const questions = usePlanningQuestions(projectId, generating)
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Lightbulb className="size-4 text-primary" />
-          아직 정하지 않은 내용
-        </CardTitle>
-        <CardDescription>
-          답변은 초안 생성의 참고 자료이며 설계 승인과 구분해요.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {failed.map((item) => (
-          <div
-            key={item.versionId}
-            role="alert"
-            className="mb-3 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-          >
-            <p>
-              {item.label} 보완 질문을 만들지 못했어요.{' '}
-              {getErrorCodeMessage(item.errorCode) ?? ''}
-            </p>
-            {isLeader && item.retryable !== false && (
+    <div className={TAB_BODY}>
+      {failed.map((item) => (
+        <Notice
+          key={item.versionId}
+          tone="fail"
+          action={
+            isLeader &&
+            item.retryable !== false && (
               <Button
-                className="mt-2"
                 size="sm"
                 variant="outline"
                 disabled={busy}
@@ -174,235 +157,329 @@ export function PlanningQuestions({
                 <RefreshCw />
                 질문 다시 만들기
               </Button>
-            )}
-          </div>
-        ))}
-        {generating && (
-          <div
-            role="status"
-            className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
-          >
-            <p>비비가 보완 질문을 만들고 있어요. 잠시만 기다려 주세요.</p>
-            <p className="mt-1 text-xs">
-              만드는 중인 문서: {activeLabels.join(', ')}
-            </p>
-            {slow && (
-              <div className="mt-2 grid justify-items-start gap-2">
-                <p>
-                  평소보다 오래 걸리고 있어요. 계속 같은 상태면 상태를 다시
-                  확인하거나 팀장에게 알려 주세요.
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    void queryClient.invalidateQueries({
-                      queryKey: ['projects', projectId, 'analysis'],
-                    })
-                  }
-                >
-                  <RefreshCw />
-                  상태 다시 확인
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-        <AsyncState query={questions}>
-          {(data) => {
-            const entries = data.pages.flatMap((page) => page.items)
-            const total = data.pages[0]?.total_count
-            return (
-              <QuestionList
-                entries={entries}
-                total={total}
-                hasNextPage={questions.hasNextPage}
-                loadingNext={questions.isFetchingNextPage}
-                loadNext={() => void questions.fetchNextPage()}
-                render={(question) => (
-                  <QuestionCard
-                    key={question.id}
-                    question={question}
-                    isLeader={isLeader}
-                    busy={busy}
-                    answerable={answerable}
-                    published={published}
-                    onAnswer={() => setOpened(question)}
-                  />
-                )}
-              />
             )
-          }}
-        </AsyncState>
-      </CardContent>
-      {answering && (
-        <QuestionAnswerForm
-          question={answering}
-          siblings={allQuestions.filter(
-            (item) => item.id === answering.id || !isLocked(item),
-          )}
-          onNavigate={(id) =>
-            setOpened(allQuestions.find((item) => item.id === id) ?? null)
           }
-          onClose={() => setOpened(null)}
-          onSubmit={(input) => onAnswer(answering.id, input)}
-        />
+        >
+          <p>
+            {item.label} 보완 질문을 만들지 못했어요.{' '}
+            {getErrorCodeMessage(item.errorCode) ?? ''}
+          </p>
+        </Notice>
+      ))}
+      {generating && (
+        <Notice
+          tone="run"
+          action={
+            slow && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void queryClient.invalidateQueries({
+                    queryKey: ['projects', projectId, 'analysis'],
+                  })
+                }
+              >
+                <RefreshCw />
+                상태 다시 확인
+              </Button>
+            )
+          }
+        >
+          <p>
+            비비가 보완 질문을 만들고 있어요. 만드는 중인 문서:{' '}
+            {activeLabels.join(', ')}
+          </p>
+          {slow && (
+            <p className="text-xs">
+              평소보다 오래 걸리고 있어요. 계속 같은 상태면 상태를 다시
+              확인하거나 팀장에게 알려 주세요.
+            </p>
+          )}
+        </Notice>
       )}
-    </Card>
+      <AsyncState query={questions}>
+        {(data) => (
+          <QuestionBoard
+            {...answer}
+            entries={data.pages.flatMap((page) => page.items)}
+            total={data.pages[0]?.total_count}
+            hasNextPage={questions.hasNextPage}
+            loadingNext={questions.isFetchingNextPage}
+            loadNext={() => void questions.fetchNextPage()}
+          />
+        )}
+      </AsyncState>
+    </div>
   )
 }
 
-// 질문은 5개씩 보여 준다. 받아 둔 질문을 다 보였는데 서버에 더 있으면 다음 쪽을 받는다.
-function QuestionList({
+// 왼쪽은 질문 문장만 보이는 목록, 오른쪽은 고른 질문의 종류·근거와 답변 입력이다.
+function QuestionBoard({
   entries,
   total,
   hasNextPage,
   loadingNext,
   loadNext,
-  render,
-}: {
+  isLeader,
+  answerable,
+  published,
+  onAnswer,
+}: AnswerProps & {
   entries: PlanningQuestion[]
   total: number | undefined
   hasNextPage: boolean
   loadingNext: boolean
   loadNext: () => void
-  render: (question: PlanningQuestion) => ReactNode
 }) {
-  const list = useShowMore(entries)
-  const remaining = list.hidden + (hasNextPage ? 1 : 0)
-  return (
-    <div className="space-y-3">
-      {entries.length ? (
-        <>
-          {total !== undefined && (
-            <p className="text-xs text-muted-foreground">
-              전체 질문 {total}개
-              {list.shown.length < total && ` · ${list.shown.length}개 표시`}
-            </p>
-          )}
-          {list.shown.map(render)}
-        </>
-      ) : (
-        <EmptyState>현재 등록된 보완 질문이 없어요.</EmptyState>
-      )}
-      {remaining > 0 && (
-        <Button
-          variant="outline"
-          disabled={loadingNext}
+  const [picked, setPicked] = useState<Filter>()
+  // 답하는 중인 질문. 목록이 새로 읽혀도 최신 질문을 보이고, 이전·다음으로 질문을 바꿔 넘긴다.
+  // 새 본문으로 질문이 다시 만들어져 그 질문이 목록에서 빠져도 연 때의 질문을 그대로 보인다 — 쓰던 답이 사라지지 않고,
+  // 저장하면 서버가 409(question_superseded 등)로 이유를 알려 준다(S15P31A108-396).
+  const [opened, setOpened] = useState<PlanningQuestion>()
+  const counts: Record<Filter, number> = {
+    open: entries.filter(isOpen).length,
+    answered: entries.filter(isAnswered).length,
+    all: total ?? entries.length,
+  }
+  // 답할 질문이 남아 있으면 그것부터 보인다.
+  const filter = picked ?? (counts.open ? 'open' : 'all')
+  const filtered = entries.filter(matches[filter])
+  const list = useShowMore(filtered, QUESTION_STEP)
+  const current = opened
+    ? (entries.find((item) => item.id === opened.id) ?? opened)
+    : filtered[0]
+  if (!entries.length)
+    return (
+      <EmptyState className={SPLIT_HEIGHT}>
+        현재 등록된 보완 질문이 없어요.
+      </EmptyState>
+    )
+  const canAnswer = (question: PlanningQuestion) =>
+    isLeader && answerable && !isLocked(question)
+  const header = (
+    <div
+      role="group"
+      aria-label="질문 고르기"
+      className="flex flex-1 gap-0.5 rounded-[10px] bg-[#e6e9ee] p-[3px]"
+    >
+      {filters.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          aria-pressed={filter === value}
           onClick={() => {
-            list.more()
-            if (list.hidden === 0 && hasNextPage) loadNext()
+            setPicked(value)
+            setOpened(undefined)
+            list.reset()
           }}
+          className={cn(
+            'h-[30px] flex-1 rounded-lg px-1 text-[13px] whitespace-nowrap',
+            filter === value
+              ? 'bg-card font-bold shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+              : 'font-medium text-[#57534e]',
+          )}
         >
-          질문 더 보기
-          {total !== undefined && total > list.shown.length
-            ? ` (${total - list.shown.length}개 남음)`
-            : ''}
-        </Button>
-      )}
+          {label}{' '}
+          <span className="font-normal text-muted-foreground tabular-nums">
+            {counts[value]}
+          </span>
+        </button>
+      ))}
     </div>
+  )
+  const rows = (
+    <>
+      {filtered.length === 0 && (
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          {filter === 'open'
+            ? '답할 질문이 남아 있지 않아요.'
+            : '질문이 없어요.'}
+        </p>
+      )}
+      <ul>
+        {list.shown.map((question, index) => (
+          <li key={question.id}>
+            <QuestionRow
+              question={question}
+              number={question.number ?? index + 1}
+              active={question.id === current?.id}
+              onClick={() => setOpened(question)}
+            />
+          </li>
+        ))}
+      </ul>
+      {(list.hidden > 0 || hasNextPage) && (
+        <div className="p-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full text-muted-foreground"
+            disabled={loadingNext}
+            onClick={() => {
+              list.more()
+              if (list.hidden === 0 && hasNextPage) loadNext()
+            }}
+          >
+            질문 더 보기
+            {list.hidden > 0 ? ` (${list.hidden}개 남음)` : ''}
+          </Button>
+        </div>
+      )}
+    </>
+  )
+  const head = current && <QuestionHead question={current} />
+  const detail = !current ? null : canAnswer(current) ? (
+    <QuestionAnswerForm
+      question={current}
+      siblings={filtered.filter(
+        (item) => item.id === current.id || !isLocked(item),
+      )}
+      total={total}
+      onNavigate={(id) =>
+        setOpened(entries.find((item) => item.id === id) ?? undefined)
+      }
+      onSubmit={(input) => onAnswer(current.id, input)}
+    >
+      {head}
+    </QuestionAnswerForm>
+  ) : (
+    <div className="px-8 pt-5 pb-6">
+      <p className="mb-3 text-xs font-semibold text-muted-foreground">
+        질문 {current.number ?? '-'} / {total ?? entries.length}
+      </p>
+      {head}
+      {isAnswered(current) && (
+        <div className="mt-6 border-t pt-6">
+          <p className="mb-1.5 text-xs font-semibold text-muted-foreground">
+            답변
+          </p>
+          <p className="rounded-lg bg-muted/60 px-4 py-3 text-[15px] leading-7 whitespace-pre-wrap">
+            {current.answer}
+          </p>
+        </div>
+      )}
+      {isLeader && published && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          기준 설계가 발행되어 답변을 바꿀 수 없어요.
+        </p>
+      )}
+      {isLeader &&
+        !published &&
+        isLocked(current) &&
+        current.freshness &&
+        current.freshness !== 'CURRENT' && (
+          <p className="mt-6 flex gap-2 rounded-lg bg-muted px-4 py-3 text-sm leading-6">
+            <Lock className="mt-1 size-4 shrink-0 text-muted-foreground" />
+            {lockedMessage[current.freshness]}
+          </p>
+        )}
+    </div>
+  )
+  return <SplitView header={header} list={rows} detail={detail} />
+}
+
+function QuestionRow({
+  question,
+  number,
+  active,
+  onClick,
+}: {
+  question: PlanningQuestion
+  number: number
+  active: boolean
+  onClick: () => void
+}) {
+  const locked = isLocked(question)
+  const dismissed = isDismissed(question)
+  return (
+    <button
+      type="button"
+      aria-current={active || undefined}
+      onClick={onClick}
+      className={listRowClass(active)}
+    >
+      <span
+        className={cn(
+          'w-7 shrink-0 pt-0.5 text-xs font-semibold tabular-nums',
+          active ? 'text-foreground' : 'text-muted-foreground',
+        )}
+      >
+        Q{number}
+      </span>
+      <span
+        className={cn(
+          'line-clamp-2 min-w-0 flex-1 text-sm leading-[1.5]',
+          (locked || dismissed) && 'text-muted-foreground',
+        )}
+      >
+        {question.question}
+      </span>
+      <span className="shrink-0 pt-0.5">
+        {locked ? (
+          <Lock
+            role="img"
+            aria-label="지금은 답할 수 없음"
+            className="size-4 text-muted-foreground"
+          />
+        ) : isAnswered(question) ? (
+          <CircleCheck
+            role="img"
+            aria-label="답변 완료"
+            className="size-4 text-[#00753a]"
+          />
+        ) : dismissed ? (
+          <CircleMinus
+            role="img"
+            aria-label="답변 없이 닫음"
+            className="size-4 text-muted-foreground/70"
+          />
+        ) : null}
+      </span>
+    </button>
   )
 }
 
-function QuestionCard({
-  question,
-  isLeader,
-  busy,
-  answerable,
-  published,
-  onAnswer,
-}: {
-  question: PlanningQuestion
-  isLeader: boolean
-  busy: boolean
-  answerable: boolean
-  published: boolean
-  onAnswer: () => void
-}) {
-  const dismissed = question.status === 'DISMISSED'
-  const answered = !!question.answer && !dismissed
-  const locked = isLocked(question)
-  const clickable = isLeader && !busy && answerable && !locked
+// 오른쪽 상세의 질문 머리: 종류·유형·상태 칩, 질문, 설명, 근거 위치
+function QuestionHead({ question }: { question: PlanningQuestion }) {
   return (
-    <article
-      className={cn(
-        'rounded-lg border p-4',
-        clickable &&
-          'cursor-pointer transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-      )}
-      {...(clickable
-        ? {
-            role: 'button',
-            tabIndex: 0,
-            onClick: onAnswer,
-            onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-              if (event.target !== event.currentTarget) return
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                onAnswer()
-              }
-            },
-          }
-        : {})}
-    >
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {question.number !== undefined && (
-          <span className="mr-1 text-xs font-semibold text-muted-foreground">
-            질문 {question.number}
-          </span>
-        )}
+    <>
+      <div className="flex flex-wrap items-center gap-1.5">
         {question.kind && (
           <Tag tone={kindTone[question.kind]}>{kindLabel[question.kind]}</Tag>
         )}
         {question.question_type && (
-          <Tag>{typeLabel[question.question_type]}</Tag>
+          <span className="mx-1 text-xs text-muted-foreground">
+            {typeLabel[question.question_type]}
+          </span>
         )}
         {question.evidence_status === 'UNVERIFIED' && (
           <Tag tone={operationTone.UPDATE}>근거 미확인</Tag>
         )}
-        {dismissed && <Tag>답변 없이 닫음</Tag>}
-        {answered && <Tag tone={operationTone.CREATE}>답변 완료</Tag>}
+        {isDismissed(question) && <Tag>답변 없이 닫음</Tag>}
+        {isAnswered(question) && (
+          <Tag tone={operationTone.CREATE}>답변 완료</Tag>
+        )}
         {question.freshness && question.freshness !== 'CURRENT' && (
           <Tag tone={operationTone.UPDATE}>
             {freshnessLabel[question.freshness]}
           </Tag>
         )}
       </div>
-      <p className="text-sm leading-6">{question.question}</p>
+      <h3 className="mt-3 text-xl leading-8 font-semibold tracking-tight break-words">
+        {question.question}
+      </h3>
       {question.summary && (
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        <p className="mt-2 text-[15px] leading-7 text-muted-foreground">
           {question.summary}
         </p>
       )}
       {question.source && (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted-foreground">
+          <FileText className="size-4 shrink-0" />
           원문 v{question.source.version_no} · {question.source.location}
         </p>
       )}
-      {answered && (
-        <p className="mt-3 rounded-md bg-muted/50 p-3 text-sm whitespace-pre-wrap">
-          {question.answer}
-        </p>
-      )}
-      {isLeader && published && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          기준 설계가 발행되어 답변을 바꿀 수 없어요.
-        </p>
-      )}
-      {isLeader &&
-        !published &&
-        locked &&
-        question.freshness &&
-        question.freshness !== 'CURRENT' && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            {lockedMessage[question.freshness]}
-          </p>
-        )}
-      {clickable && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {answered ? '눌러서 답변 수정' : '눌러서 답변하기'}
-        </p>
-      )}
-    </article>
+    </>
   )
 }

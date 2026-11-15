@@ -64,18 +64,19 @@ it('후보가 많으면 5개씩 보이고, 전체 선택은 보이는 후보만 
   ).toHaveLength(10)
 })
 
-it('질문은 5개씩 보이고 더 보기로 이어서 본다', async () => {
-  const user = userEvent.setup()
-  const questions = Array.from({ length: 12 }, (_, index) => ({
-    id: String(index + 1),
-    number: index + 1,
-    question: `내용 ${index + 1}번`,
-    status: 'OPEN' as const,
-  }))
+const showQuestions = (
+  items: {
+    id: string
+    number: number
+    question: string
+    status: 'OPEN' | 'ANSWERED'
+    answer?: string
+  }[],
+) => {
   vi.spyOn(planningApi, 'questions').mockResolvedValue({
-    items: questions,
+    items,
     has_more: false,
-    total_count: 12,
+    total_count: items.length,
   } as never)
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -86,14 +87,59 @@ it('질문은 5개씩 보이고 더 보기로 이어서 본다', async () => {
         generations={[]}
         answerable
         published={false}
-        onAnswer={vi.fn()}
+        onAnswer={vi.fn().mockResolvedValue(undefined)}
       />
     </QueryClientProvider>,
   )
-  expect(await screen.findByText(/^내용 5번$/)).toBeInTheDocument()
-  expect(screen.queryByText(/^내용 6번$/)).toBeNull()
-  expect(screen.getByText(/전체 질문 12개 · 5개 표시/)).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: /질문 더 보기/ }))
-  expect(screen.getByText(/^내용 10번$/)).toBeInTheDocument()
-  expect(screen.queryByText(/^내용 11번$/)).toBeNull()
+}
+const rowOf = (text: string) =>
+  screen.queryByRole('button', { name: (name) => name.includes(text) })
+
+it('질문 목록은 20개씩 보이고 더 보기로 이어서 본다', async () => {
+  const user = userEvent.setup()
+  showQuestions(
+    Array.from({ length: 25 }, (_, index) => ({
+      id: String(index + 1),
+      number: index + 1,
+      question: `내용 ${index + 1}번`,
+      status: 'OPEN' as const,
+    })),
+  )
+  expect(await screen.findByRole('button', { name: '전체 25' })).toBeVisible()
+  expect(rowOf('내용 20번')).toBeInTheDocument()
+  expect(rowOf('내용 21번')).toBeNull()
+  await user.click(
+    screen.getByRole('button', { name: '질문 더 보기 (5개 남음)' }),
+  )
+  expect(rowOf('내용 25번')).toBeInTheDocument()
+})
+
+// 예전 답변 창의 '남은 질문만 넘기기'와 번호 칩은 왼쪽 목록이 맡는다. 목록에 보이는 질문만 이전·다음으로 넘긴다.
+it('답할 질문이 기본 목록이라 답한 질문은 목록과 이전·다음에서 빠지고, 전체로 바꾸면 모두 넘긴다', async () => {
+  const user = userEvent.setup()
+  showQuestions([
+    { id: '1', number: 1, question: '첫 질문', status: 'OPEN' },
+    {
+      id: '2',
+      number: 2,
+      question: '답한 질문',
+      status: 'ANSWERED',
+      answer: '답',
+    },
+    { id: '3', number: 3, question: '셋째 질문', status: 'OPEN' },
+  ])
+  expect(
+    await screen.findByRole('button', { name: '답할 질문 2' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(rowOf('답한 질문')).toBeNull()
+  // 처음에는 목록의 첫 질문이 열려 있다.
+  expect(screen.getByRole('heading', { name: '첫 질문' })).toBeInTheDocument()
+  expect(screen.getByText('질문 1 / 3')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /^다음/ }))
+  expect(screen.getByText('질문 3 / 3')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '전체 3' }))
+  await user.click(rowOf('셋째 질문')!)
+  await user.click(screen.getByRole('button', { name: /^이전/ }))
+  expect(screen.getByRole('heading', { name: '답한 질문' })).toBeInTheDocument()
+  expect(screen.getByText('질문 2 / 3')).toBeInTheDocument()
 })
