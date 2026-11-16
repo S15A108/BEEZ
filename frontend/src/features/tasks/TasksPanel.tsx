@@ -90,7 +90,7 @@ import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
 import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
-import { AgentTaskHandoff } from './AgentTaskHandoff'
+import { agentTaskInstructions } from './agentTaskInstructions'
 import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
   toValidationView,
@@ -304,8 +304,12 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   const selectedGroup = groupOf(
     entries.find((entry) => entry.id === selectedId)?.status,
   )
-  // 계획 이력·작업 기록 카드가 여는 창 안 화면
-  const [sheet, setSheet] = useState<'history' | 'records' | null>(null)
+  // 계획 이력·작업 기록 카드와 '더 보기'의 담당 후보 추천이 여는 창 안 화면
+  const [sheet, setSheet] = useState<
+    'history' | 'records' | 'recommend' | null
+  >(null)
+  // '더 보기'의 에이전트용 작업 지시 복사 결과. 메뉴가 닫힌 뒤 버튼 줄 아래에 보인다.
+  const [handoff, setHandoff] = useState<{ taskId: string; copied: boolean }>()
   // 다른 작업으로 전환한 뒤에는 이전 작업의 처리 결과를 새 화면에 표시하지 않는다.
   const selectionScope = JSON.stringify([projectId, selectedId])
   const [feedbackScope, setFeedbackScope] = useState(selectionScope)
@@ -693,8 +697,16 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                   {entry.current_plan_revision.plan.title}
                                 </strong>
                                 <span className="flex flex-wrap gap-2">
-                                  <StatusPill value={entry.status} />
-                                  <StatusPill value={entry.validation_status} />
+                                  {/* 상태는 한 단어로(S15P31A108-441). 시작 전 작업은 검증 결과가 곧 상태라 통과했을 때만 '시작 준비'로 보인다. */}
+                                  <StatusPill
+                                    value={
+                                      ['DRAFT', 'READY'].includes(
+                                        entry.status,
+                                      ) && entry.validation_status !== 'PASS'
+                                        ? entry.validation_status
+                                        : entry.status
+                                    }
+                                  />
                                   {!entry.assignee_member_id && (
                                     <UnassignedChip />
                                   )}
@@ -736,22 +748,12 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
           <AsyncState query={detail}>
             {(current) => (
               <div className="space-y-5">
-                {!['COMPLETED', 'CANCELLED'].includes(current.status) && (
-                  <AssignmentRecommendations
-                    key={`${current.id}-${current.lock_version}`}
-                    projectId={projectId}
-                    taskId={current.id}
-                    members={members.data?.items ?? []}
-                  />
-                )}
                 <Card>
                   <CardHeader>
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <CardTitle>
-                        {current.current_plan_revision.plan.title}
-                      </CardTitle>
-                      <StatusPill value={current.status} />
-                    </div>
+                    {/* 상태는 아래 단계 표시(취소면 취소 안내) 한 곳에서만 말한다(S15P31A108-441). */}
+                    <CardTitle>
+                      {current.current_plan_revision.plan.title}
+                    </CardTitle>
                     <CardDescription>
                       {current.key} · 담당자{' '}
                       {current.assignee_member_id
@@ -764,9 +766,6 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {active && mine(current) && (
-                      <AgentTaskHandoff key={current.id} taskId={current.id} />
-                    )}
                     {cancelled ? (
                       // 취소 시점의 단계는 응답에 없어 단계 표시를 두지 않는다. 남은 단계에 '지금'을 붙이면 진행 중처럼 읽힌다.
                       <div className="flex gap-2.5 rounded-xl border bg-muted/40 p-4 text-sm">
@@ -837,27 +836,19 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                               {index < step
                                 ? stepDoneText[index]
                                 : index === step
-                                  ? '지금'
+                                  ? // 상태 배지를 따로 두지 않아 대기는 지금 단계에서 알린다.
+                                    current.status === 'WAITING'
+                                    ? '대기'
+                                    : '지금'
                                   : ''}
                             </span>
                           </li>
                         ))}
                       </ol>
                     )}
-                    {/* 주 버튼은 상태마다 하나(M5): 진행 중이면 완료 보고, 시작할 수 있으면 시작, 막혔으면 계획 수정, 그 밖에는 계획 검증. */}
-                    <div
-                      className={cn(
-                        'flex flex-wrap items-start gap-2',
-                        isOwner &&
-                          active &&
-                          'rounded-xl border border-primary/40 bg-primary/5 p-4',
-                      )}
-                    >
-                      {isOwner && active && (
-                        <p className="w-full text-xs font-semibold">
-                          다음 할 일
-                        </p>
-                      )}
+                    {/* 주 버튼은 상태마다 하나(M5): 진행 중이면 완료 보고, 시작할 수 있으면 시작, 막혔으면 계획 수정, 그 밖에는 계획 검증.
+                        단계 표시가 이미 지금 할 일을 말해 '다음 할 일' 상자 없이 바로 아래에 둔다(S15P31A108-441). */}
+                    <div className="flex flex-wrap items-start gap-2">
                       {isOwner && active && primary === 'revise' && (
                         <Button
                           disabled={action.busy}
@@ -979,8 +970,9 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                           </Button>
                         </>
                       )}
-                      {/* 새 리비전·담당자 변경·작업 취소는 '더 보기'로 묶는다. */}
-                      {active && (isOwner || isLeader) && (
+                      {/* 새 리비전·담당자 변경·작업 취소와 보조 기능(담당 후보 추천, 에이전트용 작업 지시 복사)은 '더 보기'로 묶는다.
+                          추천은 누구나 볼 수 있어 메뉴도 진행 중인 작업이면 누구에게나 둔다(S15P31A108-441). */}
+                      {active && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
@@ -1015,17 +1007,65 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                   : '담당자 정하기'}
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuSeparator />
                             <DropdownMenuItem
-                              variant="destructive"
-                              onSelect={() => report('CANCEL')}
+                              onSelect={() => setSheet('recommend')}
                             >
-                              작업 취소
+                              담당 후보 추천
                             </DropdownMenuItem>
+                            {isOwner && (
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  void navigator.clipboard
+                                    .writeText(
+                                      agentTaskInstructions(current.id),
+                                    )
+                                    .then(
+                                      () =>
+                                        setHandoff({
+                                          taskId: current.id,
+                                          copied: true,
+                                        }),
+                                      () =>
+                                        setHandoff({
+                                          taskId: current.id,
+                                          copied: false,
+                                        }),
+                                    )
+                                }
+                              >
+                                에이전트용 작업 지시 복사
+                              </DropdownMenuItem>
+                            )}
+                            {(isOwner || isLeader) && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onSelect={() => report('CANCEL')}
+                                >
+                                  작업 취소
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
                     </div>
+                    {handoff?.taskId === current.id &&
+                      (handoff.copied ? (
+                        <p
+                          role="status"
+                          className="text-sm text-muted-foreground"
+                        >
+                          에이전트용 작업 지시를 복사했어요. 연결한 에이전트에
+                          붙여 넣으세요.
+                        </p>
+                      ) : (
+                        <p role="alert" className="text-sm text-destructive">
+                          복사할 수 없어요. 에이전트에게 작업 ID {current.id}를
+                          전달하세요.
+                        </p>
+                      ))}
                     {!current.assignee_member_id ? (
                       // 담당자가 없으면 아무도 계획 수정·시작·재개하지 못한다. 팀장은 정하고 팀원은 스스로 맡는다(TSK-A06, 11-04).
                       // API 없음: 누가 나가서 비었는지(캔버스 '김동료 나감')는 작업 응답에 없어 쓰지 않는다.
@@ -1708,6 +1748,21 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                         </Button>
                       </div>
                     )}
+                  </PaneSheet>
+                )}
+                {sheet === 'recommend' && (
+                  <PaneSheet
+                    back={current.key}
+                    title="비비의 담당 후보 추천"
+                    description="담당 도메인, 현재 업무량과 선행 작업을 참고해요. 추천만 표시하며 담당자를 자동으로 바꾸지 않아요."
+                    onClose={() => setSheet(null)}
+                  >
+                    <AssignmentRecommendations
+                      key={`${current.id}-${current.lock_version}`}
+                      projectId={projectId}
+                      taskId={current.id}
+                      members={members.data?.items ?? []}
+                    />
                   </PaneSheet>
                 )}
                 {sheet === 'records' && (

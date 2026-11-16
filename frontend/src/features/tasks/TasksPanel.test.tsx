@@ -135,11 +135,16 @@ function show(isLeader: boolean) {
   return { ...view, client }
 }
 
+// S15P31A108-441: 에이전트용 작업 지시 복사는 '더 보기' 메뉴로 옮겼다.
 it('내 작업의 실제 ID와 기존 검증 절차를 에이전트 지시로 복사한다', async () => {
   const user = userEvent.setup()
   show(false)
+  expect(
+    screen.queryByRole('button', { name: '에이전트용 작업 지시 복사' }),
+  ).toBeNull()
+  await user.click(await screen.findByRole('button', { name: '더 보기' }))
   await user.click(
-    await screen.findByRole('button', {
+    await screen.findByRole('menuitem', {
       name: '에이전트용 작업 지시 복사',
     }),
   )
@@ -718,8 +723,9 @@ it('검증이 끝나면 목록의 상태 칩도 다시 불러와 바뀐다', asy
   expect(within(entry).getByText('검증 중')).toBeInTheDocument()
 
   task = passed
+  // S15P31A108-441: 목록은 상태 칩 하나라 통과한 시작 전 작업은 '시작 준비'로 보인다.
   await waitFor(() =>
-    expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
+    expect(within(entry).getByText('시작 준비')).toBeInTheDocument(),
   )
 })
 it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한다', async () => {
@@ -737,7 +743,7 @@ it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한�
     await screen.findByRole('button', { name: /TASK-001.*검증 중/ }),
   ).toBeInTheDocument()
   expect(
-    await screen.findByRole('button', { name: /TASK-001.*계획 통과/ }),
+    await screen.findByRole('button', { name: /TASK-001.*시작 준비/ }),
   ).toBeInTheDocument()
 })
 
@@ -901,16 +907,58 @@ it('완료 보고는 완료 기준을 모두 체크해야 보내고 달라진 �
   })
 })
 
-// PNL-05 수정안: 단계 표시와 '다음 할 일' 상자. 계획 검증은 통과 뒤 상자 안 '다시 검증'으로 남는다.
-it('검증을 통과한 작업은 단계가 작업 시작에 있고 다음 할 일 상자에 다시 검증을 둔다', async () => {
+// PNL-05 수정안: 계획 검증은 통과 뒤 '다시 검증'으로 남는다. S15P31A108-441: '다음 할 일' 상자 없이 단계 바로 아래 버튼 줄에 둔다.
+it('검증을 통과한 작업은 단계가 작업 시작에 있고 단계 아래 버튼 줄에 다시 검증을 둔다', async () => {
   show(false)
   const steps = await screen.findByRole('list', { name: '작업 단계' })
   expect(within(steps).getByText('작업 시작')).toHaveAttribute(
     'aria-current',
     'step',
   )
-  expect(screen.getByText('다음 할 일')).toBeInTheDocument()
+  expect(screen.queryByText('다음 할 일')).toBeNull()
   expect(screen.getByRole('button', { name: '다시 검증' })).toBeEnabled()
+})
+
+// S15P31A108-441: 한 작업의 상태는 목록 칩 하나와 상세 단계 표시 한 곳에서만 말한다.
+it('통과한 시작 전 작업은 목록에 시작 준비 칩 하나만 두고 상세에는 상태 칩을 두지 않는다', async () => {
+  show(false)
+  const entry = await screen.findByRole('button', {
+    name: /사용자 프로필 구현/,
+  })
+  expect(within(entry).getByText('시작 준비')).toBeInTheDocument()
+  expect(within(entry).queryByText('계획 통과')).toBeNull()
+  await screen.findByRole('list', { name: '작업 단계' })
+  expect(screen.getAllByText('시작 준비')).toHaveLength(1)
+})
+
+it('대기 중인 작업은 지금 단계에 대기라고 보인다', async () => {
+  task = { ...task, status: 'WAITING' }
+  show(false)
+  const steps = await screen.findByRole('list', { name: '작업 단계' })
+  const current = within(steps)
+    .getAllByRole('listitem')
+    .find((step) => step.hasAttribute('aria-current'))!
+  expect(within(current).getByText('대기')).toBeInTheDocument()
+  expect(within(steps).queryByText('지금')).toBeNull()
+})
+
+it('담당 후보 추천은 더 보기에서 창 안 화면으로 열고 담당자가 아닌 팀원도 볼 수 있다', async () => {
+  task = { ...task, assignee_member_id: '22' }
+  show(false)
+  await screen.findByRole('list', { name: '작업 단계' })
+  expect(screen.queryByRole('button', { name: '후보 추천받기' })).toBeNull()
+  await userEvent.click(screen.getByRole('button', { name: '더 보기' }))
+  expect(screen.queryByRole('menuitem', { name: '작업 취소' })).toBeNull()
+  expect(
+    screen.queryByRole('menuitem', { name: '에이전트용 작업 지시 복사' }),
+  ).toBeNull()
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '담당 후보 추천' }),
+  )
+  expect(
+    await screen.findByRole('button', { name: '후보 추천받기' }),
+  ).toBeInTheDocument()
+  expect(screen.getByText('비비의 담당 후보 추천')).toBeInTheDocument()
 })
 
 // S15P31A108-433(디자인 검수 F06): 취소된 작업은 '계획 검증 · 지금' 대신 끝난 상태를 먼저 보이고, 계획·검증은 기록으로 남긴다.
