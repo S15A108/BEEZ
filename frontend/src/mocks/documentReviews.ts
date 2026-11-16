@@ -5,6 +5,7 @@ import type {
   DocumentWorkingCopy,
 } from '../api/contracts/common'
 import {
+  activity,
   fail,
   findById,
   requireAccount,
@@ -612,6 +613,15 @@ export async function reviewRoutes(
       } else fail(400, 'validation_failed', '승인이나 반려를 골라 주세요.')
       submission.decided_by = requireAccount(context).id
       submission.decided_at = now()
+      // 서버처럼 승인·반려 활동을 남기고 대상은 제출한 문서 버전이다(DocumentReviewService, S15P31A108-310).
+      activity(
+        context,
+        body.decision === 'APPROVE' ? 'DOCUMENT_APPROVED' : 'DOCUMENT_REJECTED',
+        {
+          target_type: 'DOCUMENT_VERSION',
+          target_id: submission.document_version_id,
+        },
+      )
       return { data: strip(submission) }
     }
     case 'DOC-A22': {

@@ -75,7 +75,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   // 끝내기 확인 화면을 연 회의. 알림 등으로 다른 회의가 열리면 그 회의에서는 확인 화면이 뜨지 않는다.
   const [endingId, setEndingId] = useState<string | null>(null)
   const [showRevision, setShowRevision] = useState(false)
-  const [agendaOpen, setAgendaOpen] = useState(false)
   const [earlierOpen, setEarlierOpen] = useState(false)
   // 회의 정리·끝내기 오류는 회의가 열린 채 어떻게 이어 가면 되는지를 알려 준다(meetingErrors.ts).
   const [notice, setNotice] = useState<{ text: string; id: number } | null>(
@@ -250,7 +249,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     setSelection({ id, focus })
     setEnding(false)
     setShowRevision(false)
-    setAgendaOpen(false)
     setEarlierOpen(false)
     setNotice(null)
   }
@@ -708,90 +706,22 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           </p>
                         </div>
                         {(meeting.conflict_summary ||
-                          meeting.conflict_guidance) &&
-                          (review && !agendaOpen ? (
-                            <section
-                              aria-label="안건"
-                              className={cn(
-                                'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-3.5 py-2.5 text-[13px]',
-                                line,
-                              )}
-                            >
-                              <span>
-                                <strong className="mr-2">안건</strong>
-                                {meeting.conflict_summary}
-                                {meeting.task_ids?.length
-                                  ? ` · 관련 작업 ${meeting.task_ids.map((id) => taskOf(id)?.key ?? '작업').join(' · ')}`
-                                  : ''}
-                              </span>
-                              <button
-                                type="button"
-                                className="text-xs font-semibold text-[#8a6a00]"
-                                onClick={() => setAgendaOpen(true)}
-                              >
-                                펼치기
-                              </button>
-                            </section>
-                          ) : (
-                            <section
-                              aria-label="안건"
-                              // 넓은 화면에서 펼친 안건이 길면 대화 칸과 남는 높이를 반씩 나누고 안에서 스크롤한다. 짧으면 제 높이만 쓴다.
-                              className="grid gap-2.5 rounded-2xl border border-[#f3e2a6] bg-[#fff8e0] px-3.5 py-3 text-sm lg:max-h-max lg:flex-1 lg:overflow-y-auto"
-                            >
-                              {!meeting.conflict_guidance && (
-                                <p className="flex flex-wrap items-baseline justify-between gap-2">
-                                  <strong>{meeting.conflict_summary}</strong>
-                                  <span className="text-xs text-muted-foreground">
-                                    비비가 찾은 충돌 ·{' '}
-                                    {formatTime(meeting.created_at)}
-                                  </span>
-                                </p>
-                              )}
-                              {(meeting.origin === 'BEE_CONFLICT' ||
-                                meeting.conflict_guidance) && (
-                                <MeetingConflictGuidance
-                                  guidance={meeting.conflict_guidance}
-                                  brief={
-                                    notes.find(
-                                      (entry) =>
-                                        entry.kind === 'CONFLICT_BRIEF',
-                                    )?.text
-                                  }
-                                  closed={closedMeeting}
-                                  taskKeyOf={(id) => taskOf(id)?.key}
-                                  documentTitleOf={documentTitleOf}
-                                />
-                              )}
-                              <ul className="grid gap-2 sm:grid-cols-2">
-                                {(meeting.task_ids ?? []).map((id) => {
-                                  const task = taskOf(id)
-                                  return (
-                                    <li key={id}>
-                                      <button
-                                        type="button"
-                                        className={cn(
-                                          'w-full rounded-xl border bg-white px-3 py-2 text-left text-xs text-muted-foreground hover:bg-[#fbfaf6]',
-                                          line,
-                                        )}
-                                        onClick={() => openPane('tasks', id)}
-                                      >
-                                        <strong className="text-foreground">
-                                          {task?.key ?? '작업'}
-                                        </strong>{' '}
-                                        {task?.current_plan_revision.plan
-                                          .title ??
-                                          meeting.conflict_guidance?.tasks.find(
-                                            (item) => item.task_id === id,
-                                          )?.title}
-                                        {task &&
-                                          ` · ${task.assignee_member_id ? nameOfMember(task.assignee_member_id) : '담당자 없음'}`}
-                                      </button>
-                                    </li>
-                                  )
-                                })}
-                              </ul>
-                            </section>
-                          ))}
+                          meeting.conflict_guidance) && (
+                          <MeetingConflictGuidance
+                            key={meeting.id}
+                            summary={meeting.conflict_summary}
+                            taskIds={meeting.task_ids ?? []}
+                            guidance={meeting.conflict_guidance}
+                            brief={
+                              notes.find(
+                                (entry) => entry.kind === 'CONFLICT_BRIEF',
+                              )?.text
+                            }
+                            closed={closedMeeting}
+                            taskKeyOf={(id) => taskOf(id)?.key}
+                            documentTitleOf={documentTitleOf}
+                          />
+                        )}
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <MeetingSteps
                             current={closedMeeting ? 3 : review ? 1 : 0}

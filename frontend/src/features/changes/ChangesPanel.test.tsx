@@ -18,6 +18,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { Hotbar } from '@/features/workspace/Hotbar'
 import { ChangesPanel } from './ChangesPanel'
 import { getResponseSchema } from './schemas'
+import type { PublishedAnalysis } from './schemas'
 
 let restore: () => void
 let client: QueryClient
@@ -195,7 +196,96 @@ it('팀장은 탭으로 제안을 살펴보고 창 안에서 확인한 뒤 기�
   expect(await screen.findByRole('status')).toHaveTextContent(
     '기준 v2 발행을 마쳤어요.',
   )
-  expect(await screen.findByText(/새 기준을 발행했어요/)).toBeInTheDocument()
+  expect(
+    await screen.findByRole('heading', { name: /^발행 완료/ }),
+  ).toBeInTheDocument()
+})
+
+// 디자인 검수 F07(S15P31A108-434): 발행 성공과 발행 후 분석 상태를 요약 한 곳에서 읽는다.
+async function publishWith(analysis: PublishedAnalysis | undefined) {
+  const detail = (await changesApi.get('101', '71')).proposal
+  await changesApi.approve('101', '71', {
+    expected_base_baseline_id: detail.base_baseline_id,
+    expected_revision: detail.revision,
+    expected_snapshot_hash: detail.snapshot_hash,
+  })
+  const published = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'get').mockResolvedValue({
+    ...published,
+    published_analysis: analysis,
+  })
+}
+
+it('발행 후 분석이 근거 부족으로 끝나면 요약에 발행 완료와 영향 확인 필요를 함께 보이고 관련 작업으로 바로 간다', async () => {
+  const user = userEvent.setup()
+  await publishWith({
+    status: 'COMPLETED',
+    evaluation_status: 'INSUFFICIENT_EVIDENCE',
+    guidance: 'REVIEW_EVIDENCE',
+  })
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: '발행 완료 · 영향 확인 필요' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(/발행 후 분석으로 영향이 확정되지 않았어요/),
+  ).toBeInTheDocument()
+  // 상세는 이유와 발행 전·후 분석의 차이를 설명한다.
+  const status = screen.getByRole('region', { name: '발행 후 분석 상태' })
+  expect(within(status).getByText('근거 확인 필요')).toBeInTheDocument()
+  expect(
+    within(status).getByText(/발행 전 분석은 승인하기 전에/),
+  ).toBeInTheDocument()
+  // 발행 후 분석은 수동 재처리 API가 없어 다시 시도 동작을 두지 않는다.
+  expect(
+    screen.queryByRole('button', { name: /다시 (시도|분석)/ }),
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '관련 작업 확인' }))
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+})
+
+it.each([
+  [{ status: 'FAILED', guidance: 'CONTACT_OPERATOR' }],
+  [{ status: 'NOT_EVALUATED', guidance: 'REVIEW_REASON' }],
+  [{ status: 'UNKNOWN', guidance: 'CHECK_RESULT' }],
+  [{ status: 'COMPLETED', guidance: 'CHECK_RESULT' }],
+  [undefined],
+] satisfies Array<[PublishedAnalysis | undefined]>)(
+  '발행 후 분석이 영향을 확정하지 못했으면 발행 완료와 영향 확인 필요를 함께 보인다: %s',
+  async (analysis) => {
+    await publishWith(analysis)
+    renderPanel()
+    expect(
+      await screen.findByRole('heading', {
+        name: '발행 완료 · 영향 확인 필요',
+      }),
+    ).toBeInTheDocument()
+  },
+)
+
+it('발행 후 분석이 진행 중이면 영향 확인 필요 대신 분석 중으로 보인다', async () => {
+  await publishWith({ status: 'RUNNING', guidance: 'WAIT' })
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: '발행 완료 · 영향 분석 중' }),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/영향 확인 필요/)).not.toBeInTheDocument()
+})
+
+it('발행 후 분석이 근거까지 갖춰 끝나면 요약에는 발행 완료만 보인다', async () => {
+  await publishWith({
+    status: 'COMPLETED',
+    evaluation_status: 'COMPLETED',
+    guidance: 'NONE',
+  })
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: '발행 완료' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText(/영향 확인 필요|영향 분석 중/),
+  ).not.toBeInTheDocument()
+  expect(screen.getByText('분석 완료')).toBeInTheDocument()
 })
 
 // 사용자 결정(10-30, PR #42 CHG-A04): 올린 제안은 잠기고, 반려된 제안만 같은 번호로 고쳐 다시 올린다.
@@ -883,7 +973,9 @@ it('사유를 남긴 예외 승인은 승인 이력과 발행 안내에 사유�
     impact_override_reason: '분석 서버 장애로 직접 확인함',
   })
   renderPanel()
-  expect(await screen.findByText(/새 기준을 발행했어요/)).toBeInTheDocument()
+  expect(
+    await screen.findByRole('heading', { name: /^발행 완료/ }),
+  ).toBeInTheDocument()
   expect(
     screen.getByText(/영향 분석 없이 승인한 사유/).parentElement,
   ).toHaveTextContent('분석 서버 장애로 직접 확인함')
@@ -905,7 +997,9 @@ it('사유 없이 승인한 이력에는 예외 사유 문구가 없다', async 
     expected_snapshot_hash: detail.snapshot_hash,
   })
   renderPanel()
-  expect(await screen.findByText(/새 기준을 발행했어요/)).toBeInTheDocument()
+  expect(
+    await screen.findByRole('heading', { name: /^발행 완료/ }),
+  ).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '승인 이력' }))
   expect(
     await screen.findByRole('heading', { name: '승인 이력' }),
@@ -1189,7 +1283,7 @@ it('승인에 성공한 뒤에는 이미 발행된 제안의 미리 보기를 �
   await user.click(
     screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
   )
-  await screen.findByText(/새 기준을 발행했어요/)
+  await screen.findByRole('heading', { name: /^발행 완료/ })
   expect(preview).toHaveBeenCalledTimes(1)
 })
 

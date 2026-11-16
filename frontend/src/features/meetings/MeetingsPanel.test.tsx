@@ -707,6 +707,8 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     await within(agenda).findByRole('button', { name: /TASK-001/ }),
   ).toBeInTheDocument()
+  // 안내 전문은 처음에 접혀 있어 대화가 첫 화면에 보인다(S15P31A108-437).
+  await user.click(within(agenda).getByRole('button', { name: '펼치기' }))
   const guidance = within(agenda).getByRole('region', {
     name: '비비의 충돌 안내',
   })
@@ -770,7 +772,8 @@ it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근�
   )
   const user = userEvent.setup()
   renderPanel(true)
-  const guidance = await screen.findByRole('region', {
+  await user.click(await screen.findByRole('button', { name: '펼치기' }))
+  const guidance = screen.getByRole('region', {
     name: '비비의 충돌 안내',
   })
   expect(guidance).toHaveTextContent('API-01 · GET /users')
@@ -807,6 +810,8 @@ it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근�
     focusId: '502',
   })
   act(() => useWorkspaceStore.getState().openPane('meetings'))
+  // 회의실을 다시 열면 안내는 다시 접혀 있다.
+  await user.click(await screen.findByRole('button', { name: '펼치기' }))
   const documentLink = await screen.findByRole('button', {
     name: /근거 문서.*5행/,
   })
@@ -831,6 +836,7 @@ it('참여자 칩은 비비를 포함해 세고 사람마다 이 회의의 작�
 // 화면 검수 11-16(S15P31A108-438): 참여자를 제목 줄로 올려 입력줄에 가리지 않게 하고, 넓은 화면에서는 창 대신 대화 칸만 스크롤한다.
 // jsdom은 레이아웃을 계산하지 않아 순서와 높이 클래스로 확인한다(실제 높이는 E2E 회의 시나리오에서 본다).
 it('참여자는 안건보다 앞 제목 줄에 있고, 펼친 안건은 대화 칸과 남는 높이를 나눠 안에서 스크롤한다', async () => {
+  const user = userEvent.setup()
   renderPanel(true)
   const title = await screen.findByRole('heading', {
     name: '초대 안내 문구 검토',
@@ -847,6 +853,9 @@ it('참여자는 안건보다 앞 제목 줄에 있고, 펼친 안건은 대화 
   expect(
     await within(people).findByTitle('이팀장 · 팀장 · TASK-001'),
   ).toBeInTheDocument()
+  // 접은 '정할 것' 한 줄은 줄어들지 않고, 펼치면 대화 칸과 높이를 나눈다.
+  expect(agenda).not.toHaveClass('lg:flex-1')
+  await user.click(within(agenda).getByRole('button', { name: '펼치기' }))
   expect(agenda).toHaveClass('lg:flex-1', 'lg:max-h-max', 'lg:overflow-y-auto')
   expect(log).toHaveClass('flex-1', 'lg:min-h-28')
 })
