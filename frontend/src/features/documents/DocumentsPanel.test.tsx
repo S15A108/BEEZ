@@ -545,9 +545,9 @@ it('서버가 거절하면 원인별로 알리고 입력값을 남긴다', async
   ).toBeInTheDocument()
 })
 
-// PR #72 전수 리뷰 AMP-01: 서버는 문서 승인·색인 뒤 설계 초안을 만들지 않는다.
-// 4종이 승인됐는데 초안이 0개면 '프로젝트 시작'을 끈 채 기획 분석 창(초안 만들기·직접 추가)으로 보낸다.
-it('4종이 승인됐어도 설계 초안이 없으면 기획 분석으로 보내고 시작을 막는다', async () => {
+// 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다(사용자 결정 11-16).
+// 그래서 4종이 승인되면 '프로젝트 시작'은 설계 초안이 없어도 켜져 있고, 누르면 발행하지 않고 기획 분석 창을 연다.
+it('4종이 승인되면 프로젝트 시작이 켜져 있고 누르면 발행하지 않고 기획 분석을 연다', async () => {
   const user = userEvent.setup()
   const approved = { ...version, status: 'APPROVED' as const }
   vi.mocked(documentsApi.list).mockResolvedValue({
@@ -561,63 +561,19 @@ it('4종이 승인됐어도 설계 초안이 없으면 기획 분석으로 보�
     ),
     has_more: false,
   })
-  vi.spyOn(planningApi, 'items').mockResolvedValue({
-    items: [],
-    has_more: false,
-    draft_snapshot_hash: 'sha256:empty',
-  })
-  mount()
-  await user.click(
-    await screen.findByRole('button', { name: '기획 분석에서 초안 만들기' }),
-  )
-  expect(useWorkspaceStore.getState().pane).toBe('planning')
-  expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeDisabled()
-})
-
-// S15P31A108-389: 설계 초안이 하나라도 있어도 채택하지 않은 후보가 남았으면 기획 분석으로 돌아갈 길이 남는다.
-it('설계 초안이 있어도 채택하지 않은 후보가 있으면 후보 검토 버튼을 보이고 시작은 막지 않는다', async () => {
-  const user = userEvent.setup()
-  const approved = { ...version, status: 'APPROVED' as const }
-  vi.mocked(documentsApi.list).mockResolvedValue({
-    items: (['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const).map(
-      (kind, index) => ({
-        ...listedDocument,
-        id: String(index + 1),
-        kind,
-        approved_version: approved,
-      }),
-    ),
-    has_more: false,
-  })
-  vi.spyOn(planningApi, 'items').mockResolvedValue({
-    items: [{ id: '901' } as never],
-    has_more: false,
-    draft_snapshot_hash: 'sha256:one',
-  })
-  vi.spyOn(planningApi, 'drafts').mockResolvedValue({
-    jobs: [
-      {
-        id: '1',
-        document_version_id: approved.id,
-        status: 'COMPLETED',
-        mode: 'DOCUMENT_ONLY',
-        candidates: [
-          { id: '21', status: 'PENDING' },
-          { id: '22', status: 'ADOPTED' },
-        ],
-      },
-    ],
-  } as never)
+  const publish = vi.spyOn(planningApi, 'publishBaseline')
   mount()
   expect(
-    await screen.findByText(/채택하지 않은 후보 1개이 남아 있어요/),
+    await screen.findByText(/기획 분석에서 설계 항목을 검토하고 발행하면/),
   ).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '후보 1개 검토하기' }))
-  expect(useWorkspaceStore.getState().pane).toBe('planning')
+  const start = screen.getByRole('button', { name: '프로젝트 시작' })
+  expect(start).toBeEnabled()
   expect(
     screen.queryByRole('button', { name: '기획 분석에서 초안 만들기' }),
   ).toBeNull()
-  expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeEnabled()
+  await user.click(start)
+  expect(useWorkspaceStore.getState().pane).toBe('planning')
+  expect(publish).not.toHaveBeenCalled()
 })
 
 // PR #72 재전수 ROUND2-DOC-03: 버전 이력은 다음 페이지까지 읽어 가장 오래된 v1도 고를 수 있다.
