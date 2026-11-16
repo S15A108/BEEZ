@@ -376,8 +376,11 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     : ['documents', 'questions', 'answers', 'items']
   // 처음 데이터가 들어왔을 때 한 번만 정한다: 문서 후보에 할 일(고를 후보·만드는 중·실패)이 있으면 문서 후보, 아니면 보완 질문.
   // 그 뒤에는 새 문서 후보 작업이 생기거나 마지막 후보를 채택해도 탭을 저절로 옮기지 않는다(답하던 중에 탭이 바뀌지 않게).
+  // 문서 후보에 할 일이 있는지는 문서 목록(versionIds)으로 거른 작업으로 세므로 문서 목록도 기다린다.
   const loaded =
-    !baseline.isPending && (!!baseline.data || !draftJobs.isPending)
+    !documents.isPending &&
+    !baseline.isPending &&
+    (!!baseline.data || !draftJobs.isPending)
   if (!picked && loaded)
     setPicked(
       tabs.includes('documents') &&

@@ -984,3 +984,29 @@ it('처음 정한 탭은 문서 후보 작업이 새로 생겨 창을 다시 읽
   )
   expect(questionsTab).toHaveAttribute('aria-selected', 'true')
 })
+
+// PR #303 재검토: 문서 목록이 기준·초안 작업보다 늦게 와도, 문서 후보에 할 일이 있으면 처음 탭을 문서 후보로 정한다.
+it('문서 목록이 기준 설계·초안 작업보다 늦게 와도 처음 탭을 문서 후보로 정한다', async () => {
+  await prepareDocumentCandidates()
+  const list = documentsApi.list.bind(documentsApi)
+  let release = () => {}
+  const late = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  vi.spyOn(documentsApi, 'list').mockImplementation(async (...args) => {
+    await late
+    return list(...args)
+  })
+  renderPanel()
+  // 기준 설계와 초안 작업을 먼저 다 읽어 화면에 반영될 때까지 둔다(문서 목록 없이 거르면 문서 작업이 하나도 남지 않는다).
+  expect(
+    await screen.findByText(/승인되고 색인이 끝나면 후보가 여기에 나와요/),
+  ).toBeInTheDocument()
+  release()
+  await waitFor(() =>
+    expect(screen.getByRole('tab', { name: /문서 후보/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    ),
+  )
+})
