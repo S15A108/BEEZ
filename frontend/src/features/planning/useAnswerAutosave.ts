@@ -20,6 +20,8 @@ interface Entry {
   queued?: AnswerQuestionInput
   /** 지금 보내는 저장. 끝날 때까지 기다릴 수 있게 둔다 */
   sending?: Promise<void>
+  /** 보내는 중에 답이 비었다. 끝나도 '저장됨'으로 덮지 않는다(서버에는 앞 값이 남아 있다) */
+  empty?: boolean
 }
 
 // 보완 질문 답변 자동 저장(PLN-A04). 질문마다 따로 센다.
@@ -38,6 +40,10 @@ export function useAnswerAutosave(
     const entries = new Map<string, Entry>()
     const setState = (id: string, value: SaveState) =>
       setStates((all) => ({ ...all, [id]: value }))
+    const clearState = (id: string) =>
+      setStates((all) =>
+        Object.fromEntries(Object.entries(all).filter(([key]) => key !== id)),
+      )
     const entryOf = (id: string) => {
       let entry = entries.get(id)
       if (!entry) {
@@ -60,11 +66,13 @@ export function useAnswerAutosave(
       entry.inFlight = true
       setState(id, { state: 'saving' })
       entry.sending = (async () => {
+        // 끝났을 때 상태를 바꿔도 되는지: 뒤에 보낼 값이 없고, 그사이 답이 비지 않았을 때만
+        const last = () => !entry.queued && !entry.timer && !entry.empty
         try {
           await saveRef.current(id, input)
-          if (!entry.queued && !entry.timer) setState(id, { state: 'saved' })
+          if (last()) setState(id, { state: 'saved' })
         } catch (cause) {
-          if (!entry.queued && !entry.timer)
+          if (last())
             setState(id, {
               state: 'failed',
               message: getApiErrorMessage(cause),
@@ -83,6 +91,7 @@ export function useAnswerAutosave(
       saveNow(id: string, input: AnswerQuestionInput | undefined) {
         const entry = entryOf(id)
         stop(entry)
+        entry.empty = !input
         if (!input) {
           entry.queued = undefined
           setState(id, { state: 'empty' })
@@ -94,6 +103,7 @@ export function useAnswerAutosave(
       schedule(id: string, input: AnswerQuestionInput | undefined) {
         const entry = entryOf(id)
         stop(entry)
+        entry.empty = !input
         if (!input) {
           entry.queued = undefined
           setState(id, { state: 'empty' })
@@ -116,13 +126,17 @@ export function useAnswerAutosave(
         stop(entry)
         if (next) send(id, next)
       },
-      /** 기다리는 저장을 버리고, 이미 보내는 저장이 끝날 때까지 기다린다(답하지 않고 닫기가 그 뒤에 서버에 닿게) */
+      /** 기다리는 저장을 버리고, 이미 보내는 저장이 끝날 때까지 기다린다(답하지 않고 닫기가 그 뒤에 서버에 닿게).
+       *  그 질문의 저장 상태도 지운다. 닫은 질문에 '저장 중…'이나 '저장됨'이 남지 않게 한다 */
       async cancel(id: string) {
         const entry = entries.get(id)
-        if (!entry) return
-        stop(entry)
-        entry.queued = undefined
-        await entry.sending
+        if (entry) {
+          stop(entry)
+          entry.queued = undefined
+          await entry.sending
+          entry.empty = false
+        }
+        clearState(id)
       },
     }
   }, [delay])

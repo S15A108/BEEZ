@@ -958,3 +958,29 @@ it('문서에서 뽑은 작업이 실패하면 출력 상한 안내를 보이고
   )
   expect(generate.mock.calls[0][1].document_version_ids).toHaveLength(1)
 })
+
+// PR #303 리뷰: 탭은 처음 데이터가 들어왔을 때 한 번만 정한다. 답하는 중에 문서 후보 작업이 새로 생겨도 넘어가지 않는다.
+it('처음 정한 탭은 문서 후보 작업이 새로 생겨 창을 다시 읽어도 저절로 바뀌지 않는다', async () => {
+  const user = renderPanel()
+  await questionsLoaded()
+  const questionsTab = screen.getByRole('tab', { name: /보완 질문/ })
+  expect(questionsTab).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tab', { name: /문서 후보/ }).textContent).toMatch(
+    /^문서 후보0/,
+  )
+  // 백엔드가 분석이 끝난 문서마다 문서 후보 작업을 만들고, 질문을 닫으면 창 전체를 다시 읽는다.
+  await prepareDocumentCandidates()
+  await openRow(user, CONFLICT_QUESTION)
+  await user.click(
+    visiblePanel().getByRole('button', { name: '답변하지 않고 닫기' }),
+  )
+  expect(
+    await screen.findByText('질문을 답변 없이 닫았어요.'),
+  ).toBeInTheDocument()
+  await waitFor(() =>
+    expect(
+      screen.getByRole('tab', { name: /문서 후보/ }).textContent,
+    ).not.toMatch(/^문서 후보0/),
+  )
+  expect(questionsTab).toHaveAttribute('aria-selected', 'true')
+})

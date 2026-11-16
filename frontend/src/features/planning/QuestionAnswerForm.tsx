@@ -177,6 +177,12 @@ export function QuestionAnswerForm({
     try {
       await autosave.cancel(closing)
       await onSave(closing, { status: 'DISMISSED' })
+      // 닫으면 서버에 답이 없으므로, 다시 열었을 때 쓰다 만 글을 보이지 않는다.
+      setDrafts((all) =>
+        Object.fromEntries(
+          Object.entries(all).filter(([key]) => key !== closing),
+        ),
+      )
       if (shownId.current === closing && after) onNavigate?.(after.id)
     } catch (cause) {
       setFailure({ id: closing, message: getApiErrorMessage(cause) })

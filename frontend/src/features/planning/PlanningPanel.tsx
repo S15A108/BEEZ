@@ -47,7 +47,7 @@ import {
 import { DraftCandidates } from './DraftCandidates'
 import { TaskBreakdown } from './TaskBreakdown'
 import { sendInBatches } from './sendInBatches'
-import { PANEL_HEIGHT } from './splitLayout'
+import { PANEL_HEIGHT, TAB_AREA_WITH_BREAKDOWN } from './splitLayout'
 import { usePlanningQuestions } from './usePlanningQuestions'
 import {
   checkDesignContent,
@@ -374,13 +374,18 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const tabs: PlanningTab[] = baseline.data
     ? ['questions', 'items']
     : ['documents', 'questions', 'answers', 'items']
-  // 처음 열면 문서 후보에 할 일(고를 후보·만드는 중·실패)이 있을 때 문서 후보를, 아니면 보완 질문을 연다.
-  const suggested: PlanningTab =
-    tabs.includes('documents') &&
-    (pendingIn(documentWork) > 0 || tabInfo.documents.state)
-      ? 'documents'
-      : 'questions'
-  const tab = picked && tabs.includes(picked) ? picked : suggested
+  // 처음 데이터가 들어왔을 때 한 번만 정한다: 문서 후보에 할 일(고를 후보·만드는 중·실패)이 있으면 문서 후보, 아니면 보완 질문.
+  // 그 뒤에는 새 문서 후보 작업이 생기거나 마지막 후보를 채택해도 탭을 저절로 옮기지 않는다(답하던 중에 탭이 바뀌지 않게).
+  const loaded =
+    !baseline.isPending && (!!baseline.data || !draftJobs.isPending)
+  if (!picked && loaded)
+    setPicked(
+      tabs.includes('documents') &&
+        (pendingIn(documentWork) > 0 || tabInfo.documents.state)
+        ? 'documents'
+        : 'questions',
+    )
+  const tab = picked && tabs.includes(picked) ? picked : 'questions'
   const documentsReady =
     allKinds.size === 4 &&
     !checkingApproval &&
@@ -403,6 +408,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       ? '설계 항목 초안을 모두 불러오고 최신인지 확인한 뒤 발행할 수 있어요.'
       : ''
   const drafting = !baseline.isPending && !baseline.data
+  // 발행 뒤 팀장 화면은 탭 위에 작업 만들기가 들어와 패널 높이를 고정하지 않는다.
+  const breakdown = isLeader && !!baseline.data
   const panels: Record<PlanningTab, ReactNode> = {
     documents: drafting && (
       <AsyncState query={draftJobs}>
@@ -543,8 +550,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
 
   return (
     // 창 높이를 채우고, 탭 안의 목록·상세가 남은 높이를 차지한다.
-    <section className={cn('flex flex-col gap-4', PANEL_HEIGHT)}>
-      {isLeader && baseline.data && (
+    <section className={cn('flex flex-col gap-4', !breakdown && PANEL_HEIGHT)}>
+      {breakdown && baseline.data && (
         <TaskBreakdown key={baseline.data.id} projectId={projectId} />
       )}
       {action.message && (
@@ -823,7 +830,10 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           id={`planning-panel-${key}`}
           aria-labelledby={`planning-tab-${key}`}
           hidden={key !== tab}
-          className="flex min-h-0 flex-1 flex-col"
+          className={cn(
+            'flex min-h-0 flex-col',
+            breakdown ? TAB_AREA_WITH_BREAKDOWN : 'flex-1',
+          )}
         >
           {panels[key]}
         </div>

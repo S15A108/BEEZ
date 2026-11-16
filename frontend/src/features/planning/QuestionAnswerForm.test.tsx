@@ -313,6 +313,10 @@ it('답하지 않고 닫으면 기다리던 저장은 보내지 않고 닫기만
   expect(onSave).toHaveBeenCalledTimes(1)
   expect(onSave).toHaveBeenCalledWith('1', { status: 'DISMISSED' })
   expect(screen.getByText('질문 2 / 2')).toBeInTheDocument()
+  // 돌아오면 '저장 중…'도, 버린 글도 남아 있지 않다(서버에는 답 없이 닫혔다).
+  await user.click(screen.getByRole('button', { name: '목록에서 1 열기' }))
+  expect(screen.queryByText('저장 중…')).toBeNull()
+  expect(screen.getByLabelText('답변')).toHaveValue('')
 })
 
 it('보내는 중인 저장이 있으면 끝난 뒤에 답하지 않고 닫기를 보낸다', async () => {
@@ -335,4 +339,40 @@ it('보내는 중인 저장이 있으면 끝난 뒤에 답하지 않고 닫기�
   expect(onSave).toHaveBeenCalledTimes(1)
   await act(async () => finish())
   expect(onSave).toHaveBeenLastCalledWith('1', { status: 'DISMISSED' })
+  // 보내던 저장이 끝나도 '저장됨'으로 덮지 않는다(서버에는 답 없이 닫혔다).
+  await user.click(screen.getByRole('button', { name: '목록에서 1 열기' }))
+  expect(screen.queryByText('저장됨')).toBeNull()
+  expect(screen.getByLabelText('답변')).toHaveValue('')
+})
+
+// 리뷰 표 3: 여러 개 고르는 질문에서 고른 직후 해제
+it('여러 개 고르는 질문에서 고른 직후 바로 해제하면 보내던 저장이 끝나도 저장됨으로 덮지 않는다', async () => {
+  const user = setup()
+  let finish = () => {}
+  const onSave = vi.fn().mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+  )
+  show(
+    {
+      question_type: 'CHOICE',
+      answer_format: {
+        type: 'CHOICE',
+        options: ['앱 안 알림', '이메일'],
+        multiple: true,
+        allow_other: false,
+      },
+    },
+    onSave,
+  )
+  await user.click(screen.getByLabelText('앱 안 알림'))
+  expect(onSave).toHaveBeenCalledTimes(1)
+  await user.click(screen.getByLabelText('앱 안 알림'))
+  expect(screen.getByText('빈 답은 저장하지 않아요')).toBeInTheDocument()
+  await act(async () => finish())
+  expect(onSave).toHaveBeenCalledTimes(1)
+  expect(screen.queryByText('저장됨')).toBeNull()
+  expect(screen.getByText('빈 답은 저장하지 않아요')).toBeInTheDocument()
 })
