@@ -462,7 +462,8 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
 })
 
 // S15P31A108-285: 팀장 시작 가이드 1단계에 에이전트 연결이 없었다(SCR-06-v2-workspace-preparing, -docs-ready).
-test('팀장 시작 가이드 1단계에서 초대와 에이전트 연결을 하고, 건너뛰면 링크로 다시 간다', async ({
+// S15P31A108-430: 선택인 초대·연결은 단계가 아니라 가이드 아래 링크다. 맨 위에는 필수인 문서 올리기가 크게 보인다.
+test('팀장 시작 가이드는 문서 올리기를 먼저 보이고, 초대와 에이전트 연결은 선택 링크로 연다', async ({
   page,
 }) => {
   await login(page)
@@ -479,24 +480,21 @@ test('팀장 시작 가이드 1단계에서 초대와 에이전트 연결을 하
   await expect(
     page.getByRole('heading', { name: '가이드 확인', exact: true }),
   ).toBeVisible()
-  const setup = page.getByRole('list', { name: '팀원 초대와 에이전트 연결' })
-  await setup.getByRole('button', { name: '내 에이전트 연결 연결하기' }).click()
+  const guide = page.getByRole('region', { name: /프로젝트 시작 가이드/ })
+  await expect(guide.getByRole('heading', { level: 3 })).toContainText(
+    '문서 초안 4종 올리기',
+  )
+  await guide.getByRole('button', { name: '에이전트 연결하기' }).click()
   await expect(
     page.getByRole('heading', { name: 'Claude Code에 BEEZ 추가' }),
   ).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(
-    setup.getByRole('button', { name: '팀원 초대 초대하기' }),
+    guide.getByRole('button', { name: '지금 초대하기' }),
   ).toBeVisible()
-  await page.getByRole('button', { name: '나중에 할게요' }).click()
-  await expect(setup).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: '지금 초대하기' }),
-  ).toBeVisible()
-  await page.getByRole('button', { name: '에이전트 연결하기' }).click()
-  await expect(
-    page.getByRole('heading', { name: 'Claude Code에 BEEZ 추가' }),
-  ).toBeVisible()
+    guide.getByRole('button', { name: '나중에 할게요' }),
+  ).toHaveCount(0)
 })
 
 // S15P31A108-285: 창이 검색칸에 포커스를 주면서 창을 연 숫자가 검색어로 들어갔다.
