@@ -707,6 +707,8 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     await within(agenda).findByRole('button', { name: /TASK-001/ }),
   ).toBeInTheDocument()
+  // 안내 전문은 처음에 접혀 있어 대화가 첫 화면에 보인다(S15P31A108-437).
+  await user.click(within(agenda).getByRole('button', { name: '펼치기' }))
   const guidance = within(agenda).getByRole('region', {
     name: '비비의 충돌 안내',
   })
@@ -770,7 +772,8 @@ it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근�
   )
   const user = userEvent.setup()
   renderPanel(true)
-  const guidance = await screen.findByRole('region', {
+  await user.click(await screen.findByRole('button', { name: '펼치기' }))
+  const guidance = screen.getByRole('region', {
     name: '비비의 충돌 안내',
   })
   expect(guidance).toHaveTextContent('API-01 · GET /users')
@@ -807,6 +810,8 @@ it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근�
     focusId: '502',
   })
   act(() => useWorkspaceStore.getState().openPane('meetings'))
+  // 회의실을 다시 열면 안내는 다시 접혀 있다.
+  await user.click(await screen.findByRole('button', { name: '펼치기' }))
   const documentLink = await screen.findByRole('button', {
     name: /근거 문서.*5행/,
   })
