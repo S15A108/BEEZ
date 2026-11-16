@@ -33,6 +33,7 @@ import {
 } from './office-work-surface'
 import type { OfficeScreens } from './office-screens'
 import { officeObjectKey } from './office-layout'
+import { stackTags, TAG, tagParts, type TagBox } from './nameTag'
 import {
   OfficeAimOutline,
   pickOfficeInteraction,
@@ -84,8 +85,8 @@ export interface OfficeEntity3D {
 
 interface Robot {
   appearance: OfficeAppearance
-  /** 머리 위 이름표(이름 · 상태, 말풍선). 같은 글이면 다시 그리지 않는다. */
-  tag?: { text: string; sprite: THREE.Sprite }
+  /** 머리 위 이름표(이름 · 상태, 말풍선). 같은 글이면 다시 그리지 않는다. width·height는 화면 크기(css px)다. */
+  tag?: { text: string; sprite: THREE.Sprite; width: number; height: number }
   /** 모양을 다시 만들어야 하는지 비교하는 값(에이전트는 주인 색·상태까지) */
   look: string
   root: THREE.Group
@@ -334,6 +335,9 @@ export class OfficeRenderer3D {
   private environmentEdge = { x: 0, z: 0 }
   private readonly people = new THREE.Group()
   private readonly robots = new Map<string, Robot>()
+  private readonly tagPoint = new THREE.Vector3()
+  private readonly tagView = new THREE.Vector3()
+  private tagFontRequested = false
   private readonly memberFigures = new Map<
     string,
     { figure: THREE.Group; height: number }
@@ -3315,52 +3319,165 @@ export class OfficeRenderer3D {
   }
 
   // 이름표(D37): 흰 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
+  // 앱 글꼴로 화면 픽셀과 1:1로 그리고(크기·위치는 placeTags), 깊이 검사를 꺼 가구·칸막이에 가리지 않는다.
   private nameTag(robot: Robot, tag?: string, note?: string) {
-    const text = tag
-      ? `${tag}
-${note ?? ''}`
-      : ''
+    const ratio = this.renderer.getPixelRatio()
+    const text = tag ? `${tag}\n${note ?? ''}\n${ratio}` : ''
     if (robot.tag?.text === text) return
     this.dropTag(robot)
     if (!tag) return
     const canvas = document.createElement('canvas')
     const g = canvas.getContext('2d')
-    const font = (size: number) =>
-      `700 ${size}px Geist, "Malgun Gothic", sans-serif`
-    canvas.width = 512
-    canvas.height = note ? 168 : 84
-    if (g) {
-      g.font = font(30)
-      const pill = (y: number, label: string, fill: string, ink: string) => {
-        const width = Math.min(500, g.measureText(label).width + 44)
-        g.fillStyle = fill
-        g.strokeStyle = 'rgba(44,41,31,0.16)'
-        g.lineWidth = 2
-        g.beginPath()
-        g.roundRect(256 - width / 2, y, width, 60, 30)
-        g.fill()
-        g.stroke()
-        g.fillStyle = ink
-        g.textAlign = 'center'
-        g.textBaseline = 'middle'
-        g.fillText(label, 256, y + 31, 470)
-      }
-      pill(12, tag, '#ffffff', '#2c291f')
-      if (note) pill(96, note, '#fff3c4', '#6e5200')
+    if (!g) return
+    // 앱과 같은 글꼴('Geist Variable', 한글은 시스템 글꼴). 웹폰트가 아직 없으면 받은 뒤 다시 그린다.
+    const family = getComputedStyle(document.documentElement).fontFamily
+    const font = (weight: number, size: number) =>
+      `${weight} ${size}px ${family || 'sans-serif'}`
+    if (
+      !this.tagFontRequested &&
+      document.fonts &&
+      !document.fonts.check(font(600, TAG.font), text)
+    ) {
+      this.tagFontRequested = true
+      void document.fonts.load(font(600, TAG.font), text).then(() => {
+        for (const item of this.robots.values())
+          if (item.tag) item.tag.text = ''
+      })
+    }
+    const { name, status } = tagParts(tag)
+    const measure = (label: string, f: string) => {
+      g.font = f
+      return label ? g.measureText(label).width : 0
+    }
+    const nameWidth = measure(name, font(600, TAG.font))
+    const statusWidth = measure(status, font(400, TAG.font))
+    const noteWidth = note ? measure(note, font(500, TAG.noteFont)) : 0
+    const inner = TAG.maxWidth - TAG.padX * 2
+    const pillWidth = Math.min(nameWidth + statusWidth, inner) + TAG.padX * 2
+    const notePillWidth = note ? Math.min(noteWidth, inner) + TAG.padX * 2 : 0
+    const width = Math.max(pillWidth, notePillWidth) + TAG.margin * 2
+    const height =
+      TAG.height + (note ? TAG.gap + TAG.noteHeight : 0) + TAG.margin * 2
+    canvas.width = Math.ceil(width * ratio)
+    canvas.height = Math.ceil(height * ratio)
+    g.scale(ratio, ratio)
+    const pill = (y: number, w: number, h: number, fill: string) => {
+      g.shadowColor = 'rgba(44,41,31,0.3)'
+      g.shadowBlur = 3
+      g.shadowOffsetY = 1
+      g.fillStyle = fill
+      g.beginPath()
+      g.roundRect((width - w) / 2, y, w, h, h / 2)
+      g.fill()
+      g.shadowColor = 'transparent'
+      g.strokeStyle = 'rgba(44,41,31,0.14)'
+      g.lineWidth = 1
+      g.beginPath()
+      g.roundRect((width - w) / 2 + 0.5, y + 0.5, w - 1, h - 1, h / 2)
+      g.stroke()
+    }
+    // 길면 글자 폭을 줄여 알약 안에 넣는다.
+    const squeeze = Math.min(1, inner / (nameWidth + statusWidth))
+    const top = TAG.margin
+    pill(top, pillWidth, TAG.height, '#ffffff')
+    g.textBaseline = 'middle'
+    g.textAlign = 'left'
+    let x = (width - (nameWidth + statusWidth) * squeeze) / 2
+    g.font = font(600, TAG.font)
+    g.fillStyle = '#2c291f'
+    g.fillText(name, x, top + TAG.height / 2 + 1, nameWidth * squeeze)
+    x += nameWidth * squeeze
+    if (status) {
+      g.font = font(400, TAG.font)
+      g.fillStyle = '#5c5647'
+      g.fillText(status, x, top + TAG.height / 2 + 1, statusWidth * squeeze)
+    }
+    if (note) {
+      const y = top + TAG.height + TAG.gap
+      pill(y, notePillWidth, TAG.noteHeight, '#fff3c4')
+      g.font = font(500, TAG.noteFont)
+      g.fillStyle = '#6e5200'
+      g.textAlign = 'center'
+      g.fillText(note, width / 2, y + TAG.noteHeight / 2 + 1, inner)
     }
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
+    // 화면 픽셀과 1:1이라 가장 가까운 텍셀을 그대로 쓴다(밉맵·선형 보간이 글자를 흐리게 한다).
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.NearestFilter
+    texture.magFilter = THREE.NearestFilter
     const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: texture, transparent: true }),
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+        // 톤 매핑을 거치면 흰 알약이 회색이 되고 글자 대비가 떨어진다.
+        toneMapped: false,
+      }),
     )
-    const width = 2.1
-    sprite.scale.set(width, (width * canvas.height) / canvas.width, 1)
     sprite.center.set(0.5, 0)
     sprite.position.y = FIGURE_HEIGHT + 0.25
-    sprite.renderOrder = 5
+    sprite.renderOrder = 10
     sprite.userData.ignorePicking = true
     robot.root.add(sprite)
-    robot.tag = { text, sprite }
+    robot.tag = {
+      text,
+      sprite,
+      width: canvas.width / ratio,
+      height: canvas.height / ratio,
+    }
+  }
+
+  /**
+   * 이름표를 거리·줌과 상관없이 화면에서 그린 크기(css px) 그대로 보이게 하고, 화면에서 겹치면 먼 이름표를 위로
+   * 올린다. 카메라 뒤의 이름표는 숨긴다.
+   */
+  private placeTags() {
+    const camera = this.camera
+    const point = this.tagPoint
+    const shown: { tag: NonNullable<Robot['tag']>; box: TagBox }[] = []
+    for (const robot of this.robots.values()) {
+      const tag = robot.tag
+      if (!tag || !robot.root.visible) continue
+      point.set(
+        robot.root.position.x,
+        tag.sprite.position.y,
+        robot.root.position.z,
+      )
+      this.people.localToWorld(point)
+      const depth = -this.tagView
+        .copy(point)
+        .applyMatrix4(camera.matrixWorldInverse).z
+      tag.sprite.visible = depth > camera.near
+      if (!tag.sprite.visible) continue
+      const worldPerPixel =
+        camera instanceof THREE.PerspectiveCamera
+          ? (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) /
+            this.height
+          : (camera.top - camera.bottom) / camera.zoom / this.height
+      tag.sprite.scale.set(
+        tag.width * worldPerPixel,
+        tag.height * worldPerPixel,
+        1,
+      )
+      point.project(camera)
+      shown.push({
+        tag,
+        box: {
+          x: ((point.x + 1) / 2) * this.width,
+          bottom: ((1 - point.y) / 2) * this.height,
+          width: tag.width,
+          height: tag.height,
+          depth,
+        },
+      })
+    }
+    const lifts = stackTags(shown.map((item) => item.box))
+    shown.forEach(({ tag }, index) =>
+      tag.sprite.center.set(0.5, -lifts[index] / tag.height),
+    )
   }
 
   private dropTag(robot: Robot) {
@@ -3674,10 +3791,6 @@ ${note ?? ''}`
     const player = opts.playerId
       ? entities.find((entity) => entity.id === opts.playerId)
       : undefined
-    // 3인칭 이름표는 줌과 상관없이 화면에서 190px 폭으로 읽힌다(D42). 1인칭은 가까울수록 커지는 2.1 m 그대로다.
-    const tagWidth = this.firstPerson
-      ? 2.1
-      : (190 * (this.orbitCamera.top - this.orbitCamera.bottom)) / this.height
     for (const entity of entities) {
       present.add(entity.id)
       const look = entity.look as { top?: string } | undefined
@@ -3695,9 +3808,6 @@ ${note ?? ''}`
       }
       robot ??= this.figure(entity.id, appearance, shape, color, status)
       this.nameTag(robot, entity.tag, entity.note)
-      robot.tag?.sprite.scale.multiplyScalar(
-        tagWidth / robot.tag.sprite.scale.x,
-      )
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&
@@ -3833,6 +3943,7 @@ ${note ?? ''}`
         this.dropTag(robot)
         this.robots.delete(id)
       }
+    this.placeTags()
     if (opts.car && floor.id === 1) {
       if (!this.car || this.carColor !== opts.car.color) {
         if (this.car) this.scene.remove(this.car)
