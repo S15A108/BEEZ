@@ -159,6 +159,10 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
     preview.getByRole('region', { name: '확인하지 못한 것' }),
   ).toBeVisible()
   await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  // 발행 성공과 영향 미확정을 요약 한 줄에서 함께 읽는다(S15P31A108-434).
+  await expect(
+    dialog.getByRole('heading', { name: '발행 완료 · 영향 확인 필요' }),
+  ).toBeVisible()
   const status = dialog.getByRole('region', { name: '발행 후 분석 상태' })
   await expect(status).toContainText('상태 확인 필요')
   await expect(status).toContainText('발행 전 영향 분석과는 별도의 처리 상태')

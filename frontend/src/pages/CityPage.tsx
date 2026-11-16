@@ -201,8 +201,8 @@ function City() {
                 </Suspense>
                 {/* 캔버스 SCR-04-v2-city(v495)처럼 바탕 없이 왼쪽 아래 24·16px에 둔다. */}
                 <p className="pointer-events-none absolute right-6 bottom-4 left-6 text-xs break-keep text-muted-foreground">
-                  끌거나 휠로 고리 돌리기 · 빈 부지 다음은 꾸밈 칸을 건너
-                  1번으로 · 부지를 눌러 선택
+                  끌거나 휠로 고리 돌리기 · 새 프로젝트 다음은 다시 1번 · 부지를
+                  눌러 선택
                 </p>
                 {/* 건물을 가리지 않게 제목 아래 고정 자리에 두고, 포인터는 그대로 뒤의 건물로 통과시킨다. */}
                 {mapHover && (

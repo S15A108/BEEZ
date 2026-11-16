@@ -6,6 +6,8 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { agentsApi } from '@/api/services/agents'
 import { changesApi } from '@/api/services/changes'
 import { dashboardApi } from '@/api/services/dashboard'
+import { documentsApi } from '@/api/services/documents'
+import { planningApi } from '@/api/services/planning'
 import { tasksApi } from '@/api/services/tasks'
 import type { TaskDetail } from '@/api/contracts/common'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -24,6 +26,12 @@ vi.mock('@/api/services/changes', () => ({
 }))
 vi.mock('@/api/services/tasks', () => ({
   tasksApi: { list: vi.fn() },
+}))
+vi.mock('@/api/services/documents', () => ({
+  documentsApi: { list: vi.fn(), workingCopy: vi.fn() },
+}))
+vi.mock('@/api/services/planning', () => ({
+  planningApi: { items: vi.fn() },
 }))
 const query = <T,>(data: T) => ({ data }) as UseQueryResult<T>
 const usage = (call_count: number): UsageResponse => ({
@@ -895,4 +903,112 @@ it('에이전트 요약의 현재 작업에 제목이 없으면 번호 대신 �
   const row = (await screen.findByText('김동료의 에이전트')).closest('li')!
   expect(row).toHaveTextContent('이름 없는 작업 진행 중')
   expect(row).not.toHaveTextContent('#503')
+})
+
+// 디자인 검수 F08: 시작 전에는 작업·변경 제안이 열리지 않는다. 숫자 칸과 호출 그래프 대신 준비 상태와 다음 할 일을 먼저 둔다.
+it('시작 전에는 준비 상태와 다음 할 일을 먼저 보이고 숫자 칸과 호출 그래프는 사용량 탭에 맡긴다', async () => {
+  const user = userEvent.setup()
+  const onTab = vi.fn()
+  vi.mocked(documentsApi.list).mockResolvedValue({
+    items: [],
+    has_more: false,
+  })
+  vi.mocked(planningApi.items).mockResolvedValue({
+    items: [],
+    has_more: false,
+  } as never)
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(96))}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={onTab}
+        periodName="11월"
+        started={false}
+        isLeader
+      />
+    </QueryClientProvider>,
+  )
+  const readiness = await screen.findByRole('heading', {
+    name: '프로젝트 준비',
+  })
+  expect(
+    await screen.findByRole('button', { name: '기획안 올리기' }),
+  ).toBeInTheDocument()
+  // 준비 칸이 최근 활동보다 앞이다.
+  expect(
+    readiness.compareDocumentPosition(
+      screen.getByRole('heading', { name: '최근 활동' }),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  expect(
+    screen.queryByRole('button', { name: /진행 중 작업/ }),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('날짜별 AI 호출')).not.toBeInTheDocument()
+  expect(screen.queryByText('기능별 사용')).not.toBeInTheDocument()
+  // 비용 미보고는 그대로 미보고다.
+  expect(
+    screen.getByText('11월 AI 호출 96회 · 비용 미보고'),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '사용량·비용 ›' }))
+  expect(onTab).toHaveBeenCalledWith('usage')
+})
+
+// 활동 응답에는 문서 이름이 없다. 문서 목록에서 그 버전을 찾을 때만 이름을 붙인다.
+it('문서 활동은 문서 목록에서 찾은 문서 이름을 붙이고 못 찾으면 붙이지 않는다', async () => {
+  vi.mocked(documentsApi.list).mockResolvedValue({
+    items: [
+      {
+        id: '1',
+        project_id: '10',
+        kind: 'PLAN',
+        title: '책방 예약 기획안',
+        approved_version: { id: '11' },
+      },
+    ] as never,
+    has_more: false,
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query({
+          items: [
+            {
+              id: '2',
+              type: 'DOCUMENT_APPROVED',
+              actor_type: 'HUMAN',
+              target_type: 'DOCUMENT_VERSION',
+              target_id: '11',
+              result: 'SUCCESS',
+              created_at: '2026-10-27T01:00:00Z',
+            },
+            {
+              id: '1',
+              type: 'DOCUMENT_REGISTERED',
+              actor_type: 'HUMAN',
+              target_type: 'DOCUMENT_VERSION',
+              target_id: '9',
+              result: 'SUCCESS',
+              created_at: '2026-10-27T00:00:00Z',
+            },
+          ],
+          has_more: false,
+        })}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '이팀장'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByText('문서를 승인했어요 · 책방 예약 기획안'),
+  ).toBeInTheDocument()
+  expect(screen.getByText('문서를 올렸어요')).toBeInTheDocument()
 })
