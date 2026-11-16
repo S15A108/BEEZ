@@ -354,7 +354,7 @@ function Workspace({ projectId }: { projectId: string }) {
                   if (pendingMutations) event.preventDefault()
                 }}
               >
-                <DialogHeader className="min-h-14 flex-row flex-wrap items-center gap-x-3 gap-y-2 border-b px-5 py-2.5 sm:px-8">
+                <DialogHeader className="min-h-14 flex-row flex-wrap items-center gap-x-3 gap-y-2 border-b py-2.5 pr-15 pl-5 sm:pr-18 sm:pl-8">
                   {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
                   <DialogTitle className="shrink-0 text-lg font-semibold">
                     {pane && pane !== 'settings' ? paneTitles[pane] : ''}
@@ -387,12 +387,6 @@ function Workspace({ projectId }: { projectId: string }) {
                     </kbd>
                     로 닫기
                   </span>
-                  <DialogClose asChild>
-                    <Button variant="ghost" size="icon-sm" className="shrink-0">
-                      <XIcon />
-                      <span className="sr-only">닫기</span>
-                    </Button>
-                  </DialogClose>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>
                   {/* 본문 스크롤. 안쪽 여백(p-5 sm:p-8)은 예전 창과 같다. 패널이 이 여백에 맞춰 밖으로 넓히거나
@@ -445,6 +439,18 @@ function Workspace({ projectId }: { projectId: string }) {
                     </PaneSheetHost>
                   </div>
                 </PaneHeaderSlot>
+                {/* 닫기 버튼은 본문 뒤에 두어 창을 열 때 본문 첫 입력칸(문서함 검색 등)에 포커스가 가게 하고,
+                    자리만 머리 줄 오른쪽 끝(머리 줄 오른쪽 여백)에 둔다. */}
+                <DialogClose asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="absolute top-3.5 right-5 sm:right-8"
+                  >
+                    <XIcon />
+                    <span className="sr-only">닫기</span>
+                  </Button>
+                </DialogClose>
               </DialogContent>
             </Dialog>
           </main>
