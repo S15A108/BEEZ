@@ -9,6 +9,7 @@ import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
+  Ban,
   Check,
   ChevronDown,
   ChevronRight,
@@ -374,6 +375,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   })
   const isOwner = mine(task)
   const active = !!task && !['COMPLETED', 'CANCELLED'].includes(task.status)
+  // 취소된 작업은 단계 진행 대신 끝난 상태를 먼저 보이고, 계획·검증은 취소 전 기록으로 남긴다(S15P31A108-433).
+  const cancelled = task?.status === 'CANCELLED'
   // 조회 응답과 상세의 요약이 현재 선택된 검증에 속할 때만 사용한다.
   const result =
     validationId && validation.data?.id === validationId
@@ -764,64 +767,83 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                     {active && mine(current) && (
                       <AgentTaskHandoff key={current.id} taskId={current.id} />
                     )}
-                    <ol
-                      aria-label="작업 단계"
-                      className="flex rounded-xl border px-2 py-3.5 text-[13px]"
-                    >
-                      {taskSteps.map((label, index) => (
-                        <li
-                          key={label}
-                          aria-current={index === step ? 'step' : undefined}
-                          className={cn(
-                            'relative flex flex-1 flex-col items-center gap-1 text-center font-semibold',
-                            index > step && 'font-medium text-muted-foreground',
-                          )}
-                        >
-                          {index > 0 && (
+                    {cancelled ? (
+                      // 취소 시점의 단계는 응답에 없어 단계 표시를 두지 않는다. 남은 단계에 '지금'을 붙이면 진행 중처럼 읽힌다.
+                      <div className="flex gap-2.5 rounded-xl border bg-muted/40 p-4 text-sm">
+                        <Ban className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                        <div className="grid gap-1">
+                          <strong className="font-semibold">
+                            취소된 작업이에요
+                          </strong>
+                          <p className="text-muted-foreground">
+                            끝난 작업이라 더 진행하지 않아요. 아래 계획과 검증
+                            결과는 취소 전 기록이에요.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <ol
+                        aria-label="작업 단계"
+                        className="flex rounded-xl border px-2 py-3.5 text-[13px]"
+                      >
+                        {taskSteps.map((label, index) => (
+                          <li
+                            key={label}
+                            aria-current={index === step ? 'step' : undefined}
+                            className={cn(
+                              'relative flex flex-1 flex-col items-center gap-1 text-center font-semibold',
+                              index > step &&
+                                'font-medium text-muted-foreground',
+                            )}
+                          >
+                            {index > 0 && (
+                              <span
+                                aria-hidden="true"
+                                className={cn(
+                                  'absolute top-3 right-1/2 h-0.5 w-full',
+                                  index <= step
+                                    ? 'bg-emerald-700'
+                                    : 'bg-border',
+                                )}
+                              />
+                            )}
                             <span
                               aria-hidden="true"
                               className={cn(
-                                'absolute top-3 right-1/2 h-0.5 w-full',
-                                index <= step ? 'bg-emerald-700' : 'bg-border',
+                                // 다음 단계의 연결선이 원을 가로지르지 않게 위에 둔다.
+                                'relative z-10 grid size-6 place-items-center rounded-full text-xs font-bold',
+                                index < step && 'bg-emerald-700 text-white',
+                                index === step &&
+                                  'bg-primary ring-4 ring-primary/30',
+                                index > step &&
+                                  'border-2 bg-card text-muted-foreground',
                               )}
-                            />
-                          )}
-                          <span
-                            aria-hidden="true"
-                            className={cn(
-                              // 다음 단계의 연결선이 원을 가로지르지 않게 위에 둔다.
-                              'relative z-10 grid size-6 place-items-center rounded-full text-xs font-bold',
-                              index < step && 'bg-emerald-700 text-white',
-                              index === step &&
-                                'bg-primary ring-4 ring-primary/30',
-                              index > step &&
-                                'border-2 bg-card text-muted-foreground',
-                            )}
-                          >
-                            {index < step ? (
-                              <Check className="size-3.5" strokeWidth={3} />
-                            ) : (
-                              index + 1
-                            )}
-                          </span>
-                          {label}
-                          <span
-                            className={cn(
-                              'min-h-4 text-xs font-medium',
-                              index < step
-                                ? 'text-emerald-700'
-                                : 'text-muted-foreground',
-                            )}
-                          >
-                            {index < step
-                              ? stepDoneText[index]
-                              : index === step
-                                ? '지금'
-                                : ''}
-                          </span>
-                        </li>
-                      ))}
-                    </ol>
+                            >
+                              {index < step ? (
+                                <Check className="size-3.5" strokeWidth={3} />
+                              ) : (
+                                index + 1
+                              )}
+                            </span>
+                            {label}
+                            <span
+                              className={cn(
+                                'min-h-4 text-xs font-medium',
+                                index < step
+                                  ? 'text-emerald-700'
+                                  : 'text-muted-foreground',
+                              )}
+                            >
+                              {index < step
+                                ? stepDoneText[index]
+                                : index === step
+                                  ? '지금'
+                                  : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                     {/* 주 버튼은 상태마다 하나(M5): 진행 중이면 완료 보고, 시작할 수 있으면 시작, 막혔으면 계획 수정, 그 밖에는 계획 검증. */}
                     <div
                       className={cn(
@@ -1059,7 +1081,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                     {/* 계획 요약(캔버스 PNL-05-v2-tasks): 목표 한 줄과 범위·근거·완료 기준 상자. 접근 방법은 서버 필수값이라 함께 둔다. */}
                     <p className="text-sm leading-6 whitespace-pre-wrap">
                       <strong className="mr-1.5 font-semibold">
-                        계획 r{current.current_plan_revision.revision_no}
+                        {cancelled && '취소 전 '}계획 r
+                        {current.current_plan_revision.revision_no}
                       </strong>
                       {current.current_plan_revision.plan.goal}
                     </p>
@@ -1183,24 +1206,31 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                     </div>
                   </CardContent>
                 </Card>
-                {/* 검증 결과는 통과가 아닐 때만 펼친다(11-05 결정, 캔버스 PNL-05-v2-blocked). */}
+                {/* 검증 결과는 통과가 아닐 때만 펼친다(11-05 결정, 캔버스 PNL-05-v2-blocked). 취소된 작업의 검증은 기록이라 접어 둔다. */}
                 {/* Card 테두리는 ring이라 막힘 표시도 ring 색으로 준다(캔버스 빨간 테두리). */}
                 <Card className={blocked ? 'ring-destructive/60' : ''}>
                   <details
                     key={current.id}
-                    open={!validationPassed}
+                    open={!validationPassed && !cancelled}
                     className="group/validation"
                   >
                     <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                       <CardHeader>
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                          <CardTitle>설계와 계획의 검증 결과</CardTitle>
+                          <CardTitle>
+                            {cancelled
+                              ? '취소 전 검증 기록'
+                              : '설계와 계획의 검증 결과'}
+                          </CardTitle>
                           <span className="flex items-center gap-2">
-                            <StatusPill
-                              value={
-                                result?.status ?? current.validation_status
-                              }
-                            />
+                            {/* 취소하면 서버가 검증을 STALE(TASK_CANCELLED)로 바꿔 '재검증 필요'가 되는데, 끝난 작업에 할 일처럼 읽혀 기록에서는 뺀다. */}
+                            {!cancelled && (
+                              <StatusPill
+                                value={
+                                  result?.status ?? current.validation_status
+                                }
+                              />
+                            )}
                             <ChevronDown className="size-4 text-muted-foreground transition-transform group-open/validation:rotate-180" />
                           </span>
                         </div>

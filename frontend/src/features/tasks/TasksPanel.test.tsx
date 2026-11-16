@@ -913,6 +913,48 @@ it('검증을 통과한 작업은 단계가 작업 시작에 있고 다음 할 �
   expect(screen.getByRole('button', { name: '다시 검증' })).toBeEnabled()
 })
 
+// S15P31A108-433(디자인 검수 F06): 취소된 작업은 '계획 검증 · 지금' 대신 끝난 상태를 먼저 보이고, 계획·검증은 기록으로 남긴다.
+it('취소된 작업은 첫 줄에 취소 상태를 보이고 단계의 지금 강조 없이 계획과 검증을 기록으로 보인다', async () => {
+  task = taskDetailSchema.parse({
+    ...task,
+    status: 'CANCELLED',
+    validation_status: 'STALE',
+    validation: {
+      ...task.validation!,
+      status: 'STALE',
+      stale_reason: 'TASK_CANCELLED',
+    },
+  })
+  show(false)
+  expect(await screen.findByText('취소된 작업이에요')).toBeInTheDocument()
+  expect(screen.queryByRole('list', { name: '작업 단계' })).toBeNull()
+  expect(screen.queryByText('지금')).toBeNull()
+  expect(screen.getByText('취소 전 계획 r2')).toBeInTheDocument()
+  expect(screen.getByText('승인된 응답 필드를 구현한다.')).toBeInTheDocument()
+  const record = screen.getByText('취소 전 검증 기록')
+  const card = record.closest<HTMLElement>('[data-slot="card"]')!
+  expect(within(card).queryByText('재검증 필요')).toBeNull()
+  const reason = within(card).getByText(
+    '작업이 취소되어 이 검증은 더 쓰지 않아요.',
+  )
+  expect(reason).not.toBeVisible()
+  await userEvent.click(record)
+  expect(reason).toBeVisible()
+})
+
+it('완료한 작업은 단계를 모두 지난 단계로 보이고 지금 강조가 없다', async () => {
+  task = { ...task, status: 'COMPLETED' }
+  show(false)
+  const steps = await screen.findByRole('list', { name: '작업 단계' })
+  expect(
+    within(steps)
+      .getAllByRole('listitem')
+      .filter((step) => step.hasAttribute('aria-current')),
+  ).toEqual([])
+  expect(within(steps).queryByText('지금')).toBeNull()
+  expect(screen.getByText('완료 보고를 마쳤어요')).toBeInTheDocument()
+})
+
 // PR #50 d4db914: 진행 중 작업을 넘기면 대기(재검증)가 된다고 담당자 변경 창에서 먼저 알린다.
 it('팀장이 진행 중 작업의 담당자를 바꾸려 하면 재검증 안내를 보여 준다', async () => {
   task = { ...task, status: 'IN_PROGRESS' }
