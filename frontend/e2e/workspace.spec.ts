@@ -248,6 +248,21 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
     page.getByRole('button', { name: '참여하기', exact: true }),
   ).toHaveCount(0)
   const log = page.getByRole('log', { name: '회의 대화' })
+  // 참여자는 제목 줄에 있어 입력줄에 가리지 않고, 창은 스크롤하지 않고 대화 칸만 스크롤한다(S15P31A108-438).
+  await expect(
+    log.getByText('TASK-002에서 만료 전용 안내는 뺄게요.'),
+  ).toBeVisible()
+  const people = await page.getByRole('group', { name: '참여자' }).boundingBox()
+  const input = await page
+    .getByRole('textbox', { name: /메시지/ })
+    .boundingBox()
+  expect(people!.y + people!.height).toBeLessThan(input!.y)
+  expect(
+    await log.evaluate((element) => {
+      const panel = element.closest('section')!
+      return panel.scrollHeight - panel.clientHeight
+    }),
+  ).toBeLessThanOrEqual(1)
   await page
     .getByRole('textbox', { name: /메시지/ })
     .fill('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.')

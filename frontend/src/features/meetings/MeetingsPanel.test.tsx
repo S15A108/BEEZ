@@ -828,6 +828,29 @@ it('참여자 칩은 비비를 포함해 세고 사람마다 이 회의의 작�
   expect(within(people).getByText(/^참여자 \d+$/)).toHaveTextContent('참여자 4')
 })
 
+// 화면 검수 11-16(S15P31A108-438): 참여자를 제목 줄로 올려 입력줄에 가리지 않게 하고, 넓은 화면에서는 창 대신 대화 칸만 스크롤한다.
+// jsdom은 레이아웃을 계산하지 않아 순서와 높이 클래스로 확인한다(실제 높이는 E2E 회의 시나리오에서 본다).
+it('참여자는 안건보다 앞 제목 줄에 있고, 펼친 안건은 대화 칸과 남는 높이를 나눠 안에서 스크롤한다', async () => {
+  renderPanel(true)
+  const title = await screen.findByRole('heading', {
+    name: '초대 안내 문구 검토',
+  })
+  const people = screen.getByRole('group', { name: '참여자' })
+  const agenda = screen.getByRole('region', { name: '안건' })
+  const log = await screen.findByRole('log', { name: '회의 대화' })
+  const after = (a: Element, b: Element) =>
+    !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(after(title, people)).toBe(true)
+  expect(after(people, agenda)).toBe(true)
+  expect(after(agenda, log)).toBe(true)
+  // 역할은 칩에 펼치지 않고 마우스를 올리면 보인다.
+  expect(
+    await within(people).findByTitle('이팀장 · 팀장 · TASK-001'),
+  ).toBeInTheDocument()
+  expect(agenda).toHaveClass('lg:flex-1', 'lg:max-h-max', 'lg:overflow-y-auto')
+  expect(log).toHaveClass('flex-1', 'lg:min-h-28')
+})
+
 // live 모드: dev 백엔드에 회의 API가 아직 없으면 회의 칸만 '준비 중'으로 두고 창은 그대로 연다.
 it('회의 API가 서버에 없으면 오류 대신 준비 중으로 보인다', async () => {
   vi.spyOn(meetingsApi, 'list').mockRejectedValue(
