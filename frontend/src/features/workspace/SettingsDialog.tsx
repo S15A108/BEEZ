@@ -55,14 +55,14 @@ export function SettingsDialog({
         disabled={busy && !current}
         onClick={() => go(value)}
         className={cn(
-          'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+          'flex min-h-9 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
           current && 'bg-muted font-semibold',
           value === 'remove' && 'text-destructive',
         )}
       >
         {label}
         {extra && (
-          <span className="text-[11px] font-semibold text-muted-foreground">
+          <span className="text-sub font-medium text-muted-foreground">
             {extra}
           </span>
         )}
@@ -85,7 +85,7 @@ export function SettingsDialog({
           {busy && (
             <p
               role="status"
-              className="mx-3 rounded-lg bg-primary/10 px-3 py-2 text-xs leading-5 text-[#6e5200]"
+              className="mx-3 rounded-lg bg-muted px-3 py-2 text-sub"
             >
               처리 중이에요. 끝나면 다른 메뉴로 옮길 수 있어요.
             </p>
@@ -96,10 +96,10 @@ export function SettingsDialog({
               to="/account"
               aria-disabled={busy || undefined}
               onClick={(event) => busy && event.preventDefault()}
-              className="flex h-9 items-center justify-between rounded-lg px-3 text-sm font-medium hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              className="flex min-h-9 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
               회원 설정
-              <span className="text-[11px] text-muted-foreground">↗</span>
+              <span className="text-sub text-muted-foreground">↗</span>
             </Link>
             {item('team', '팀 관리')}
             {item(

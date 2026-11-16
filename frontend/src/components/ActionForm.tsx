@@ -207,7 +207,7 @@ export function ActionForm({
                   )}
                 </Label>
                 {field.counter && field.max && (
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-caption text-muted-foreground">
                     {(watched[field.name] ?? '').length} / {field.max}
                   </span>
                 )}
@@ -246,7 +246,7 @@ export function ActionForm({
                     <label
                       key={option.value}
                       className={cn(
-                        'cursor-pointer rounded-full border px-3 py-1 text-[13px] has-focus-visible:ring-2 has-focus-visible:ring-ring',
+                        'cursor-pointer rounded-full border px-3 py-1 text-sub has-focus-visible:ring-2 has-focus-visible:ring-ring',
                         watched[field.name] === option.value
                           ? 'border-foreground font-semibold'
                           : 'border-border text-muted-foreground hover:bg-muted/50',
@@ -346,12 +346,12 @@ export function ActionForm({
                 />
               )}
               {errors[field.name] ? (
-                <p role="alert" className="text-xs text-destructive">
+                <p role="alert" className="text-sub text-destructive">
                   {String(errors[field.name]?.message ?? '')}
                 </p>
               ) : (
                 field.hint && (
-                  <p className="text-xs text-muted-foreground">{field.hint}</p>
+                  <p className="text-sub text-muted-foreground">{field.hint}</p>
                 )
               )}
             </div>

@@ -39,8 +39,8 @@ export function InboxPanel({ projectId }: { projectId: string }) {
   }
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-xl font-bold">알림함</h3>
+      {/* 제목 '알림함'은 창 머리에 있어 여기서 다시 쓰지 않는다(D48). */}
+      <div className="flex justify-end">
         <Button
           variant="outline"
           aria-pressed={unreadOnly}
@@ -54,43 +54,44 @@ export function InboxPanel({ projectId }: { projectId: string }) {
           const items = data.pages.flatMap((page) => page.items)
           return (
             <>
-              <div className="grid gap-3">
-                {items.map((item) => (
-                  <article
-                    key={item.id}
-                    className={`flex items-start gap-4 rounded-xl border p-4 ${item.read_at ? '' : 'bg-primary/5'}`}
-                  >
-                    <span
-                      className={`mt-2 size-2 shrink-0 rounded-full ${item.read_at ? 'bg-muted' : 'bg-primary'}`}
-                    />
-                    <div className="flex-1">
-                      <button
-                        type="button"
-                        className="text-left text-sm font-semibold hover:underline"
-                        onClick={() => open(item)}
-                      >
-                        {item.title}
-                      </button>
-                      <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                        {item.body}
-                      </p>
-                      <time className="mt-2 block text-xs text-muted-foreground">
-                        {formatDate(item.created_at)}
-                      </time>
-                    </div>
-                    {!item.read_at && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={read.isPending}
-                        onClick={() => read.mutate([item.id])}
-                      >
-                        읽음
-                      </Button>
-                    )}
-                  </article>
-                ))}
-              </div>
+              {/* 알림은 줄로 나눈 목록이다. 안 읽은 알림은 점 하나와 굵은 제목으로만 알린다(D48). */}
+              {items.length > 0 && (
+                <ul className="divide-y border-y">
+                  {items.map((item) => (
+                    <li key={item.id} className="flex items-start gap-4 py-4">
+                      <span
+                        aria-hidden="true"
+                        className={`mt-2 size-2 shrink-0 rounded-full ${item.read_at ? '' : 'bg-foreground'}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          className={`text-left text-sm hover:underline ${item.read_at ? 'font-medium' : 'font-semibold'}`}
+                          onClick={() => open(item)}
+                        >
+                          {item.title}
+                        </button>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {item.body}
+                        </p>
+                        <time className="mt-1 block text-caption text-muted-foreground">
+                          {formatDate(item.created_at)}
+                        </time>
+                      </div>
+                      {!item.read_at && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={read.isPending}
+                          onClick={() => read.mutate([item.id])}
+                        >
+                          읽음
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {!items.length && (
                 <EmptyState>새 소식을 모두 확인했어요.</EmptyState>
               )}

@@ -63,7 +63,7 @@ export function InboxPopover({ projectId }: { projectId: string }) {
         >
           <Bell />
           {unread.length > 0 && (
-            <span className="absolute -top-1 -right-1 grid h-4.5 min-w-4.5 place-items-center rounded-full bg-destructive px-1 text-[11px] font-bold text-white">
+            <span className="absolute -top-1 -right-1 grid min-h-4.5 min-w-4.5 place-items-center rounded-full bg-destructive px-1 text-caption leading-none font-bold text-white">
               {unreadCount}
             </span>
           )}
@@ -82,7 +82,7 @@ export function InboxPopover({ projectId }: { projectId: string }) {
             모두 읽음
           </Button>
         </div>
-        <div className="flex gap-1 px-4 pt-3 text-xs" role="group">
+        <div className="flex gap-1 px-4 pt-3 text-sub" role="group">
           {[
             [false, '전체'],
             [true, `읽지 않음 ${unreadCount}`.trim()],
@@ -130,21 +130,25 @@ export function InboxPopover({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 onClick={() => go(item)}
-                className={cn(
-                  'flex w-full gap-3 rounded-lg p-3 text-left hover:bg-muted',
-                  !item.read_at && 'bg-primary/5',
-                )}
+                className="flex w-full gap-3 rounded-lg p-3 text-left hover:bg-muted"
               >
                 <span
                   aria-hidden="true"
                   className={cn(
                     'mt-1.5 size-2 shrink-0 rounded-full',
-                    item.read_at ? 'bg-muted' : 'bg-primary',
+                    item.read_at ? 'bg-transparent' : 'bg-foreground',
                   )}
                 />
                 <span className="grid gap-1">
-                  <strong className="text-sm font-medium">{item.title}</strong>
-                  <span className="text-xs text-muted-foreground">
+                  <strong
+                    className={cn(
+                      'text-sm',
+                      item.read_at ? 'font-normal' : 'font-semibold',
+                    )}
+                  >
+                    {item.title}
+                  </strong>
+                  <span className="text-caption text-muted-foreground">
                     {targetLabel[item.target_type]} ·{' '}
                     {item.read_at ? '읽음' : formatDate(item.created_at)}
                   </span>

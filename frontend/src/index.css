@@ -5,6 +5,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 글자 크기 단계(D48). 본문 text-body 15px, 설명·보조 text-sub 13px, 날짜 같은 메타·캡션 text-caption 12px,
+   단축키 표시 text-kbd 11px. 버튼·입력·목록 제목은 text-sm(14px) 그대로 쓴다. 11px는 키 표시에만 쓴다.
+   새 이름은 lib/utils.ts의 cn()에도 등록해 색 클래스(text-muted-foreground 등)와 함께 써도 지워지지 않게 한다. */
+@theme {
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.6;
+  --text-sub: 0.8125rem;
+  --text-sub--line-height: 1.5;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-kbd: 0.6875rem;
+  --text-kbd--line-height: 1;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;

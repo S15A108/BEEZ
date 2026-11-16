@@ -200,7 +200,7 @@ function City() {
                   />
                 </Suspense>
                 {/* 캔버스 SCR-04-v2-city(v495)처럼 바탕 없이 왼쪽 아래 24·16px에 둔다. */}
-                <p className="pointer-events-none absolute right-6 bottom-4 left-6 text-xs break-keep text-muted-foreground">
+                <p className="pointer-events-none absolute right-6 bottom-4 left-6 text-sub break-keep text-muted-foreground">
                   끌거나 휠로 고리 돌리기 · 빈 부지 다음은 꾸밈 칸을 건너
                   1번으로 · 부지를 눌러 선택
                 </p>
@@ -231,14 +231,14 @@ function City() {
                       type="search"
                       aria-label="프로젝트 검색"
                       placeholder="프로젝트 이름 검색"
-                      className="w-[220px] max-w-full pl-8 text-[12.5px] md:text-[12.5px]"
+                      className="w-[220px] max-w-full pl-8 text-sub md:text-sub"
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
                     />
                   </div>
                   <NativeSelect
                     aria-label="정렬"
-                    className="[&_select]:text-[12.5px]"
+                    className="[&_select]:text-sub"
                     value={sort}
                     onChange={(event) =>
                       setSort(event.target.value as typeof sort)
@@ -295,7 +295,7 @@ function City() {
                         <strong className="truncate text-base font-bold">
                           {project.name}
                         </strong>
-                        <span className="line-clamp-2 text-[13px] leading-[19px] wrap-anywhere break-keep text-[#57534e]">
+                        <span className="line-clamp-2 text-sub leading-[19px] wrap-anywhere break-keep text-[#57534e]">
                           {project.description || NO_DESCRIPTION}
                         </span>
                       </span>
@@ -341,7 +341,7 @@ function City() {
                       : '프로젝트 만들기'}
                   </span>
                   {nextLot !== undefined && (
-                    <span className="text-xs leading-4">
+                    <span className="text-sub">
                       빈 부지 {nextLot + 1}번 · 만들면 고리의 다음 칸이 빈
                       부지가 돼요
                     </span>
@@ -398,7 +398,7 @@ function City() {
                 },
               ]}
               footer={
-                <p className="rounded-[10px] bg-[#fbfaf6] px-3 py-2.5 text-[13px] leading-5 text-[#57534e]">
+                <p className="rounded-[10px] bg-[#fbfaf6] px-3 py-2.5 text-sub text-[#57534e]">
                   만든 뒤 문서 초안 4종(기획안 · ERD · 요구사항 명세서 · API
                   명세서)을 올리고 팀장이 모두 승인하면 '프로젝트 시작'으로
                   시작해요.

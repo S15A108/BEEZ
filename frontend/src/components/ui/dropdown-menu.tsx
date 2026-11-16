@@ -2,7 +2,7 @@
 
 // shadcn dropdown-menu의 필요한 부분만. `npx shadcn add dropdown-menu`가 막혀 있어 radix-ui로 직접 작성했다.
 import * as React from 'react'
-import { cn } from 'cn'
+import { cn } from '@/lib/utils'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 
 function DropdownMenu({

@@ -109,7 +109,7 @@ export default function AuthPage() {
           {notice && (
             <p
               role="status"
-              className="mt-6 rounded-[10px] bg-primary/10 px-3 py-2.5 text-[13px]"
+              className="mt-6 rounded-[10px] bg-muted px-3 py-2.5 text-sub"
             >
               {notice}
             </p>
@@ -208,8 +208,8 @@ export default function AuthPage() {
             role={failure ? 'alert' : 'status'}
             className={
               failure
-                ? 'mt-6 rounded-[10px] bg-[#fdecec] px-3 py-2.5 text-[13px] text-[#a3141b]'
-                : 'mt-6 rounded-[10px] bg-primary/10 px-3 py-2.5 text-[13px]'
+                ? 'mt-6 rounded-[10px] bg-[#fdecec] px-3 py-2.5 text-sub text-[#a3141b]'
+                : 'mt-6 rounded-[10px] bg-muted px-3 py-2.5 text-sub'
             }
           >
             {failure || notice}

@@ -8,13 +8,13 @@ import { cn } from '@/lib/utils'
 // 앱에서는 해요체로 바꾸고 내부 메모(요구사항·티켓 번호, 변경 이력)와 dev 서버 주소를 뺐다(docs/decisions.md D43).
 
 const Code = ({ children }: { children: ReactNode }) => (
-  <code className="rounded-[5px] bg-muted px-1.5 py-px font-mono text-[13px]">
+  <code className="rounded-[5px] bg-muted px-1.5 py-px font-mono text-sub">
     {children}
   </code>
 )
 
 const Block = ({ children }: { children: string }) => (
-  <pre className="rounded-[10px] bg-foreground px-4 py-3 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap text-[#f5f1e3] select-text">
+  <pre className="rounded-[10px] bg-foreground px-4 py-3 font-mono text-sub leading-[1.6] break-all whitespace-pre-wrap text-[#f5f1e3] select-text">
     {children}
   </pre>
 )

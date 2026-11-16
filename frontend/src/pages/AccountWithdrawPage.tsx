@@ -67,7 +67,7 @@ function AccountWithdraw() {
                   탈퇴하면 기존 프로젝트는 이렇게 돼요
                 </h3>
                 {/* 서버(PR #118·#182) 처리: 팀원 프로젝트에서는 빠지며 맡은 열린 작업의 담당자를 비우고, 혼자 쓰는 프로젝트는 지우며, 남긴 기록은 '탈퇴한 사용자'로 보인다. */}
-                <ul className="mt-2 grid gap-1 text-[13px] leading-5">
+                <ul className="mt-2 grid gap-1 text-sub">
                   {[
                     '팀원으로 참여한 프로젝트에서는 자동으로 빠져요.',
                     '그 프로젝트에서 맡은 열린 작업은 담당자가 비워져요.',
@@ -96,27 +96,27 @@ function AccountWithdraw() {
                     <TriangleAlert aria-hidden="true" className="size-4" />이
                     프로젝트 때문에 지금은 탈퇴할 수 없어요
                   </h3>
-                  <p className="mt-1.5 text-[13px] leading-5 text-[#57534e]">
+                  <p className="mt-1.5 text-sub text-[#57534e]">
                     팀원이 있는 프로젝트의 팀장이에요. 팀장을 위임하거나
                     프로젝트를 삭제하면 탈퇴할 수 있어요.
                   </p>
-                  <ul className="mt-3 grid gap-2">
+                  <ul className="mt-3 divide-y divide-destructive/15 border-t border-destructive/15">
                     {blockers.map((project) => (
                       <li
                         key={project.project_id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] bg-card px-3 py-2.5 text-sm ring-1 ring-border"
+                        className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-sm"
                       >
                         <span>
                           <strong className="font-semibold">
                             {project.name}
                           </strong>
                           {/* member_count는 본인을 뺀 활성 팀원 수다. */}
-                          <span className="block text-xs text-muted-foreground">
+                          <span className="block text-caption text-muted-foreground">
                             팀장 · 팀원 {project.member_count}명
                           </span>
                         </span>
                         {/* 팀장 위임(MEM-A08) 또는 프로젝트 삭제(PRJ-A05, 팀원이 있어도 지울 수 있다). 삭제는 팀장의 나가기 창에 있다. */}
-                        <span className="flex shrink-0 items-center gap-3 text-[13px] font-semibold [&>a]:underline [&>a]:underline-offset-3">
+                        <span className="flex shrink-0 items-center gap-3 text-sub font-semibold [&>a]:underline [&>a]:underline-offset-3">
                           <Link
                             to={`/projects/${project.project_id}?settings=team`}
                           >
@@ -186,7 +186,7 @@ function AccountWithdraw() {
                   }
                 />
                 {blockers.length > 0 && (
-                  <p className="mt-4 text-right text-xs text-muted-foreground">
+                  <p className="mt-4 text-right text-sub text-muted-foreground">
                     위 프로젝트를 정리하면 버튼이 켜져요.
                   </p>
                 )}

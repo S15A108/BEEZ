@@ -49,11 +49,11 @@ export function AccountLayout({
               <strong className="text-lg font-bold">
                 {session.data?.name}
               </strong>
-              <span className="text-[13px] text-muted-foreground">
+              <span className="text-sub text-muted-foreground">
                 {session.data?.email}
               </span>
             </div>
-            <span className="inline-flex h-6.5 items-center gap-1.5 rounded-full bg-muted px-2.5 text-[12.5px] font-semibold">
+            <span className="inline-flex min-h-6.5 items-center gap-1.5 rounded-full bg-muted px-2.5 text-sub font-semibold">
               <span
                 aria-hidden="true"
                 className="size-2.25 rounded-full"
@@ -62,7 +62,7 @@ export function AccountLayout({
               {picked.label} · 표시 색 {picked.colorName}
             </span>
             {session.data && (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-caption text-muted-foreground">
                 가입일 {formatDay(session.data.created_at)}
               </span>
             )}
