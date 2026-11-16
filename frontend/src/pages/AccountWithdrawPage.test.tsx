@@ -50,6 +50,14 @@ function renderPage() {
   )
 }
 
+// 막힌 동안에는 쓸 수 없는 비밀번호 칸·확인 체크·탈퇴 버튼을 보이지 않는다(S15P31A108-448).
+function expectNoForm() {
+  expect(screen.queryByLabelText('비밀번호 확인')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '회원 탈퇴' }),
+  ).not.toBeInTheDocument()
+}
+
 async function withdraw(password: string) {
   const user = userEvent.setup()
   await user.type(await screen.findByLabelText('비밀번호 확인'), password)
@@ -80,7 +88,7 @@ it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝
   expect(blocked).toHaveTextContent(
     '팀장을 위임하거나 프로젝트를 삭제하면 탈퇴할 수 있어요.',
   )
-  expect(screen.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
+  expectNoForm()
   // 팀원 목록으로 세지 않고 ACC-A13 결과를 쓴다.
   expect(memberLists).not.toHaveBeenCalled()
 })
@@ -96,7 +104,7 @@ it('탈퇴 비밀번호가 틀리면 이메일 문구 없이 비밀번호를 확
   expect((await authApi.me()).email).toBe(MEMBER_EMAIL)
 })
 
-it('화면을 연 뒤 팀 프로젝트의 팀장이 되어 409로 막히면 서버가 준 프로젝트를 보여 주고 버튼을 끈다', async () => {
+it('화면을 연 뒤 팀 프로젝트의 팀장이 되어 409로 막히면 서버가 준 프로젝트를 보여 주고 확인 폼을 거둔다', async () => {
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
   vi.spyOn(authApi, 'withdrawalCheck').mockResolvedValueOnce({
     can_withdraw: true,
@@ -107,10 +115,10 @@ it('화면을 연 뒤 팀 프로젝트의 팀장이 되어 409로 막히면 서�
 
   const blocked = await screen.findByRole('region', { name: BLOCKED_TITLE })
   expect(within(blocked).getAllByRole('listitem')).toHaveLength(2)
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    '팀장을 위임하거나 프로젝트를 삭제해 주세요.',
+  expect(blocked).toHaveTextContent(
+    '팀장을 위임하거나 프로젝트를 삭제하면 탈퇴할 수 있어요.',
   )
-  expect(screen.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
+  expectNoForm()
 })
 
 it('화면을 연 뒤 혼자 쓰는 프로젝트를 새로 만들고 409로 막히면 탈퇴 가능 여부를 다시 읽어 함께 삭제될 프로젝트에 넣는다', async () => {
@@ -130,9 +138,7 @@ it('화면을 연 뒤 혼자 쓰는 프로젝트를 새로 만들고 409로 막�
       name: '탈퇴하면 기존 프로젝트는 이렇게 돼요',
     }),
   ).toHaveTextContent('혼자 쓰는 프로젝트(혼자 만든 메모장)는 함께 삭제돼요.')
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    '팀장이라 탈퇴할 수 없어요',
-  )
+  expectNoForm()
 })
 
 it('탈퇴하면 첫 화면인 로그인으로 간다', async () => {
