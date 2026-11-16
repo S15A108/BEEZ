@@ -45,7 +45,7 @@ export function Hotbar({
   const openPane = useWorkspaceStore((state) => state.openPane)
   const sheetOpen = useWorkspaceStore((state) => state.sheets > 0)
   // 숫자 키 1~6으로 칸을 연다. 업무 창이 열려 있으면 그 칸으로 바꾸고, 열린 창의 번호를 다시 누르면 닫는다
-  // (창 머리 'N 또는 Esc로 닫기'). 입력칸에 쓰는 중이거나 하위 화면이 열려 있으면 무시한다(D46). 설정 창은 단축 바를 덮으므로 무시한다.
+  // (단축 바 칸을 다시 누르는 것과 같다). 입력칸에 쓰는 중이거나 하위 화면이 열려 있으면 무시한다(D46). 설정 창은 단축 바를 덮으므로 무시한다.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null

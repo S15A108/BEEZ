@@ -61,15 +61,6 @@ import type { WorkspacePane } from '@/stores/workspaceStore'
 import NotFoundPage from './NotFoundPage'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
-// 단축 바 번호(창 머리 'N 또는 Esc로 닫기')
-const paneKeys: Partial<Record<WorkspacePane, number>> = {
-  documents: 1,
-  changes: 2,
-  meetings: 3,
-  tasks: 4,
-  relations: 5,
-  dashboard: 6,
-}
 const paneTitles: Record<Exclude<WorkspacePane, 'settings'>, string> = {
   documents: '공용 문서함',
   planning: '기획 분석',
@@ -388,18 +379,14 @@ function Workspace({ projectId }: { projectId: string }) {
                     ref={setHeaderSlot}
                     className="flex min-w-0 flex-1 items-center justify-end gap-2 empty:hidden"
                   />
-                  {pane && paneKeys[pane] && (
-                    <span className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted-foreground">
-                      <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
-                        {paneKeys[pane]}
-                      </kbd>{' '}
-                      또는{' '}
-                      <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
-                        Esc
-                      </kbd>
-                      로 닫기
-                    </span>
-                  )}
+                  {/* 단축 바 번호는 창 안에서 뜻이 안 보여 빼고 Esc만 안내한다(사용자 결정 11-16). 열린 창의 번호 키를
+                      다시 누르면 닫히는 동작은 단축 바 칸을 다시 누르는 것과 같아 그대로 둔다. */}
+                  <span className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted-foreground">
+                    <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
+                      Esc
+                    </kbd>
+                    로 닫기
+                  </span>
                   <DialogClose asChild>
                     <Button variant="ghost" size="icon-sm" className="shrink-0">
                       <XIcon />
