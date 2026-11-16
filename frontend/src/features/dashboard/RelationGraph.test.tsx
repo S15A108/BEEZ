@@ -99,12 +99,15 @@ it('검증을 포함해 상자를 누르면 그 종류와 번호로 화면을 �
   expect(onOpen).toHaveBeenLastCalledWith('DESIGN_ITEM', '301')
 })
 
-it('키보드로도 전체 목록의 버튼에서 같은 화면을 연다', async () => {
-  const user = userEvent.setup()
-  const { onOpen } = graph()
-  await user.click(screen.getByText('전체 항목과 관계 읽기'))
-  await user.click(screen.getByRole('button', { name: '계획 검증 PASS' }))
-  expect(onOpen).toHaveBeenCalledWith('VALIDATION', '12')
+// S15P31A108-449: 항목이 없는 종류는 빈 열로 두지 않는다.
+it('항목이 없는 종류는 열을 그리지 않는다', () => {
+  const { svg } = graph({
+    nodes: data.nodes.filter((node) => node.type !== 'VALIDATION'),
+    edges: data.edges.filter((edge) => edge.to_type !== 'VALIDATION'),
+  })
+  expect(within(svg).queryByText('검증')).toBeNull()
+  // 열 제목, 상자 안 종류
+  expect(within(svg).getAllByText('변경 제안')).toHaveLength(2)
 })
 
 it('모르는 종류와 관계가 와도 기타 칸에 그리고 누를 수 없게 둔다', async () => {
@@ -192,19 +195,9 @@ it('연결된 노드가 그래프 밖에 있어도 깨지지 않고 그릴 수 �
   expect(svg).toHaveAccessibleName(expect.stringContaining('이어진 관계 없음'))
 })
 
-// PR #280 리뷰: 화면에 DB 번호(#501)를 보이지 않는다. 관계 목록도 양 끝을 항목 이름으로 읽는다.
-it('그래프와 전체 목록에 DB 번호 대신 항목 이름을 보인다', async () => {
-  graph()
-  await userEvent.click(screen.getByText('전체 항목과 관계 읽기'))
-  expect(
-    screen.getByText(
-      '작업 TASK-001 목록 화면 → 설계 항목 REQ-001 · 구현 · 확인됨',
-    ),
-  ).toBeInTheDocument()
-  expect(
-    screen.getByText(
-      '변경 제안 빈 화면 안내 → 설계 항목 REQ-001 · 고침 · 후보',
-    ),
-  ).toBeInTheDocument()
-  expect(screen.queryByText(/#(501|301|12|71)\b/)).not.toBeInTheDocument()
+// PR #280 리뷰: 화면에 DB 번호(#501)를 보이지 않는다.
+it('그래프에 DB 번호 대신 항목 이름을 보인다', () => {
+  const { svg } = graph()
+  expect(within(svg).getByText('TASK-001 목록 화면')).toBeInTheDocument()
+  expect(screen.queryByText(/#(501|301|12|71)/)).not.toBeInTheDocument()
 })

@@ -96,6 +96,7 @@ it('그래프의 검증 상자를 누르면 고른 작업의 작업 현황을 �
     </QueryClientProvider>,
   )
   await user.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  await user.click(await screen.findByRole('button', { name: '그래프' }))
   const svg = await screen.findByRole('img', { name: /관계 그래프/ })
   await user.click(within(svg).getByText('계획 검증 PASS'))
   expect(useWorkspaceStore.getState()).toMatchObject({
@@ -193,6 +194,43 @@ it('이 작업에서 나온 제안(PROPOSED_FROM)만 있으면 영향 경고를 
   expect(
     screen.queryByText('검토 중인 변경 제안이 이 작업의 근거 설계를 고쳐요'),
   ).not.toBeInTheDocument()
+})
+
+// S15P31A108-449: 펼침 목록을 빼도 키보드로 제안까지 간다. 지금 작업으로 오는 관계는 반대쪽 끝을 연다.
+it('목록이 기본 보기이고, 이 작업에서 나온 제안의 제안 보기는 그 제안을 연다', async () => {
+  const { items } = await tasksApi.list('101', { limit: 100 })
+  const taskId = items.find((entry) => entry.key === 'TASK-001')!.id
+  vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>
+    query?.design_item_id
+      ? { nodes: [], edges: [] }
+      : {
+          nodes: taskGraph.nodes.map((node) =>
+            node.id === '501' ? { ...node, id: taskId } : node,
+          ),
+          edges: taskGraph.edges.map((edge) =>
+            edge.relation === 'PROPOSED_FROM'
+              ? { ...edge, to_id: taskId }
+              : { ...edge, from_id: taskId },
+          ),
+        },
+  )
+  const user = userEvent.setup()
+  renderView()
+  await user.click(await screen.findByRole('button', { name: /TASK-001/ }))
+  const list = await screen.findByRole('region', { name: '관계 목록' })
+  expect(screen.getByRole('button', { name: '목록' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(screen.queryByRole('img', { name: /관계 그래프/ })).toBeNull()
+  await user.click(within(list).getByRole('button', { name: '제안 보기 ›' }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'changes',
+    focusId: '71',
+  })
+  await user.click(screen.getByRole('button', { name: '그래프' }))
+  expect(screen.getByRole('img', { name: /관계 그래프/ })).toBeVisible()
+  expect(screen.queryByRole('region', { name: '관계 목록' })).toBeNull()
 })
 
 it('진행 중 제안이 참조 설계 항목을 바꾸면 항목 기준 관계로 영향 경고를 띄운다', async () => {
