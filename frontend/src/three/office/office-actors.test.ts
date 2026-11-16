@@ -266,12 +266,12 @@ test('팀원은 자기 자리 옆에서 출발하고 에이전트는 상태별 �
   expect(
     Math.hypot(mine.x - at('agent:21').x, mine.y - at('agent:21').y),
   ).toBeLessThan(32)
-  // 작업 중·검증 중은 자리에 묶인 상태로 걷고, 대기와 연결됨(할 일 없음)은 그 자리에서 출발해 돌아다닌다
+  // 작업 중·검증 중은 자리에 묶인 상태로 걷고, 대기와 연결됨(할 일 없음)은 그 자리에서 출발해 돌아다니거나 쉰다
   for (const id of ['agent:26', 'agent:23'])
     expect(isOfficeWorkingStatus(at(id).status)).toBe(true)
   for (const id of ['agent:22', 'agent:21']) {
     expect(isOfficeWorkingStatus(at(id).status)).toBe(false)
-    expect(at(id).idle).toBe('stroll')
+    expect(at(id).idle).toBe('lounge')
   }
 })
 

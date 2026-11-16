@@ -36,8 +36,11 @@ export interface OfficeLifeActor extends Point {
   stationary?: boolean
   /** 집 자리(x, y)에 앉지 않고 서 있는다(D37: 할 일 없는 에이전트가 주인 자리 뒤에 선다) */
   standing?: boolean
-  /** 할 일이 없을 때 다니는 곳(D37). 'stroll'은 가구를 쓰지 않고 빈 바닥만 걷다 멈춘다. 없으면 소파·창가·음료대를 오간다. */
-  idle?: 'stroll'
+  /**
+   * 할 일이 없을 때 다니는 곳(D37). 'stroll'은 가구를 쓰지 않고 빈 바닥만 걷다 멈추고(팀원), 'lounge'는 그렇게 걷기와
+   * 소파·라운지 리클라이너·창가에서 쉬기를 번갈아 한다(대기 중인 에이전트). 없으면 소파·창가·음료대를 오간다.
+   */
+  idle?: 'stroll' | 'lounge'
   moving: boolean
   heading?: number
   seated?: boolean
@@ -389,6 +392,74 @@ export class OfficeLifeSimulation {
       : undefined
   }
 
+  /** 돌아다니다 멈출 다음 자리 몇 곳. 다른 사람이 지금 선 곳, 가기로 한 곳, 제자리 배우와 나를 피한다. */
+  private strolls(resident: Resident, actor: OfficeLifeActor): Destination[] {
+    const avoid = [
+      ...[...this.residents.entries()]
+        .filter(([id]) => id !== actor.id)
+        .flatMap(([, state]) =>
+          state.target ? [state, state.target.landing] : [state],
+        ),
+      ...this.fixed,
+    ]
+    // 길찾기는 몇 곳만 해 본다.
+    return strollCandidates(
+      this.strollSpots,
+      resident,
+      hash(actor.id) + resident.visits,
+      avoid,
+    )
+      .slice(0, 6)
+      .map((spot) => ({
+        id: `stroll/${spot.x}/${spot.y}`,
+        activity: 'strolling',
+        landing: spot,
+        pose: spot,
+        dir: dirOf(spot.x - resident.x, spot.y - resident.y),
+        seated: false,
+      }))
+  }
+
+  /** 쉬러 갈 소파·라운지 리클라이너·창가·음료대. 다른 사람이 가기로 했거나 움직이지 않는 사람·내 곁인 곳은 뺀다. */
+  private rests(
+    resident: Resident,
+    actor: OfficeLifeActor,
+    completed: boolean,
+  ): Destination[] {
+    const idle: OfficeLifeDestination[] = ['resting', 'window', 'coffee']
+    const first = completed
+      ? 0
+      : (hash(actor.id) + resident.visits) % idle.length
+    const preferred = idle.slice(first).concat(idle.slice(0, first))
+    const others = [...this.residents.entries()]
+      .filter(([id]) => id !== actor.id)
+      .map(([, state]) => state.target)
+      .filter((target) => !!target)
+    const reserved = new Set(others.map((target) => target.id))
+    // 바로 옆 소파 자리처럼 다른 사람 자리와 너무 붙은 곳도 예약된 것으로 본다. 충전 중인 연결 전 에이전트의
+    // 리클라이너도 쓰지 않는다.
+    const taken = [...others.map((target) => target.pose), ...this.fixed]
+    const crowded = (target: Destination) =>
+      taken.some(
+        (other) =>
+          Math.hypot(other.x - target.pose.x, other.y - target.pose.y) <
+          PERSONAL_SPACE,
+      )
+    return this.destinations
+      .filter(
+        (target) =>
+          !reserved.has(target.id) &&
+          !crowded(target) &&
+          target.id !== resident.target?.id,
+      )
+      .sort(
+        (a, b) =>
+          preferred.indexOf(a.activity) - preferred.indexOf(b.activity) ||
+          Math.hypot(a.landing.x - resident.x, a.landing.y - resident.y) -
+            Math.hypot(b.landing.x - resident.x, b.landing.y - resident.y),
+      )
+  }
+
   private choose(
     resident: Resident,
     actor: OfficeLifeActor,
@@ -411,64 +482,15 @@ export class OfficeLifeSimulation {
             },
           ]
         : []
-    else if (actor.idle === 'stroll') {
-      // 다른 사람이 지금 선 곳, 가기로 한 곳, 제자리 배우와 나를 피한다. 길찾기는 몇 곳만 해 본다.
-      const avoid = [
-        ...[...this.residents.entries()]
-          .filter(([id]) => id !== actor.id)
-          .flatMap(([, state]) =>
-            state.target ? [state, state.target.landing] : [state],
-          ),
-        ...this.fixed,
-      ]
-      choices = strollCandidates(
-        this.strollSpots,
-        resident,
-        hash(actor.id) + resident.visits,
-        avoid,
-      )
-        .slice(0, 6)
-        .map((spot) => ({
-          id: `stroll/${spot.x}/${spot.y}`,
-          activity: 'strolling',
-          landing: spot,
-          pose: spot,
-          dir: dirOf(spot.x - resident.x, spot.y - resident.y),
-          seated: false,
-        }))
-    } else {
-      const idle: OfficeLifeDestination[] = ['resting', 'window', 'coffee']
-      const first = completed
-        ? 0
-        : (hash(actor.id) + resident.visits) % idle.length
-      const preferred = idle.slice(first).concat(idle.slice(0, first))
-      const others = [...this.residents.entries()]
-        .filter(([id]) => id !== actor.id)
-        .map(([, state]) => state.target)
-        .filter((target) => !!target)
-      const reserved = new Set(others.map((target) => target.id))
-      // 바로 옆 소파 자리처럼 다른 사람 자리와 너무 붙은 곳도 예약된 것으로 본다.
-      const crowded = (target: Destination) =>
-        others.some(
-          (other) =>
-            Math.hypot(
-              other.pose.x - target.pose.x,
-              other.pose.y - target.pose.y,
-            ) < PERSONAL_SPACE,
-        )
-      choices = this.destinations
-        .filter(
-          (target) =>
-            !reserved.has(target.id) &&
-            !crowded(target) &&
-            target.id !== resident.target?.id,
-        )
-        .sort(
-          (a, b) =>
-            preferred.indexOf(a.activity) - preferred.indexOf(b.activity) ||
-            Math.hypot(a.landing.x - resident.x, a.landing.y - resident.y) -
-              Math.hypot(b.landing.x - resident.x, b.landing.y - resident.y),
-        )
+    else {
+      const strolls = actor.idle ? this.strolls(resident, actor) : []
+      const rests =
+        actor.idle === 'stroll' ? [] : this.rests(resident, actor, completed)
+      // 'lounge'는 돌아다니기와 쉬기를 번갈아 하고, 일을 막 끝냈으면 먼저 쉰다. 한쪽에 갈 곳이 없으면 다른 쪽으로 간다.
+      choices =
+        actor.idle === 'lounge' && !completed && resident.visits % 2 === 0
+          ? [...strolls, ...rests]
+          : [...rests, ...strolls]
     }
     // A seated resident first steps off the cushion, then follows an ordinary collision-safe route.
     const leavingSeat =
@@ -766,7 +788,7 @@ export class OfficeLifeSimulation {
         }
         this.residents.set(actor.id, resident)
         // 돌아다니는 사람은 처음 자리에서 1~4초 서 있다가 걷기 시작한다. 사무실을 열자마자 모두 함께 걷지 않는다.
-        if (!working && actor.idle === 'stroll') {
+        if (!working && actor.idle) {
           resident.activity = 'strolling'
           resident.dwell = 1 + (hash(actor.id) % 4)
         } else this.choose(resident, actor, false)
@@ -806,6 +828,24 @@ export class OfficeLifeSimulation {
           )
         }
       }
+      // 쉬던 리클라이너가 연결이 끊긴 에이전트의 충전 자리가 되면(움직이지 않는 사람이 앉으면) 일어나 다른 곳으로
+      // 간다. 쉴 시간이 3.5초 넘게 남았을 때만 본다. 갈 곳을 못 찾으면 3초 뒤 다시 찾으므로 프레임마다 되풀이하지 않는다.
+      const rest = resident.target
+      if (
+        rest?.seated &&
+        !resident.working &&
+        !resident.route.length &&
+        resident.dwell > 3.5 &&
+        (!resident.behavior || resident.behavior === 'autonomous') &&
+        actors.some(
+          (other) =>
+            other.stationary &&
+            other.id !== actor.id &&
+            Math.hypot(other.x - rest.pose.x, other.y - rest.pose.y) <
+              PERSONAL_SPACE,
+        )
+      )
+        resident.dwell = 0
       if (resident.behavior === 'following' && options.caller) {
         const caller = options.caller,
           distance = Math.hypot(caller.x - resident.x, caller.y - resident.y)

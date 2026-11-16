@@ -46,7 +46,7 @@ export function officeActors(
     name: string
     stationary?: boolean
     standing?: boolean
-    idle?: 'stroll'
+    idle?: 'stroll' | 'lounge'
   })[] = []
   const lead = bibiOf(agents) ?? RECEPTIONIST
   const spot = bibiSpot(floor, phase < 3 ? undefined : bibiActivity)
@@ -142,7 +142,7 @@ export const officeAgentStyle = (state: string) => STATE[state] ?? STATE.online
  *   가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
  * - 에이전트: 작업 현황(MON-A05) 상태별 자리에서 출발한다. 연결 전은 라운지 충전 자리(리클라이너)에서 움직이지 않고,
  *   작업 중은 주인의 빈 아일랜드 의자, 검증 중은 칸반 워룸 화면 앞에 가서 머문다. 대기는 허들 스툴, 연결됨(할 일 없음)은
- *   주인 자리 뒤에서 출발해 팀원처럼 돌아다닌다.
+ *   주인 자리 뒤에서 출발해 돌아다니기와 라운지 리클라이너·창가에서 쉬기를 번갈아 한다.
  */
 function fixedOfficeActors(
   floor: Floor,
@@ -154,7 +154,7 @@ function fixedOfficeActors(
     name: string
     stationary?: boolean
     standing?: boolean
-    idle?: 'stroll'
+    idle?: 'stroll' | 'lounge'
   })[] = []
   const taken = new Set<string>()
   const key = (spot: Spot) => `${spot.x}/${spot.y}`
@@ -297,8 +297,8 @@ function fixedOfficeActors(
       agentStatus: look,
       appearance: 'agent',
       standing,
-      // 할 일이 없거나 기다리는 에이전트는 첫 자리에서 출발해 돌아다닌다(D37).
-      ...(life === 'idle' ? { idle: 'stroll' as const } : {}),
+      // 할 일이 없거나 기다리는 에이전트는 첫 자리에서 출발해 돌아다니기와 라운지·창가에서 쉬기를 번갈아 한다(D37).
+      ...(life === 'idle' ? { idle: 'lounge' as const } : {}),
       // 연결이 끊긴 에이전트는 충전 자리에서 고개를 떨군 채 움직이지 않는다.
       ...(look === 'offline' ? { stationary: true, seated: true } : {}),
     })

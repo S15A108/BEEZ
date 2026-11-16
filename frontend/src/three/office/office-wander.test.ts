@@ -151,7 +151,7 @@ test.each(DESIGNS)(
       expect(person).toMatchObject({ idle: 'stroll', status: 'idle' })
       expect(person.stationary).toBeFalsy()
     }
-    expect(at('agent:23')).toMatchObject({ idle: 'stroll' })
+    expect(at('agent:23')).toMatchObject({ idle: 'lounge' })
     expect(at('agent:22').idle).toBeUndefined()
     expect(at('agent:24').stationary).toBe(true)
 
@@ -171,25 +171,31 @@ test.each(DESIGNS)(
         )
         walked.set(actor.id, (walked.get(actor.id) ?? 0) + step)
         if (!strollers.includes(actor.id)) continue
-        // 돌아다니는 사람은 앉지 않고, 언제나 걸을 수 있는 바닥에 있다.
-        expect(actor.seated).toBeFalsy()
-        expect(officeWalkable(floor, actor.x, actor.y)).toBe(true)
-        if (
-          getOfficeLifeActivity(`wander-${design}`, actor.id)?.activity ===
-          'strolling'
-        )
+        const activity = getOfficeLifeActivity(
+          `wander-${design}`,
+          actor.id,
+        )?.activity
+        // 팀원은 앉지 않고 언제나 걸을 수 있는 바닥에 있다. 에이전트는 쉬러 앉고 일어날 때만 의자 위로 간다.
+        const person = people.some((item) => item.id === actor.id)
+        if (person) expect(actor.seated).toBeFalsy()
+        if (person || activity === 'strolling')
+          expect(officeWalkable(floor, actor.x, actor.y)).toBe(true)
+        if (activity && !['walking', 'standing'].includes(activity))
           (
             stops.get(actor.id) ?? stops.set(actor.id, new Set()).get(actor.id)!
           ).add(`${Math.round(actor.x)}/${Math.round(actor.y)}`)
       }
       // 처음 몇 프레임은 자리 곁에서 갈라진다. 그 뒤로는 나를 포함해 누구도 개인 거리 안으로 겹치지 않는다.
       if (frame > 40) {
-        const people = [...current, me]
-        for (let a = 0; a < people.length; a++)
-          for (let b = a + 1; b < people.length; b++)
+        const everyone = [...current, me]
+        for (let a = 0; a < everyone.length; a++)
+          for (let b = a + 1; b < everyone.length; b++)
             closest = Math.min(
               closest,
-              Math.hypot(people[a].x - people[b].x, people[a].y - people[b].y),
+              Math.hypot(
+                everyone[a].x - everyone[b].x,
+                everyone[a].y - everyone[b].y,
+              ),
             )
       }
       previous = current
