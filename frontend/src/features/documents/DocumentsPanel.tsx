@@ -1320,15 +1320,15 @@ function DocumentDetail({
   const shown = unresolved ? undefined : document.data
   const header = (
     <PaneHeaderAction>
-      {/* 넓은 화면은 한 줄로 두고 제목만 말줄임으로 줄인다. 좁으면 버튼을 다음 줄로 내린다. */}
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 lg:flex-nowrap">
+      {/* 한 줄에 다 들어가면 제목이 남는 폭을 쓰고, 모자라면 버튼 묶음을 다음 줄로 내린다. 줄을 나눌 때 제목 자리는 8rem으로 센다. */}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
         {back}
         {shown && (
           <>
             <span aria-hidden="true" className="h-6 w-px shrink-0 bg-border" />
             <KindTile kind={shown.document.kind} />
             <div
-              className="min-w-0"
+              className="min-w-0 flex-[1_1_8rem]"
               title={`${shown.document.title} v${shown.version.version_no}`}
             >
               <h3 className="truncate text-sm leading-5 font-semibold">
