@@ -298,14 +298,21 @@ function seededActivities(account: Account, created: string): Activity[] {
     ['TASK_PLAN_REVISED', { task_id: '502' }],
     ['VALIDATION_FINISHED', { task_id: '502' }],
     ['VALIDATION_FINISHED', { task_id: '503', result: 'FAILURE' }],
-    ['DOCUMENT_APPROVED', {}],
+    // 문서 활동의 대상은 문서 버전이다(서버와 같다). 211 = 기획안 승인본, 212 = ERD 승인본.
+    [
+      'DOCUMENT_APPROVED',
+      { target_type: 'DOCUMENT_VERSION', target_id: '211' },
+    ],
     ['CHANGE_PROPOSAL_COMMENTED', {}],
     ['TASK_ASSIGNEE_CHANGED', { task_id: '502' }],
     ['TASK_STARTED', { task_id: '502' }],
     ['TASK_WAITING', { task_id: '503' }],
     ['BASELINE_CREATED', { baseline_id: '401' }],
     ['CHANGE_PROPOSAL_REVIEW_REQUESTED', {}],
-    ['DOCUMENT_REGISTERED', {}],
+    [
+      'DOCUMENT_REGISTERED',
+      { target_type: 'DOCUMENT_VERSION', target_id: '212' },
+    ],
     ['TASK_COMPLETION_REPORTED', { task_id: '502' }],
     ['TASK_RESUMED', { task_id: '503' }],
     // 제외된 멤버(29)는 팀원 목록에 없다
