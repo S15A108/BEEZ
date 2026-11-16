@@ -215,11 +215,9 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
     .getByRole('button', { name: /프로젝트 삭제 권한은 인간 팀장만 가지나요/ })
     .click()
   await dialog.getByRole('textbox', { name: '답변' }).fill('팀장만 삭제해요.')
-  // 다음 질문이 있으면 저장하고 바로 다음 질문으로 넘어간다.
-  await dialog
-    .getByRole('button', { name: '저장하고 다음', exact: true })
-    .click()
-  await expect(dialog.getByText('답변을 저장했어요.')).toBeVisible()
+  // 답은 입력을 멈추면 자동으로 저장하고, 답변 칸 옆에 저장됨을 보인다.
+  await expect(dialog.getByText('저장됨')).toBeVisible()
+  await dialog.getByRole('button', { name: '다음', exact: true }).click()
   await expect(
     dialog.getByRole('heading', {
       name: '프로젝트 삭제 권한은 인간 팀장만 가지나요?',

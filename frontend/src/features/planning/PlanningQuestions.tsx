@@ -244,7 +244,11 @@ function QuestionBoard({
   }
   // 답할 질문이 남아 있으면 그것부터 보인다.
   const filter = picked ?? (counts.open ? 'open' : 'all')
-  const filtered = entries.filter(matches[filter])
+  // 답이 저장돼 필터 조건에서 벗어나도, 지금 보고 있는 질문은 다른 질문으로 옮길 때까지 목록에 남긴다
+  // (입력하다 질문이 사라지거나 선택이 다른 질문으로 튀지 않게).
+  const filtered = entries.filter(
+    (item) => matches[filter](item) || item.id === opened?.id,
+  )
   const list = useShowMore(filtered, QUESTION_STEP)
   const current = opened
     ? (entries.find((item) => item.id === opened.id) ?? opened)
@@ -339,7 +343,11 @@ function QuestionBoard({
       onNavigate={(id) =>
         setOpened(entries.find((item) => item.id === id) ?? undefined)
       }
-      onSubmit={(input) => onAnswer(current.id, input)}
+      onSave={onAnswer}
+      // 처음 열린 질문(목록의 첫 질문)도 답을 바꾸기 시작하면 붙잡아 둔다.
+      onEdit={(id) =>
+        setOpened((shown) => shown ?? entries.find((item) => item.id === id))
+      }
     >
       {head}
     </QuestionAnswerForm>

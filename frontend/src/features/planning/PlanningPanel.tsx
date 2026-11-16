@@ -1,7 +1,12 @@
 import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   ChevronDown,
   Circle,
@@ -62,6 +67,7 @@ import {
 } from './questionGeneration'
 import type {
   AnalysisResponse,
+  AnswerQuestionInput,
   BatchCandidatesResponse,
   DraftJob,
 } from './schemas'
@@ -267,6 +273,22 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
   }
+  // 보완 질문 자동 저장(PLN-A04). 저장하면 질문 목록만 새로 읽는다. 질문이 바뀌었거나(question_superseded)
+  // 이전 본문 기준이 되어(question_outdated) 409로 거절되면 안내는 답변 칸이 하고, 목록을 새로 불러온다.
+  const queryClient = useQueryClient()
+  const refreshQuestions = () =>
+    queryClient.invalidateQueries({
+      queryKey: ['projects', projectId, 'planning-questions'],
+    })
+  const saveAnswer = async (id: string, input: AnswerQuestionInput) => {
+    try {
+      await planningApi.answerQuestion(projectId, id, input)
+    } catch (cause) {
+      if (getApiErrorStatus(cause) === 409) void refreshQuestions()
+      throw cause
+    }
+    void refreshQuestions()
+  }
   // 문서마다 따로 본다. 한 문서가 실패해도 다른 문서의 진행·완료는 계속 따라간다.
   const documentGenerations = versions.map((version, index) => ({
     version,
@@ -438,15 +460,16 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         answerable={!baseline.isPending && !baseline.data}
         published={!!baseline.data}
         // 답변 입력이 실패 이유를 바로 아래에 알려 주므로 위쪽 일반 오류 띠는 띄우지 않는다.
+        // 답은 자동 저장이라 저장할 때마다 위쪽 안내를 띄우거나 창 전체를 다시 읽지 않고 질문 목록만 새로 읽는다.
         onAnswer={(id, input) =>
-          inForm(() =>
-            action.run(
-              () => planningApi.answerQuestion(projectId, id, input),
-              input.status === 'DISMISSED'
-                ? '질문을 답변 없이 닫았어요.'
-                : '답변을 저장했어요.',
-            ),
-          )
+          input.status === 'DISMISSED'
+            ? inForm(() =>
+                action.run(
+                  () => planningApi.answerQuestion(projectId, id, input),
+                  '질문을 답변 없이 닫았어요.',
+                ),
+              )
+            : saveAnswer(id, input)
         }
       />
     ),

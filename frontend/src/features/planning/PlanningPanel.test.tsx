@@ -131,27 +131,38 @@ it('질문 상세에 종류·유형·근거 미확인 칩을 보이고 필터에
   expect(visiblePanel().getByText('답변 없이 닫음')).toBeInTheDocument()
 })
 
-it('하나만 고르는 선택형은 선택지나 기타 입력으로 답한다', async () => {
+const rowOf = (text: string) =>
+  screen.queryByRole('button', { name: (name) => name.includes(text) })
+const saved = (panel: ReturnType<typeof visiblePanel>) =>
+  panel.findByText('저장됨', {}, { timeout: 3000 })
+
+it('하나만 고르는 선택형의 기타 글은 입력을 멈추면 자동 저장하고, 빈 기타는 저장하지 않는다', async () => {
   const user = renderPanel()
   await questionsLoaded()
-  await openRow(user, '프로젝트 삭제는 누가 할 수 있나요?')
+  const question = '프로젝트 삭제는 누가 할 수 있나요?'
+  await openRow(user, question)
   const panel = visiblePanel()
-  await user.click(panel.getByRole('button', { name: /^저장/ }))
-  expect(
-    await panel.findByText('답변을 하나 이상 골라 주세요.'),
-  ).toBeInTheDocument()
   await user.click(panel.getByLabelText('기타'))
+  expect(panel.getByText('빈 답은 저장하지 않아요')).toBeInTheDocument()
   await user.type(panel.getByLabelText('기타 답변'), '팀장이 정한 사람')
-  await user.click(panel.getByRole('button', { name: /^저장/ }))
-  expect(await screen.findByText('답변을 저장했어요.')).toBeInTheDocument()
-  // 답한 질문은 '답함'으로 옮겨 가고, 열면 저장한 답이 채워져 있다.
-  await user.click(await screen.findByRole('button', { name: '답함 1' }))
-  await openRow(user, '프로젝트 삭제는 누가 할 수 있나요?')
+  expect(await saved(panel)).toBeInTheDocument()
+  // 자동 저장은 위쪽 안내 없이 답변 칸 옆에서만 알린다.
+  expect(screen.queryByText('답변을 저장했어요.')).toBeNull()
+  // 답한 질문도 다른 질문으로 옮길 때까지 '답할 질문' 목록에 남는다.
+  expect(
+    await screen.findByRole('button', { name: '답함 1' }),
+  ).toBeInTheDocument()
+  expect(rowOf(question)).toBeInTheDocument()
+  await user.click(panel.getByRole('button', { name: /^다음/ }))
+  expect(rowOf(question)).toBeNull()
+  // '답함'에서 열면 저장한 답이 채워져 있다.
+  await user.click(screen.getByRole('button', { name: '답함 1' }))
+  await openRow(user, question)
   expect(panel.getByLabelText('기타 답변')).toHaveValue('팀장이 정한 사람')
   expect(panel.getByText('답변 완료')).toBeInTheDocument()
 })
 
-it('여러 개 고르는 선택형은 기타 없이 선택지를 모두 보여 준다', async () => {
+it('여러 개 고르는 선택형은 기타 없이 선택지를 보이고 고를 때마다 바로 저장한다', async () => {
   const user = renderPanel()
   await questionsLoaded()
   await openRow(user, '알림은 어떤 방식으로 보낼까요?')
@@ -159,13 +170,14 @@ it('여러 개 고르는 선택형은 기타 없이 선택지를 모두 보여 �
   expect(panel.queryByLabelText('기타')).not.toBeInTheDocument()
   await user.click(panel.getByLabelText('앱 안 알림'))
   await user.click(panel.getByLabelText('이메일'))
-  await user.click(panel.getByRole('button', { name: /^저장/ }))
-  expect(await screen.findByText('답변을 저장했어요.')).toBeInTheDocument()
-  await user.click(await screen.findByRole('button', { name: '답함 1' }))
-  await openRow(user, '알림은 어떤 방식으로 보낼까요?')
-  expect(panel.getByLabelText('앱 안 알림')).toBeChecked()
-  expect(panel.getByLabelText('이메일')).toBeChecked()
-  expect(panel.getByLabelText('메신저')).not.toBeChecked()
+  expect(await saved(panel)).toBeInTheDocument()
+  // 서버에는 마지막으로 고른 상태가 남는다.
+  await waitFor(async () => {
+    const page = await planningApi.questions('102')
+    expect(page.items.find((item) => item.id === '64')?.answer_payload).toEqual(
+      { type: 'CHOICE', selected: ['앱 안 알림', '이메일'] },
+    )
+  })
 })
 
 it('서술형 질문은 답하지 않고 닫을 수 있다', async () => {
@@ -193,7 +205,7 @@ it('팀원에게는 답변 입력을 보이지 않는다', async () => {
       name: '프로젝트 삭제는 누가 할 수 있나요?',
     }),
   ).toBeInTheDocument()
-  expect(visiblePanel().queryByRole('button', { name: /^저장/ })).toBeNull()
+  expect(visiblePanel().queryByRole('textbox', { name: '답변' })).toBeNull()
   expect(visiblePanel().queryByRole('radio')).toBeNull()
 })
 
@@ -486,7 +498,7 @@ it('이전 본문으로 만든 질문에는 갱신 상태를 보이고 미답변
     screen.getAllByRole('img', { name: '지금은 답할 수 없음' }),
   ).toHaveLength(3)
   const panel = visiblePanel()
-  const answerable = () => panel.queryByRole('button', { name: /^저장/ })
+  const answerable = () => panel.queryByRole('textbox', { name: '답변' })
 
   await openRow(user, '갱신 중인 질문')
   expect(panel.getByText('이전 본문 기준 · 갱신 중')).toBeInTheDocument()
@@ -535,7 +547,7 @@ it('갱신 중인 질문이 있으면 목록을 다시 읽어 갱신이 끝난 �
   expect(
     await screen.findByText('이전 본문 기준 · 갱신 중'),
   ).toBeInTheDocument()
-  expect(visiblePanel().queryByRole('button', { name: /^저장/ })).toBeNull()
+  expect(visiblePanel().queryByRole('textbox', { name: '답변' })).toBeNull()
   refreshed = true
   await waitFor(() =>
     expect(
@@ -543,7 +555,7 @@ it('갱신 중인 질문이 있으면 목록을 다시 읽어 갱신이 끝난 �
     ).not.toBeInTheDocument(),
   )
   expect(
-    visiblePanel().getByRole('button', { name: /^저장/ }),
+    visiblePanel().getByRole('textbox', { name: '답변' }),
   ).toBeInTheDocument()
 })
 
@@ -602,7 +614,7 @@ it('기준 설계가 발행된 프로젝트에서는 질문에 답할 수 없다
   expect(
     await screen.findByText('기준 설계가 발행되어 답변을 바꿀 수 없어요.'),
   ).toBeInTheDocument()
-  expect(visiblePanel().queryByRole('button', { name: /^저장/ })).toBeNull()
+  expect(visiblePanel().queryByRole('textbox', { name: '답변' })).toBeNull()
   // 발행 뒤에는 후보 탭이 없다.
   expect(screen.queryByRole('tab', { name: /문서 후보/ })).toBeNull()
 })

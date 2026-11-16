@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { getApiErrorMessage } from '@/api/error'
 import type { PlanningQuestion } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import type { AnswerQuestionInput } from './schemas'
 import { DETAIL_FOOTER } from './splitLayout'
+import { useAnswerAutosave } from './useAnswerAutosave'
+import type { SaveState } from './useAnswerAutosave'
 
 const OTHER_MAX = 200
 // 서버(PlanningAnswers)의 글자 수 기본값과 상한. 질문에 max_length 가 없거나 더 크면 이 값을 쓴다.
@@ -24,7 +26,7 @@ interface ChoiceDraft {
   other: string
   otherOn: boolean
 }
-// 질문마다 쓰던 답. 이전·다음으로 넘겨도 저장하기 전까지 사라지지 않는다.
+// 질문마다 쓰던 답. 이전·다음으로 넘겨도, 저장에 실패해도 사라지지 않는다.
 interface Draft {
   choice: ChoiceDraft
   text: string
@@ -53,28 +55,62 @@ const initialDraft = (question: PlanningQuestion): Draft => ({
   text: initialText(question),
 })
 
+// 보낼 답. 고른 것도 글도 없으면 undefined(서버가 빈 답을 받지 않는다).
+function inputOf(
+  question: PlanningQuestion,
+  draft: Draft,
+): AnswerQuestionInput | undefined {
+  const type = question.question_type
+  if (type === 'CHOICE') {
+    const other = draft.choice.otherOn ? draft.choice.other.trim() : ''
+    if (!draft.choice.selected.length && !other) return undefined
+    return {
+      answer_payload: {
+        type: 'CHOICE',
+        selected: draft.choice.selected,
+        ...(other ? { other_text: other } : {}),
+      },
+    }
+  }
+  const value = draft.text.trim()
+  if (!value) return undefined
+  return type
+    ? { answer_payload: { type, text: value } }
+    : // 유형이 없는 예전 질문은 문장으로만 보낸다.
+      { answer: value }
+}
+
+const statusText: Record<SaveState['state'], string> = {
+  saving: '저장 중…',
+  saved: '저장됨',
+  empty: '빈 답은 저장하지 않아요',
+  failed: '저장 못 했어요',
+}
+
 // 질문 유형(선택·단답·서술)에 맞는 답변 입력. 서버는 `answer_format`대로 답을 검사하므로 화면도 같은 규칙으로 먼저 막는다.
-// 기획 분석 질문 탭의 오른쪽 상세에 바로 놓인다. 목록(siblings)을 받으면 '저장하고 다음'과 이전·다음으로 질문을 넘길 수 있다.
+// 기획 분석 질문 탭의 오른쪽 상세에 바로 놓인다. 답은 자동으로 저장한다: 선택은 고르는 즉시, 글은 입력을 멈추고 1초 뒤.
+// 칸을 벗어나거나 이전·다음·목록으로 다른 질문으로 옮길 때도 저장하지 않은 글이 있으면 바로 저장한다.
 // 어떤 질문을 넘길지는 왼쪽 목록의 필터(답할 질문·답함·전체)가 정한다.
 export function QuestionAnswerForm({
   question,
   siblings,
   total,
   onNavigate,
-  onSubmit,
-  onClose,
+  onSave,
+  onEdit,
   children,
 }: {
   question: PlanningQuestion
-  /** 같은 목록의 질문들(화면 순서). 있으면 질문을 넘겨 가며 답할 수 있다 */
+  /** 같은 목록의 질문들(화면 순서). 있으면 이전·다음으로 질문을 넘길 수 있다 */
   siblings?: PlanningQuestion[]
   /** 전체 질문 수. 없으면 siblings 수로 센다 */
   total?: number
   /** 다른 질문으로 옮긴다(siblings 와 함께 준다) */
   onNavigate?: (id: string) => void
-  onSubmit: (input: AnswerQuestionInput) => Promise<unknown>
-  /** 마지막 질문을 저장한 뒤 */
-  onClose?: () => void
+  /** 답 저장(PLN-A04). 답하지 않고 닫기도 이것으로 보낸다 */
+  onSave: (id: string, input: AnswerQuestionInput) => Promise<unknown>
+  /** 지금 보는 질문의 답을 바꾸기 시작했다(목록이 이 질문을 붙잡아 두게) */
+  onEdit?: (id: string) => void
   /** 입력 위에 둘 질문 머리(종류·질문·근거) */
   children?: ReactNode
 }) {
@@ -85,34 +121,42 @@ export function QuestionAnswerForm({
   const draft = drafts[question.id] ?? initialDraft(question)
   const choice = draft.choice
   const text = draft.text
-  const update = (next: Partial<Draft>) =>
-    setDrafts((all) => ({
-      ...all,
-      [question.id]: {
-        ...(all[question.id] ?? initialDraft(question)),
-        ...next,
-      },
-    }))
-  const setChoice = (change: (state: ChoiceDraft) => ChoiceDraft) =>
-    update({ choice: change(choice) })
-  const setText = (value: string) => update({ text: value })
-  // 오류는 그 질문에만 보인다. 목록에서 다른 질문을 열면 앞 질문의 오류를 끌고 오지 않는다.
+  const autosave = useAnswerAutosave(onSave)
+  const saveState = autosave.states[question.id]
+  // 바꾼 답을 기록하고 저장을 맡긴다. 선택은 바로, 글은 입력을 멈춘 뒤 저장한다.
+  const change = (next: Partial<Draft>, now: boolean) => {
+    const value = { ...draft, ...next }
+    setDrafts((all) => ({ ...all, [question.id]: value }))
+    onEdit?.(question.id)
+    const input = inputOf(question, value)
+    if (now) autosave.saveNow(question.id, input)
+    else autosave.schedule(question.id, input)
+  }
+  // 다른 질문으로 옮기거나 입력이 사라지면 저장하지 않은 글을 바로 저장한다.
+  const { flush } = autosave
+  useEffect(() => {
+    const id = question.id
+    return () => flush(id)
+  }, [question.id, flush])
+
+  // 답하지 않고 닫기의 실패. 그 질문에만 보인다.
   const [failure, setFailure] = useState<{ id: string; message: string }>()
   const error = failure?.id === question.id ? failure.message : ''
-  const setError = (message: string) =>
-    setFailure(message ? { id: question.id, message } : undefined)
-  // 저장하는 동안 목록에서 다른 질문을 열었으면 저장이 끝나도 그 질문에 그대로 둔다.
+  // 닫는 동안 목록에서 다른 질문을 열었으면 닫기가 끝나도 그 질문에 그대로 둔다.
   const shownId = useRef(question.id)
   useEffect(() => {
     shownId.current = question.id
   }, [question.id])
-  const [busy, setBusy] = useState(false)
+  const [dismissing, setDismissing] = useState(false)
   const limit = type === 'CHOICE' || !type ? undefined : TEXT_LIMITS[type]
   const maxLength = limit
     ? Math.min(format?.max_length ?? limit.fallback, limit.hard)
     : (format?.max_length ?? LEGACY_TEXT_MAX)
   // 닫으면 서버가 이전 답변을 지우므로, 이미 답한 질문에서는 닫기를 보이지 않는다.
-  const canDismiss = !question.answer && question.status !== 'DISMISSED'
+  const canDismiss =
+    !question.answer &&
+    question.status !== 'DISMISSED' &&
+    saveState?.state !== 'saved'
 
   // 넘길 수 있는 질문들. 서버는 대체된 질문을 목록에 주지 않는다.
   const ordered = siblings ?? [question]
@@ -125,84 +169,89 @@ export function QuestionAnswerForm({
   // 몇 번째인지는 질문 번호로 센다. 남은 질문 목록의 순서로 세면 답할 때마다 번호가 줄어 진행이 거꾸로 보인다.
   const number = question.number ?? index + 1
 
-  const go = (id: string) => {
-    setError('')
-    onNavigate?.(id)
-  }
-
-  const run = async (input: AnswerQuestionInput) => {
-    setError('')
-    setBusy(true)
-    // 저장한 뒤 갈 곳은 저장하기 전의 목록으로 정한다(저장하면 목록이 새로 읽혀 순서 계산이 바뀐다).
+  const dismiss = async () => {
+    setFailure(undefined)
+    setDismissing(true)
     const after = next
-    const saving = question.id
+    const closing = question.id
     try {
-      await onSubmit(input)
-      if (shownId.current !== saving) return
-      if (after) go(after.id)
-      else onClose?.()
+      await autosave.cancel(closing)
+      await onSave(closing, { status: 'DISMISSED' })
+      if (shownId.current === closing && after) onNavigate?.(after.id)
     } catch (cause) {
-      setError(getApiErrorMessage(cause))
+      setFailure({ id: closing, message: getApiErrorMessage(cause) })
     } finally {
-      setBusy(false)
+      setDismissing(false)
     }
   }
 
+  // Enter(단답)는 기다리지 않고 지금 글을 저장한다.
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (type === 'CHOICE') {
-      const other = choice.otherOn ? choice.other.trim() : ''
-      if (!choice.selected.length && !other) {
-        setError('답변을 하나 이상 골라 주세요.')
-        return
-      }
-      void run({
-        answer_payload: {
-          type: 'CHOICE',
-          selected: choice.selected,
-          ...(other ? { other_text: other } : {}),
-        },
-      })
-      return
-    }
-    const value = text.trim()
-    if (!value) {
-      setError('답변을 입력해 주세요.')
-      return
-    }
-    void run(
-      type
-        ? { answer_payload: { type, text: value } }
-        : // 유형이 없는 예전 질문은 문장으로만 보낸다.
-          { answer: value },
-    )
+    autosave.flush(question.id)
   }
 
-  // Ctrl+Enter(Mac은 ⌘+Enter)로 저장하고 다음으로. 글을 쓰다가 손을 떼지 않아도 된다.
+  // Ctrl+Enter(Mac은 ⌘+Enter)로 다음 질문으로. 옮기면서 쓰던 글을 저장한다.
   const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
-    if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || busy)
-      return
+    if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return
     event.preventDefault()
-    event.currentTarget.requestSubmit()
+    if (next) onNavigate?.(next.id)
+    else autosave.flush(question.id)
   }
 
   const toggle = (option: string) =>
-    setChoice((state) => ({
-      ...state,
-      selected: multiple
-        ? state.selected.includes(option)
-          ? state.selected.filter((item) => item !== option)
-          : [...state.selected, option]
-        : [option],
-      // 하나만 고르는 질문은 선택지를 고르면 기타 입력을 끈다.
-      otherOn: multiple ? state.otherOn : false,
-    }))
+    change(
+      {
+        choice: {
+          ...choice,
+          selected: multiple
+            ? choice.selected.includes(option)
+              ? choice.selected.filter((item) => item !== option)
+              : [...choice.selected, option]
+            : [option],
+          // 하나만 고르는 질문은 선택지를 고르면 기타 입력을 끈다.
+          otherOn: multiple ? choice.otherOn : false,
+        },
+      },
+      true,
+    )
 
   const optionClass = (on: boolean) =>
     cn(
       'flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 text-[15px] has-focus-visible:ring-2 has-focus-visible:ring-ring',
       on ? 'border-primary bg-primary/10 font-medium' : 'hover:bg-muted/50',
     )
+
+  // 답변 칸 옆의 저장 상태 한 줄
+  const status = saveState && (
+    <span
+      aria-live="polite"
+      className={cn(
+        'flex items-center gap-1.5 text-xs',
+        saveState.state === 'failed'
+          ? 'text-destructive'
+          : 'text-muted-foreground',
+      )}
+    >
+      {statusText[saveState.state]}
+      {saveState.state === 'failed' && (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="text-foreground"
+          onClick={() =>
+            autosave.saveNow(question.id, inputOf(question, draft))
+          }
+        >
+          <RefreshCw />
+          다시 시도
+        </Button>
+      )}
+    </span>
+  )
+  const problem =
+    saveState?.state === 'failed' ? saveState.message : error || undefined
 
   const nav = onNavigate && ordered.length > 1
   return (
@@ -213,42 +262,20 @@ export function QuestionAnswerForm({
       onKeyDown={onKeyDown}
     >
       <div className="px-8 pt-5 pb-6">
-        <div className="mb-3 flex min-h-7 items-center gap-1 text-xs text-muted-foreground">
-          <span aria-live="polite" className="mr-auto font-semibold">
-            질문 {number} / {total ?? ordered.length}
-          </span>
-          {nav && (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={busy || !previous}
-                onClick={() => previous && go(previous.id)}
-              >
-                <ChevronLeft />
-                이전
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={busy || !next}
-                onClick={() => next && go(next.id)}
-              >
-                다음
-                <ChevronRight />
-              </Button>
-            </>
-          )}
-        </div>
+        <p
+          aria-live="polite"
+          className="mb-3 text-xs font-semibold text-muted-foreground"
+        >
+          질문 {number} / {total ?? ordered.length}
+        </p>
         {children}
         <div className="mt-6 grid gap-4 border-t pt-6">
           {type === 'CHOICE' ? (
-            <fieldset className="grid gap-2" disabled={busy}>
+            <fieldset className="relative grid gap-2">
               <legend className="mb-2 text-sm font-medium">
                 {multiple ? '답변 (여러 개 선택 가능)' : '답변'}
               </legend>
+              <div className="absolute top-0 right-0">{status}</div>
               {(format?.options ?? []).map((option) => (
                 <label
                   key={option}
@@ -271,27 +298,34 @@ export function QuestionAnswerForm({
                       name="choice"
                       checked={choice.otherOn}
                       onChange={() =>
-                        setChoice((state) => ({
-                          ...state,
-                          otherOn: multiple ? !state.otherOn : true,
-                          selected: multiple ? state.selected : [],
-                        }))
+                        change(
+                          {
+                            choice: {
+                              ...choice,
+                              otherOn: multiple ? !choice.otherOn : true,
+                              selected: multiple ? choice.selected : [],
+                            },
+                          },
+                          true,
+                        )
                       }
                     />
                     기타
                   </label>
                   {choice.otherOn && (
+                    // 기타 글은 글 답변처럼 입력을 멈추거나 칸을 벗어나면 저장한다.
                     <Input
                       aria-label="기타 답변"
                       maxLength={OTHER_MAX}
                       placeholder="직접 입력해 주세요."
                       value={choice.other}
                       onChange={(event) =>
-                        setChoice((state) => ({
-                          ...state,
-                          other: event.target.value,
-                        }))
+                        change(
+                          { choice: { ...choice, other: event.target.value } },
+                          false,
+                        )
                       }
+                      onBlur={() => autosave.flush(question.id)}
                     />
                   )}
                 </>
@@ -301,36 +335,43 @@ export function QuestionAnswerForm({
             <div className="grid gap-2">
               <div className="flex items-center justify-between gap-2">
                 <Label htmlFor="planning-answer">답변</Label>
-                <span className="text-xs text-muted-foreground">
-                  {[...text].length} / {maxLength}
+                <span className="flex items-center gap-3">
+                  {status}
+                  <span className="text-xs text-muted-foreground">
+                    {[...text].length} / {maxLength}
+                  </span>
                 </span>
               </div>
               {type === 'SHORT_ANSWER' ? (
                 <Input
                   id="planning-answer"
                   maxLength={maxLength}
-                  disabled={busy}
                   value={text}
-                  onChange={(event) => setText(event.target.value)}
+                  onChange={(event) =>
+                    change({ text: event.target.value }, false)
+                  }
+                  onBlur={() => autosave.flush(question.id)}
                 />
               ) : (
                 <Textarea
                   id="planning-answer"
                   rows={type === 'ESSAY' ? 6 : 4}
                   maxLength={maxLength}
-                  disabled={busy}
                   value={text}
-                  onChange={(event) => setText(event.target.value)}
+                  onChange={(event) =>
+                    change({ text: event.target.value }, false)
+                  }
+                  onBlur={() => autosave.flush(question.id)}
                 />
               )}
             </div>
           )}
-          {error && (
+          {problem && (
             <p
               role="alert"
               className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
             >
-              {error}
+              {problem}
             </p>
           )}
         </div>
@@ -340,16 +381,37 @@ export function QuestionAnswerForm({
           <Button
             type="button"
             variant="ghost"
-            disabled={busy}
+            disabled={dismissing}
             title="닫아도 나중에 다시 답할 수 있어요."
-            onClick={() => void run({ status: 'DISMISSED' })}
+            // 누를 때 입력 칸을 벗어나며 버릴 글을 저장하지 않게 포커스를 옮기지 않는다.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void dismiss()}
           >
             답변하지 않고 닫기
           </Button>
         )}
-        <Button type="submit" className="ml-auto" disabled={busy}>
-          {next ? '저장하고 다음' : '저장'}
-        </Button>
+        {nav && (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="ml-auto"
+              disabled={!previous}
+              onClick={() => previous && onNavigate?.(previous.id)}
+            >
+              <ChevronLeft />
+              이전
+            </Button>
+            <Button
+              type="button"
+              disabled={!next}
+              onClick={() => next && onNavigate?.(next.id)}
+            >
+              다음
+              <ChevronRight />
+            </Button>
+          </>
+        )}
       </div>
     </form>
   )
