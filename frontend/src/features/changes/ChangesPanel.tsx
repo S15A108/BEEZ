@@ -36,7 +36,7 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
 import { describeContent, LIST_SELECTED } from '@/lib/display'
 import { cn } from '@/lib/utils'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalCommentForm } from './ProposalCommentForm'
 import { ProposalForm } from './ProposalForm'
@@ -186,14 +186,20 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const focus = useWorkspaceStore((state) => state.focusId)
   const focusId = focus?.startsWith('doc:') ? null : focus
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selected, setSelected] = useState<{
+  const [selected, setSelected] = useRemembered<{
     id: string
     focus: string | null
-  } | null>(null)
-  const [filter, setFilter] = useState<ChangeStatus | ''>('')
+  } | null>('changes.selected', null)
+  const [filter, setFilter] = useRemembered<ChangeStatus | ''>(
+    'changes.filter',
+    '',
+  )
   const [search, setSearch] = useState('')
-  const [sort, setSort] = useState<'recent' | 'status'>('recent')
-  const [tab, setTab] = useState<Tab>('overview')
+  const [sort, setSort] = useRemembered<'recent' | 'status'>(
+    'changes.sort',
+    'recent',
+  )
+  const [tab, setTab] = useRemembered<Tab>('changes.tab', 'overview')
   const [mode, setMode] = useState<Mode>(() =>
     focus?.startsWith('doc:')
       ? { kind: 'form', documentId: focus.slice(4) || undefined }

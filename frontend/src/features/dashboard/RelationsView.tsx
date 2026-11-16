@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { edgeLabel, nodeKind } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
 import { LIST_SELECTED } from '@/lib/display'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import { RelationGraph } from './RelationGraph'
 
 // 작업·설계 관계 · 단축 바 5번 단독 창. 왼쪽에서 작업을 고르면 그 작업 기준으로 설계 항목·검증·변경 제안 관계를 그린다.
@@ -28,7 +28,10 @@ export function RelationsView({
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [search, setSearch] = useState('')
-  const [picked, setPicked] = useState<string | null>(null)
+  const [picked, setPicked] = useRemembered<string | null>(
+    'relations.picked',
+    null,
+  )
   const tasks = useQuery({
     queryKey: ['projects', projectId, 'relation-tasks'],
     // 작업 목록 API에는 검색 조건이 없어 마지막 페이지까지 읽고 화면에서 찾는다. 100개만 읽으면 101번째 이후 작업의

@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import {
   useClearPaneOnLeave,
   useOfficeTime,
+  useRemembered,
   useWorkspaceStore,
 } from './workspaceStore'
 
@@ -74,4 +75,32 @@ it('사무실 시간대를 자동으로 바꾸면 바로 지금 시각을 따르
   })
   expect(result.current).toBe('night')
   vi.useRealTimers()
+})
+
+// S15P31A108-431: 업무 창을 다른 메뉴로 바꾸거나 닫았다 열어도 보던 자리를 잇고, 대상을 정해 열면 그 대상을 연다.
+it('useRemembered는 다시 열면 보던 값을 잇고, 대상을 정해 열거나 프로젝트를 떠나면 처음 값으로 연다', () => {
+  const open = (fresh = false) =>
+    renderHook(() => useRemembered('documents.view', 'list', fresh)).result
+      .current[0]
+  const remember = () =>
+    useWorkspaceStore.setState({
+      paneMemory: { 'documents.view': 'detail:201' },
+    })
+
+  const view = renderHook(() => useRemembered('documents.view', 'list'))
+  act(() => view.result.current[1]('detail:201'))
+  view.unmount()
+  expect(open()).toBe('detail:201')
+
+  remember()
+  useWorkspaceStore.getState().openPane('documents', '202')
+  expect(open()).toBe('list')
+  useWorkspaceStore.getState().openPane(null)
+
+  remember()
+  expect(open(true)).toBe('list')
+
+  remember()
+  renderHook(() => useClearPaneOnLeave()).unmount()
+  expect(open()).toBe('list')
 })

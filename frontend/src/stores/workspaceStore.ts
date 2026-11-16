@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { officeTimeAt, type OfficeTime } from '@/three/office/officeLook'
@@ -35,6 +35,8 @@ interface WorkspaceState {
   openTeamTasks: () => void
   /** 창 안에 열린 하위 화면(PaneSheet) 수. 열려 있으면 단축 바 숫자 키를 무시한다(D46). 저장하지 않는다. */
   sheets: number
+  /** 업무 창마다 보던 자리(연 문서·작업, 탭). useRemembered가 쓴다. 프로젝트를 떠나면 비우고 저장하지 않는다. */
+  paneMemory: Record<string, unknown>
   trackSheet: (open: boolean) => void
   setViewMode: (viewMode: 'first' | 'third') => void
   setOutdoor: (outdoor: boolean) => void
@@ -64,6 +66,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       openTeamTasks: () =>
         set({ pane: 'tasks', focusId: null, initialTaskTab: 'team' }),
       sheets: 0,
+      paneMemory: {},
       trackSheet: (open) =>
         set((state) => ({ sheets: state.sheets + (open ? 1 : -1) })),
       setViewMode: (viewMode) => set({ viewMode }),
@@ -115,7 +118,35 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 // 비운다. 남아 있으면 다음 프로젝트에서 이전 프로젝트의 작업 id로 상세를 열어 404 창이 뜬다(PR #72 4차 조사 FOURTH-UI-01).
 export function useClearPaneOnLeave() {
   const openPane = useWorkspaceStore((state) => state.openPane)
-  useEffect(() => () => openPane(null), [openPane])
+  useEffect(
+    () => () => {
+      openPane(null)
+      useWorkspaceStore.setState({ paneMemory: {} })
+    },
+    [openPane],
+  )
+}
+
+/**
+ * 업무 창을 다른 메뉴로 바꾸거나 닫았다 다시 열어도 보던 자리(연 문서·작업, 탭)를 잇는 useState(S15P31A108-431).
+ * 알림·근거처럼 대상을 정해 열면(focusId) 또는 fresh면 기억 대신 initial로 연다.
+ */
+export function useRemembered<T>(
+  key: string,
+  initial: T | (() => T),
+  fresh = false,
+) {
+  const [value, setValue] = useState<T>(() => {
+    const { paneMemory, focusId } = useWorkspaceStore.getState()
+    if (!fresh && !focusId && key in paneMemory) return paneMemory[key] as T
+    return initial instanceof Function ? initial() : initial
+  })
+  useEffect(() => {
+    useWorkspaceStore.setState((state) => ({
+      paneMemory: { ...state.paneMemory, [key]: value },
+    }))
+  }, [key, value])
+  return [value, setValue] as const
 }
 
 const everyMinute = (onChange: () => void) => {

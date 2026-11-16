@@ -78,7 +78,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import {
   describeContent,
   LIST_SELECTED,
@@ -241,10 +241,10 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   const session = useSession()
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selected, setSelected] = useState<{
+  const [selected, setSelected] = useRemembered<{
     id: string
     focus: string | null
-  } | null>(null)
+  } | null>('tasks.selected', null)
   const [editing, setEditing] = useState<'new' | 'edit' | null>(null)
   const [formTask, setFormTask] = useState<TaskDetail | undefined>()
   const [reporting, setReporting] = useState<'WAIT' | 'COMPLETED' | null>(null)
@@ -268,14 +268,19 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
     (member) => member.account_id === session.data?.id,
   )?.id
   const initialTaskTab = useWorkspaceStore((state) => state.initialTaskTab)
-  const [tab, setTab] = useState(initialTaskTab)
+  // '팀 작업 보기'로 열면(openTeamTasks) 기억한 탭 대신 팀 전체를 연다.
+  const [tab, setTab] = useRemembered(
+    'tasks.tab',
+    initialTaskTab,
+    initialTaskTab === 'team',
+  )
   const entries = tasks.data?.items ?? []
   // ponytail: 불러온 목록을 화면에서 거른다. 목록이 길어지면 assignee_member_id 파라미터로 옮긴다.
   // 담당자 없는 작업(assignee_member_id 생략)은 팀원 목록을 받기 전에도 내 작업으로 세지 않는다.
   const mine = (entry?: TaskDetail) =>
     !!entry?.assignee_member_id && entry.assignee_member_id === memberId
   // '팀 전체' 탭의 담당자 거르기(S15P31A108-418). ''는 전체, 'none'은 담당자 없는 작업(assignee_member_id 생략), 그 밖은 멤버 ID다.
-  const [assignee, setAssignee] = useState('')
+  const [assignee, setAssignee] = useRemembered('tasks.assignee', '')
   const shown =
     tab === 'mine'
       ? entries.filter(mine)
