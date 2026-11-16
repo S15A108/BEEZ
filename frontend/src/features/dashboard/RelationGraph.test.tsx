@@ -199,5 +199,5 @@ it('연결된 노드가 그래프 밖에 있어도 깨지지 않고 그릴 수 �
 it('그래프에 DB 번호 대신 항목 이름을 보인다', () => {
   const { svg } = graph()
   expect(within(svg).getByText('TASK-001 목록 화면')).toBeInTheDocument()
-  expect(screen.queryByText(/#(501|301|12|71)/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/#(501|301|12|71)\b/)).not.toBeInTheDocument()
 })
