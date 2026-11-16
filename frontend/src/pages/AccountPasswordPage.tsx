@@ -1,33 +1,19 @@
-import { Link, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft } from 'lucide-react'
 import { authApi } from '@/api/services'
 import { AccountLayout } from '@/features/auth/AccountLayout'
 import { RequireAccount } from '@/features/auth/RequireAccount'
 import { passwordRule } from '@/features/auth/passwordRule'
 import { ActionForm } from '@/components/ActionForm'
 
-// 회원 설정 틀 안의 비밀번호 변경(캔버스 SCR-05-v2-password). 바꾸거나 취소하면 회원 설정으로 돌아간다.
+// 회원 설정과 같은 틀(720px 한 열, 돌아가는 길 하나)의 비밀번호 변경(캔버스 SCR-05-v2-password). 바꾸거나 취소하면 회원 설정으로 돌아간다.
 function AccountPassword() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   return (
-    <AccountLayout>
-      <section
-        aria-labelledby="password-title"
-        className="max-w-[560px] rounded-[14px] bg-card px-8 py-7 ring-1 ring-foreground/10"
-      >
-        <Link
-          to="/account"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" />
-          회원 설정
-        </Link>
-        <h3 id="password-title" className="mt-4 text-2xl font-bold">
-          비밀번호 변경
-        </h3>
-        <p className="mt-2 text-sm text-muted-foreground">
+    <AccountLayout title="비밀번호 변경" toAccount>
+      <section className="rounded-[14px] bg-card p-6 ring-1 ring-foreground/10">
+        <p className="text-sm text-muted-foreground">
           현재 비밀번호를 확인한 뒤 새 비밀번호로 바꿔요.
         </p>
         <div className="mt-6">

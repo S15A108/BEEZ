@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { characterOf, characters } from '@/lib/characters'
-import { formatDate } from '@/lib/formatDate'
+import { formatDate, formatDay } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 
 const profileSchema = z.object({
@@ -32,11 +32,13 @@ type ProfileInput = z.infer<typeof profileSchema>
 function ProfileForm({
   name,
   email,
+  joinedAt,
   avatarChanged,
   onSave,
 }: {
   name: string
   email: string
+  joinedAt?: string
   avatarChanged: boolean
   onSave: (name: string) => Promise<unknown>
 }) {
@@ -88,6 +90,11 @@ function ProfileForm({
             readOnly
             className="h-10 bg-muted text-muted-foreground"
           />
+          {joinedAt && (
+            <p className="text-xs text-muted-foreground">
+              가입일 {formatDay(joinedAt)}
+            </p>
+          )}
         </div>
       </div>
       {errors.root && (
@@ -96,8 +103,11 @@ function ProfileForm({
         </p>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[13px] text-muted-foreground">
-          저장하면 워크스페이스 HUD, 팀 목록, 3D 사무실에 이 캐릭터로 보여요.
+        {/* 바꾼 것이 없어 버튼이 꺼져 있으면 왜 못 누르는지 알린다. */}
+        <p id="profile-save-hint" className="text-[13px] text-muted-foreground">
+          {changed
+            ? '저장하면 워크스페이스 HUD, 팀 목록, 3D 사무실에 이 캐릭터로 보여요.'
+            : '이름이나 캐릭터를 바꾸면 저장할 수 있어요.'}
         </p>
         <div className="ml-auto flex items-center gap-3">
           {isSubmitSuccessful && !changed && (
@@ -109,7 +119,11 @@ function ProfileForm({
               저장했어요
             </p>
           )}
-          <Button type="submit" disabled={isSubmitting || !changed}>
+          <Button
+            type="submit"
+            disabled={isSubmitting || !changed}
+            aria-describedby="profile-save-hint"
+          >
             프로필 저장
           </Button>
         </div>
@@ -146,7 +160,7 @@ function Account() {
   })
   const picked = characterOf(avatar)
   return (
-    <AccountLayout character={picked}>
+    <AccountLayout title="회원 설정">
       {toast && (
         <p
           role="status"
@@ -233,6 +247,7 @@ function Account() {
           key={session.data?.id}
           name={session.data?.name ?? ''}
           email={session.data?.email ?? ''}
+          joinedAt={session.data?.created_at}
           // 예전 값(bee-yellow)이나 빈 값도 모든 화면에서 같은 캐릭터로 보이므로, 화면에 보이는 캐릭터가 같으면 바뀌지 않은 것이다.
           avatarChanged={picked.key !== characterOf(session.data?.avatar).key}
           onSave={(name) =>

@@ -54,6 +54,9 @@ async function renderPage() {
 it('바꾼 것이 없으면 프로필 저장 버튼이 꺼져 있고 앞뒤 공백만 더해도 그대로다', async () => {
   const { user, save, name } = await renderPage()
   expect(save).toBeDisabled()
+  expect(save).toHaveAccessibleDescription(
+    '이름이나 캐릭터를 바꾸면 저장할 수 있어요.',
+  )
   await user.type(name, '  ')
   expect(save).toBeDisabled()
 })
