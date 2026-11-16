@@ -12,7 +12,6 @@ import {
   FileText,
   ListChecks,
   Lock,
-  Play,
   Search,
   Sparkles,
   Upload,
@@ -499,8 +498,7 @@ export function DocumentsPanel({
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/50 bg-primary/10 p-4">
                   <div className="grid min-w-0 flex-1 gap-1">
                     <strong>
-                      필수 문서 4종이 모두 승인됐어요. 이제 프로젝트를 시작할 수
-                      있어요
+                      문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요
                     </strong>
                     <span className="text-sm text-muted-foreground">
                       {isLeader
@@ -509,11 +507,11 @@ export function DocumentsPanel({
                     </span>
                   </div>
                   {/* 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다.
-                      '프로젝트 시작'은 그 창을 연다. 남은 후보 안내도 발행 확인 창이 보여 준다. */}
+                      '설계 초안 만들기'는 그 창을 연다. 남은 후보 안내도 발행 확인 창이 보여 준다. */}
                   {isLeader && (
                     <Button onClick={() => openPane('planning')}>
-                      <Play />
-                      프로젝트 시작
+                      <Sparkles />
+                      설계 초안 만들기
                     </Button>
                   )}
                 </div>

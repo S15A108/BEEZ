@@ -546,8 +546,8 @@ it('서버가 거절하면 원인별로 알리고 입력값을 남긴다', async
 })
 
 // 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다(사용자 결정 11-16).
-// 그래서 4종이 승인되면 '프로젝트 시작'은 설계 초안이 없어도 켜져 있고, 누르면 발행하지 않고 기획 분석 창을 연다.
-it('4종이 승인되면 프로젝트 시작이 켜져 있고 누르면 발행하지 않고 기획 분석을 연다', async () => {
+// 그래서 4종이 승인되면 배너의 '설계 초안 만들기'가 켜져 있고, 누르면 발행하지 않고 기획 분석 창을 연다.
+it('4종이 승인되면 설계 초안 만들기가 켜져 있고 누르면 발행하지 않고 기획 분석을 연다', async () => {
   const user = userEvent.setup()
   const approved = { ...version, status: 'APPROVED' as const }
   vi.mocked(documentsApi.list).mockResolvedValue({
@@ -564,10 +564,16 @@ it('4종이 승인되면 프로젝트 시작이 켜져 있고 누르면 발행�
   const publish = vi.spyOn(planningApi, 'publishBaseline')
   mount()
   expect(
-    await screen.findByText(/기획 분석에서 설계 항목을 검토하고 발행하면/),
+    await screen.findByText(
+      '문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요',
+    ),
   ).toBeInTheDocument()
-  const start = screen.getByRole('button', { name: '프로젝트 시작' })
+  expect(
+    screen.getByText(/기획 분석에서 설계 항목을 검토하고 발행하면/),
+  ).toBeInTheDocument()
+  const start = screen.getByRole('button', { name: '설계 초안 만들기' })
   expect(start).toBeEnabled()
+  expect(screen.queryByRole('button', { name: '프로젝트 시작' })).toBeNull()
   expect(
     screen.queryByRole('button', { name: '기획 분석에서 초안 만들기' }),
   ).toBeNull()

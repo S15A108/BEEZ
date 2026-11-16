@@ -99,7 +99,7 @@ const notices: Record<
   },
   2: {
     title: '문서 4종이 모두 승인됐어요',
-    text: "색인까지 끝났어요. 가이드의 '프로젝트 시작'을 누르면 기준 v1이 생기고 프로젝트가 시작돼요.",
+    text: "색인까지 끝났어요. 가이드의 '설계 초안 만들기'에서 설계 항목을 검토하고 발행하면 프로젝트가 시작돼요.",
     member: '팀장이 프로젝트를 시작하면 알려 드려요.',
   },
   3: {
@@ -366,14 +366,14 @@ export function WorkspaceHud({
         ? '프로젝트를 시작했어요.'
         : allApproved
           ? '문서 4종 승인 4 / 4 · 기획 분석에서 설계 항목을 검토하고 발행하면 시작돼요'
-          : `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '프로젝트 시작'이 켜져요. 기획 분석에서 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요.`,
+          : `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '설계 초안 만들기'가 켜져요. 기획 분석에서 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요.`,
       done: started,
       locked: !allUploaded,
-      // 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다. '프로젝트 시작'은 그 창을 연다.
+      // 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다. '설계 초안 만들기'는 그 창을 연다.
       action: pendingApprovals
         ? { label: '승인 요청 보기', pane: 'documents' }
         : allApproved
-          ? { label: '프로젝트 시작', pane: 'planning' }
+          ? { label: '설계 초안 만들기', pane: 'planning' }
           : { label: '문서함 보기', pane: 'documents' },
       note: allApproved
         ? '시작하면 변경 제안과 작업 계획을 받을 수 있어요'
