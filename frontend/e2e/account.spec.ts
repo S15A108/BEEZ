@@ -88,7 +88,12 @@ test('회원 설정에서 비밀번호 변경과 회원 탈퇴를 별도 페이�
   await expect(
     page.getByText('이 프로젝트 때문에 지금은 탈퇴할 수 없어요'),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
+  // 막힌 동안에는 쓸 수 없는 확인 폼 대신 해결 길만 보인다(S15P31A108-448).
+  await expect(
+    page.getByRole('link', { name: '팀장 위임' }).first(),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: '회원 탈퇴' })).toHaveCount(0)
+  await expect(page.getByLabel('비밀번호 확인')).toHaveCount(0)
 })
 
 test('없는 주소와 유효하지 않은 초대는 같은 화면을 보여 준다', async ({
