@@ -62,7 +62,7 @@ interface Props {
   isLeader: boolean
 }
 type ChangeStatus = ChangeProposal['status']
-type Tab = 'overview' | 'diff' | 'impact' | 'comments' | 'activity'
+type Tab = 'diff' | 'impact' | 'comments' | 'activity'
 type Mode =
   | { kind: 'detail' }
   | { kind: 'approve' }
@@ -83,8 +83,8 @@ const statusTabs = [
   ['PUBLISHED', '발행됨'],
   ['REJECTED', '반려'],
 ] as const
+// 개요 탭은 다른 탭의 요약(바뀌는 내용·영향·의견 카드)뿐이라 빼고 바뀌는 내용을 첫 탭으로 둔다(S15P31A108-449).
 const tabs = [
-  ['overview', '개요'],
   ['diff', '바뀌는 내용'],
   ['impact', '영향'],
   ['comments', '의견'],
@@ -193,7 +193,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const [filter, setFilter] = useState<ChangeStatus | ''>('')
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<'recent' | 'status'>('recent')
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTab] = useState<Tab>('diff')
   const [mode, setMode] = useState<Mode>(() =>
     focus?.startsWith('doc:')
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
@@ -408,7 +408,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       : found
   const select = (id: string) => {
     setSelected({ id, focus: focusId })
-    setTab('overview')
+    setTab('diff')
     setMode({ kind: 'detail' })
   }
   const publishedVersion = (id: string) =>
@@ -642,16 +642,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           selectedId === entry.id && LIST_SELECTED,
                         )}
                       >
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <StatusTag value={entry.status} />
-                          {baseline.data &&
-                            entry.base_baseline_id !== baseline.data.id &&
-                            ['PROPOSED', 'IN_REVIEW', 'APPROVED'].includes(
-                              entry.status,
-                            ) && (
+                        {/* 상태 알약은 상세 제목 옆에만 둔다. 목록은 상태 탭으로 거른다(S15P31A108-449). */}
+                        {baseline.data &&
+                          entry.base_baseline_id !== baseline.data.id &&
+                          ['PROPOSED', 'IN_REVIEW', 'APPROVED'].includes(
+                            entry.status,
+                          ) && (
+                            <span className="flex">
                               <Tag tone={operationTone.RETIRE}>기준 바뀜</Tag>
-                            )}
-                        </span>
+                            </span>
+                          )}
                         <strong className="line-clamp-2 text-sm leading-5 font-semibold">
                           {entry.title}
                         </strong>
@@ -1178,7 +1178,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         {current.key} ·{' '}
                         {nameOfAccount(current.proposer_account_id)} 제안 · r
                         {current.revision} · {formatDate(current.created_at)}
+                        {current.task_id &&
+                          ` · 관련 작업 ${taskKey(current.task_id)}`}
                         {/* API 없음: 회의·작업 중 어디서 올렸는지 출처, 에이전트 제안이면 에이전트 이름(백엔드 메모 3·7) */}
+                      </p>
+                      {/* 개요 탭에만 있던 제안 이유는 제목 아래로 옮긴다. */}
+                      <p className="mt-2 text-sm leading-[21px] whitespace-pre-wrap">
+                        {current.reason}
                       </p>
                     </div>
                     {mine && editable && !isLeader && (
@@ -1339,6 +1345,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           )}
                         >
                           {label}
+                          {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
+                          {value === 'diff' &&
+                            ` ${current.items.length + current.documents.length}`}
                           {value === 'impact' &&
                             impactCount !== undefined &&
                             ` ${impactCount}`}
@@ -1347,162 +1356,6 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       ))}
                     </div>
                     <div role="tabpanel" className="min-h-40">
-                      {tab === 'overview' && (
-                        <div className="grid gap-3 text-sm">
-                          <p className="leading-[21px] whitespace-pre-wrap">
-                            {current.reason}
-                          </p>
-                          {/* 캔버스 PNL-04-v2 개요: 모서리 14px·안쪽 16/18px 카드, 15px·700 머리와 노란 글자 이동 버튼 */}
-                          {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
-                          <section className={overviewCard}>
-                            <h4 className={overviewHead}>
-                              바뀌는 내용{' '}
-                              {current.items.length + current.documents.length}
-                              <span className="flex items-center gap-2 font-medium">
-                                <span className="text-xs text-muted-foreground">
-                                  {(['UPDATE', 'CREATE', 'RETIRE'] as const)
-                                    .map(
-                                      (operation) =>
-                                        [
-                                          operation,
-                                          current.items.filter(
-                                            (item) =>
-                                              item.operation === operation,
-                                          ).length,
-                                        ] as const,
-                                    )
-                                    .filter(([, count]) => count)
-                                    .map(
-                                      ([operation, count]) =>
-                                        `${operationLabel[operation]} ${count}`,
-                                    )
-                                    .concat(
-                                      current.documents.length
-                                        ? [`문서 ${current.documents.length}`]
-                                        : [],
-                                    )
-                                    .join(' · ')}
-                                </span>
-                                <button
-                                  type="button"
-                                  className={overviewLink}
-                                  onClick={() => setTab('diff')}
-                                >
-                                  자세히
-                                </button>
-                              </span>
-                            </h4>
-                            <ul>
-                              {current.items.map((item, index) => (
-                                <li
-                                  key={index}
-                                  className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
-                                >
-                                  <Tag tone={operationTone[item.operation]}>
-                                    {operationLabel[item.operation]}
-                                  </Tag>
-                                  <strong className="truncate font-semibold">
-                                    {item.operation === 'CREATE'
-                                      ? item.kind
-                                        ? kindLabel[item.kind]
-                                        : '설계 항목'
-                                      : itemKey(item.design_item_id)}
-                                  </strong>
-                                  <span className="truncate">
-                                    {item.proposed_content
-                                      ? describeContent(item.proposed_content)
-                                      : ''}
-                                  </span>
-                                </li>
-                              ))}
-                              {current.documents.map((change) => {
-                                const document = documentOptions.find(
-                                  (item) => item.id === change.document_id,
-                                )
-                                // 승인 확인창처럼 '문서 vN → 새 버전'. 제안의 기준이 지금 승인본과 다르면 번호를 짐작하지 않는다.
-                                const from =
-                                  document?.versionId ===
-                                  change.base_document_version_id
-                                    ? ` v${document.versionNo}`
-                                    : ''
-                                return (
-                                  <li
-                                    key={change.document_id}
-                                    className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
-                                  >
-                                    <Tag tone={operationTone.UPDATE}>
-                                      {operationLabel.UPDATE}
-                                    </Tag>
-                                    <strong className="truncate font-semibold">
-                                      문서
-                                    </strong>
-                                    <span className="truncate">
-                                      {`${document?.title ?? '문서'}${from} → 새 버전`}
-                                    </span>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          </section>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <section className={overviewCard}>
-                              <h4 className={overviewHead}>
-                                영향
-                                <button
-                                  type="button"
-                                  aria-label="영향 보기"
-                                  className={overviewLink}
-                                  onClick={() => setTab('impact')}
-                                >
-                                  보기
-                                </button>
-                              </h4>
-                              <p className="text-[13px] leading-[19px]">
-                                {impact.error
-                                  ? '영향 분석 상태를 불러오지 못했어요.'
-                                  : impact.data && hasCurrentImpact(impact.data)
-                                    ? `확인된 관계 ${impact.data.explicit.length} · AI 후보 ${impact.data.candidates.length}`
-                                    : impact.data
-                                      ? impactMessage(
-                                          impact.data,
-                                          editable,
-                                          isDocumentOnly(current),
-                                        )
-                                      : '영향 분석 상태를 확인하는 중이에요.'}
-                              </p>
-                            </section>
-                            <section className={overviewCard}>
-                              <h4 className={overviewHead}>
-                                의견
-                                <button
-                                  type="button"
-                                  aria-label="의견 보기"
-                                  className={overviewLink}
-                                  onClick={() => setTab('comments')}
-                                >
-                                  보기
-                                </button>
-                              </h4>
-                              <div className="grid gap-1 text-[13px] leading-[19px]">
-                                <span>의견 {commentList.length}</span>
-                                {commentList[0] && (
-                                  <span className="truncate text-xs leading-[18px] text-muted-foreground">
-                                    {nameOfAccount(
-                                      commentList[0].author_account_id,
-                                    )}
-                                    : {commentList[0].body}
-                                  </span>
-                                )}
-                              </div>
-                            </section>
-                          </div>
-                          {current.task_id && (
-                            <p className="text-xs text-muted-foreground">
-                              관련 작업 {taskKey(current.task_id)}
-                            </p>
-                          )}
-                        </div>
-                      )}
                       {tab === 'diff' && (
                         <div className="grid gap-2">
                           <p
@@ -1814,8 +1667,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         )}
                       </div>
                     )}
+                    {/* 승인·반려는 탭 내용이 길어도 창 바닥에 붙어 있다. 업무 창 아래 여백(최대 2rem)으로 흘러내린 내용은 그림자로 가린다(비비 입력줄과 같다). */}
                     {isLeader && editable && (
-                      <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
+                      <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t bg-background pt-3 shadow-[0_2rem_0_var(--background)]">
                         {current.requires_refresh && (
                           <span className="mr-auto text-xs text-muted-foreground">
                             제안자가 최신 기준으로 맞춘 뒤 승인할 수 있어요.
@@ -1889,12 +1743,6 @@ function Back({
   )
 }
 
-// 개요 카드(캔버스 PNL-04-v2 통일감 개선: 모서리 14px, 안쪽 16/18px, 머리 15px·700, 이동 버튼 13px·600 노란 글자)
-const overviewCard = 'rounded-[14px] border px-[18px] py-4'
-const overviewHead =
-  'mb-2.5 flex items-center justify-between gap-2 text-[15px] leading-[22px] font-bold'
-const overviewLink =
-  'text-[13px] font-semibold whitespace-nowrap text-[#8a6a00] hover:underline'
 // 바뀌는 내용 · 항목마다 한 줄로 접어 두고, 펼치면 기준 문장과 제안 문장을 −/+로 보여 준다.
 
 function Diff({
