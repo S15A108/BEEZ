@@ -1,5 +1,59 @@
 import { describe, expect, it } from 'vitest'
-import { stackTags, tagParts } from './nameTag'
+import {
+  NOTE_COLORS,
+  stackTags,
+  TAG_COLORS,
+  tagParts,
+  tagRole,
+} from './nameTag'
+
+// WCAG 2 상대 휘도 대비
+const contrast = (a: string, b: string) => {
+  const luminance = (hex: string) => {
+    const [r, g, bl] = [1, 3, 5]
+      .map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
+      .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+  }
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+describe('tagRole', () => {
+  it('내 캐릭터는 모양과 상관없이 나다', () => {
+    expect(tagRole('bee', true)).toBe('me')
+    expect(tagRole('human', true)).toBe('me')
+  })
+
+  it('사람·로봇·벌 모양의 다른 사람은 팀원이다', () => {
+    expect(tagRole('human', false)).toBe('member')
+    expect(tagRole('member-robot', false)).toBe('member')
+    expect(tagRole('bee', false)).toBe('member')
+  })
+
+  it('에이전트와 비비, 모양을 모르는 캐릭터는 에이전트다', () => {
+    expect(tagRole('agent', false)).toBe('agent')
+    expect(tagRole('bibi', false)).toBe('agent')
+    expect(tagRole(undefined, false)).toBe('agent')
+  })
+})
+
+describe('이름표 색', () => {
+  it('나·팀원·에이전트 알약 색이 모두 다르다', () => {
+    const fills = Object.values(TAG_COLORS).map((colors) => colors.fill)
+    expect(new Set(fills).size).toBe(fills.length)
+  })
+
+  it('이름·상태 글자는 알약 바탕과 4.5:1 이상 대비가 난다', () => {
+    for (const colors of Object.values(TAG_COLORS)) {
+      expect(contrast(colors.ink, colors.fill)).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(colors.status, colors.fill)).toBeGreaterThanOrEqual(4.5)
+    }
+    expect(contrast(NOTE_COLORS.ink, NOTE_COLORS.fill)).toBeGreaterThanOrEqual(
+      4.5,
+    )
+  })
+})
 
 describe('tagParts', () => {
   it('마지막 가운뎃점 앞은 이름, 뒤는 상태로 나눈다', () => {

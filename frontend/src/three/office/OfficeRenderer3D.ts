@@ -33,7 +33,17 @@ import {
 } from './office-work-surface'
 import type { OfficeScreens } from './office-screens'
 import { officeObjectKey } from './office-layout'
-import { stackTags, TAG, tagParts, type TagBox } from './nameTag'
+import {
+  MY_TAG,
+  NOTE_COLORS,
+  stackTags,
+  TAG,
+  TAG_COLORS,
+  tagParts,
+  tagRole,
+  type TagBox,
+  type TagRole,
+} from './nameTag'
 import {
   OfficeAimOutline,
   pickOfficeInteraction,
@@ -3318,11 +3328,11 @@ export class OfficeRenderer3D {
     return template
   }
 
-  // 이름표(D37): 흰 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
+  // 이름표(D37): 역할 색 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
   // 앱 글꼴로 화면 픽셀과 1:1로 그리고(크기·위치는 placeTags), 깊이 검사를 꺼 가구·칸막이에 가리지 않는다.
-  private nameTag(robot: Robot, tag?: string, note?: string) {
+  private nameTag(robot: Robot, role: TagRole, tag?: string, note?: string) {
     const ratio = this.renderer.getPixelRatio()
-    const text = tag ? `${tag}\n${note ?? ''}\n${ratio}` : ''
+    const text = tag ? `${role}\n${tag}\n${note ?? ''}\n${ratio}` : ''
     if (robot.tag?.text === text) return
     this.dropTag(robot)
     if (!tag) return
@@ -3361,7 +3371,14 @@ export class OfficeRenderer3D {
     canvas.width = Math.ceil(width * ratio)
     canvas.height = Math.ceil(height * ratio)
     g.scale(ratio, ratio)
-    const pill = (y: number, w: number, h: number, fill: string) => {
+    const colors = TAG_COLORS[role]
+    const pill = (
+      y: number,
+      w: number,
+      h: number,
+      fill: string,
+      border: string,
+    ) => {
       g.shadowColor = 'rgba(44,41,31,0.3)'
       g.shadowBlur = 3
       g.shadowOffsetY = 1
@@ -3370,7 +3387,7 @@ export class OfficeRenderer3D {
       g.roundRect((width - w) / 2, y, w, h, h / 2)
       g.fill()
       g.shadowColor = 'transparent'
-      g.strokeStyle = 'rgba(44,41,31,0.14)'
+      g.strokeStyle = border
       g.lineWidth = 1
       g.beginPath()
       g.roundRect((width - w) / 2 + 0.5, y + 0.5, w - 1, h - 1, h / 2)
@@ -3379,24 +3396,30 @@ export class OfficeRenderer3D {
     // 길면 글자 폭을 줄여 알약 안에 넣는다.
     const squeeze = Math.min(1, inner / (nameWidth + statusWidth))
     const top = TAG.margin
-    pill(top, pillWidth, TAG.height, '#ffffff')
+    pill(top, pillWidth, TAG.height, colors.fill, colors.border)
     g.textBaseline = 'middle'
     g.textAlign = 'left'
     let x = (width - (nameWidth + statusWidth) * squeeze) / 2
     g.font = font(600, TAG.font)
-    g.fillStyle = '#2c291f'
+    g.fillStyle = colors.ink
     g.fillText(name, x, top + TAG.height / 2 + 1, nameWidth * squeeze)
     x += nameWidth * squeeze
     if (status) {
       g.font = font(400, TAG.font)
-      g.fillStyle = '#5c5647'
+      g.fillStyle = colors.status
       g.fillText(status, x, top + TAG.height / 2 + 1, statusWidth * squeeze)
     }
     if (note) {
       const y = top + TAG.height + TAG.gap
-      pill(y, notePillWidth, TAG.noteHeight, '#fff3c4')
+      pill(
+        y,
+        notePillWidth,
+        TAG.noteHeight,
+        NOTE_COLORS.fill,
+        TAG_COLORS.member.border,
+      )
       g.font = font(500, TAG.noteFont)
-      g.fillStyle = '#6e5200'
+      g.fillStyle = NOTE_COLORS.ink
       g.textAlign = 'center'
       g.fillText(note, width / 2, y + TAG.noteHeight / 2 + 1, inner)
     }
@@ -3807,7 +3830,14 @@ export class OfficeRenderer3D {
         robot = undefined
       }
       robot ??= this.figure(entity.id, appearance, shape, color, status)
-      this.nameTag(robot, entity.tag, entity.note)
+      // 내 캐릭터는 '나'로 쓰고, 나·팀원·에이전트를 색으로 나눈다(S15P31A108-451).
+      const isMe = entity.id === opts.playerId
+      this.nameTag(
+        robot,
+        tagRole(appearance, isMe),
+        isMe ? MY_TAG : entity.tag,
+        entity.note,
+      )
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&

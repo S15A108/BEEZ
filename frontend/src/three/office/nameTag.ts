@@ -1,4 +1,52 @@
-// 사무실 머리 위 이름표(D37)의 글자 배치와 화면 위치 계산. 그리기는 OfficeRenderer3D가 한다.
+// 사무실 머리 위 이름표(D37)의 역할·색, 글자 배치와 화면 위치 계산. 그리기는 OfficeRenderer3D가 한다.
+import type { OfficeAppearance } from './OfficeRenderer3D'
+
+/** 이름표 역할. 나·사람 팀원·에이전트를 색으로 나눈다. 비비도 AI라 에이전트 색이다. */
+export type TagRole = 'me' | 'member' | 'agent'
+
+/** 내 캐릭터 이름표 글. 다른 이름표와 달리 이름 대신 '나'라고 쓴다. */
+export const MY_TAG = '나'
+
+export function tagRole(
+  appearance: OfficeAppearance | undefined,
+  isMe: boolean,
+): TagRole {
+  if (isMe) return 'me'
+  return !appearance || appearance === 'agent' || appearance === 'bibi'
+    ? 'agent'
+    : 'member'
+}
+
+/**
+ * 역할별 알약 색. 앱 팔레트(꿀색 primary, 흰 card, 짙은 foreground)에서 골랐고 글자 대비는 모두 4.5:1 이상이다.
+ * 팀원 개인 색(이니셜 원·에이전트 스카프)은 쓰지 않아 역할 색과 섞이지 않는다.
+ */
+export const TAG_COLORS: Record<
+  TagRole,
+  { fill: string; ink: string; status: string; border: string }
+> = {
+  me: {
+    fill: '#f3c530',
+    ink: '#322710',
+    status: '#322710',
+    border: 'rgba(50,39,16,0.3)',
+  },
+  member: {
+    fill: '#ffffff',
+    ink: '#2c291f',
+    status: '#5c5647',
+    border: 'rgba(44,41,31,0.14)',
+  },
+  agent: {
+    fill: '#2c291f',
+    ink: '#fcfaf4',
+    status: '#d9d1bd',
+    border: 'rgba(252,250,244,0.18)',
+  },
+}
+
+/** 이름표 아래 말풍선(대기 이유·연결 미확인) 색 */
+export const NOTE_COLORS = { fill: '#fff3c4', ink: '#6e5200' } as const
 
 /** 이름표 크기(css px). 거리·줌과 상관없이 화면에서 이 크기로 보인다. */
 export const TAG = {
