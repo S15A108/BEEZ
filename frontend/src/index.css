@@ -25,6 +25,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-ink: var(--destructive-ink);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -32,6 +33,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-ink: var(--primary-ink);
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
@@ -57,6 +59,8 @@
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.84 0.16 90);
   --primary-foreground: oklch(0.28 0.04 85);
+  /* 밝은 바탕 위 꿀색 글자(링크 등). #7e5e00, 흰 바탕 6.04:1 · primary/20 위 5.46:1 (S15P31A108-442) */
+  --primary-ink: oklch(0.5 0.105 86);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -64,6 +68,8 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* destructive/10·/20 바탕 위 글자. #ac1a1b, 4.81:1 이상 (S15P31A108-442) */
+  --destructive-ink: oklch(0.48 0.18 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.72 0.14 88);
@@ -99,6 +105,8 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --primary-ink: var(--primary);
+  --destructive-ink: var(--destructive);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
