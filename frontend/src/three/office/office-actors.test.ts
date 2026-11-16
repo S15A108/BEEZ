@@ -161,8 +161,9 @@ test('연결이 끊긴 에이전트는 충전 자리에서 연결 끊김 이름�
   ).toContainEqual({ x: agent.x, y: agent.y })
 })
 
-// D37: 고정 사무실에서 팀원은 자기 자리 옆에 서 있고(위치 API 없음, 가구는 쓰지 않음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
-test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리로 간다', () => {
+// D37: 고정 사무실에서 팀원은 자기 자리 옆에서 출발해 돌아다니고(위치 API 없음, 가구는 쓰지 않음), 에이전트는 작업 현황
+// 상태마다 정한 자리에서 출발한다. 할 일 없는 에이전트만 그 자리에서 돌아다닌다(S15P31A108-452).
+test('팀원은 자기 자리 옆에서 출발하고 에이전트는 상태별 자리로 간다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
       .floors[1],
@@ -216,10 +217,11 @@ test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리
   const spots = (list: { x: number; y: number }[] | undefined) =>
     (list ?? []).map((seat) => ({ x: seat.x * 32 + 16, y: seat.y * 32 + 27 }))
   const place = (id: string) => ({ x: at(id).x, y: at(id).y })
-  // 팀원은 가구를 쓰지 않는다: 의자에 앉지 않고 자기 의자 옆(2칸 안, 의자와 다른 곳)에 서 있다.
-  // 기대값을 seated에서 standing으로 바꿨다(사용자 승인 2026-11-03).
+  // 팀원은 가구를 쓰지 않는다: 의자에 앉지 않고 자기 의자 옆(2칸 안, 의자와 다른 곳)에서 출발한다.
+  // 기대값을 seated에서 standing으로 바꿨다(사용자 승인 2026-11-03). 제자리 배우에서 돌아다니는 사람으로 바꿨다(S15P31A108-452).
   const chair22 = spots([homes.get('member:22')!])[0]
-  expect(at('member:22')).toMatchObject({ stationary: true, standing: true })
+  expect(at('member:22')).toMatchObject({ standing: true, idle: 'stroll' })
+  expect(at('member:22').stationary).toBeFalsy()
   expect(at('member:22').seated).toBeFalsy()
   expect(place('member:22')).not.toEqual(chair22)
   expect(
@@ -264,9 +266,13 @@ test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리
   expect(
     Math.hypot(mine.x - at('agent:21').x, mine.y - at('agent:21').y),
   ).toBeLessThan(32)
-  // 에이전트는 산책하지 않는다: 연결 전 말고도 모두 자리에 묶인 상태로 걷는다
-  for (const id of ['agent:26', 'agent:22', 'agent:23', 'agent:21'])
+  // 작업 중·검증 중은 자리에 묶인 상태로 걷고, 대기와 연결됨(할 일 없음)은 그 자리에서 출발해 돌아다닌다
+  for (const id of ['agent:26', 'agent:23'])
     expect(isOfficeWorkingStatus(at(id).status)).toBe(true)
+  for (const id of ['agent:22', 'agent:21']) {
+    expect(isOfficeWorkingStatus(at(id).status)).toBe(false)
+    expect(at(id).idle).toBe('stroll')
+  }
 })
 
 // 사용자 결정 '라운지 가운데에 세움'(2026-11-03): 고정 사무실에서는 프로젝트를 시작한 뒤(lead 에이전트가 있어도) 비비가
@@ -467,9 +473,9 @@ test.each(
   },
 )
 
-// 서 있는 팀원은 움직이지 않으므로(D37) 그 자리가 비비의 길을 막으면 비비가 영영 닿지 못한다.
+// 팀원 열두 명이 돌아다니며 비비의 길이나 자리를 잠시 막아도(D37) 비비는 닿는다.
 test.each(DESIGNS)(
-  '%s: 팀원이 모두 자리 옆에 서 있어도 비비는 세 자리를 오간다',
+  '%s: 팀원이 모두 돌아다녀도 비비는 세 자리를 오간다',
   (design) => {
     const floor = bibiFloor(design)
     const agents = officeSceneAgents([

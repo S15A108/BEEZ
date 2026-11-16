@@ -44,6 +44,7 @@ export function officeActors(
     name: string
     stationary?: boolean
     standing?: boolean
+    idle?: 'stroll'
   })[] = []
   const lead = bibiOf(agents) ?? RECEPTIONIST
   const spot = bibiSpot(floor, phase < 3 ? undefined : bibiActivity)
@@ -122,11 +123,11 @@ const STATE: Record<string, { label: string; look: string; life: string }> = {
   failed: { label: agentStatusLabels.failed, look: 'offline', life: 'meeting' },
   working: { label: '작업 중', look: 'working', life: 'working' },
   validating: { label: '검증 중', look: 'working', life: 'meeting' },
-  waiting: { label: '대기', look: 'idle', life: 'meeting' },
+  waiting: { label: '대기', look: 'idle', life: 'idle' },
   online: {
     label: agentStatusLabels.connected,
     look: 'online',
-    life: 'meeting',
+    life: 'idle',
   },
 }
 /** 에이전트 상태의 이름표 문구와 모습. 책상 모니터의 상태 줄도 같은 문구다. 모르는 상태는 연결됨이다. */
@@ -134,11 +135,12 @@ export const officeAgentStyle = (state: string) => STATE[state] ?? STATE.online
 
 /**
  * 고정 사무실(D36·D37)의 사람과 에이전트.
- * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리 옆에 서 있다.
- *   팀원은 가구를 쓰지 않는다(사용자 결정 "가구랑 상호작용하는 건 에이전트만 가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
- * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 전은 라운지 충전 자리(리클라이너),
- *   작업 중은 주인의 빈 아일랜드 의자(주인은 옆에 서 있음), 검증 중은 칸반 워룸 화면 앞, 대기는 허들 스툴, 연결됨(할 일 없음)은 주인 자리 뒤에 선다.
- *   상태가 바뀔 때만 새 자리로 걷고, 산책은 하지 않는다.
+ * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리 옆에서 출발해
+ *   빈 바닥을 돌아다니다 멈춰 쉰다(화면 연출). 팀원은 가구를 쓰지 않는다(사용자 결정 "가구랑 상호작용하는 건 에이전트만
+ *   가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
+ * - 에이전트: 작업 현황(MON-A05) 상태별 자리에서 출발한다. 연결 전은 라운지 충전 자리(리클라이너)에서 움직이지 않고,
+ *   작업 중은 주인의 빈 아일랜드 의자, 검증 중은 칸반 워룸 화면 앞에 가서 머문다. 대기는 허들 스툴, 연결됨(할 일 없음)은
+ *   주인 자리 뒤에서 출발해 팀원처럼 돌아다닌다.
  */
 function fixedOfficeActors(
   floor: Floor,
@@ -150,6 +152,7 @@ function fixedOfficeActors(
     name: string
     stationary?: boolean
     standing?: boolean
+    idle?: 'stroll'
   })[] = []
   const taken = new Set<string>()
   const key = (spot: Spot) => `${spot.x}/${spot.y}`
@@ -217,10 +220,11 @@ function fixedOfficeActors(
       moving: false,
       floor: 1,
       color: agent.color,
-      status: agent.status,
+      // 팀원은 일하는 상태가 없고, 가구를 쓰지 않고 빈 바닥만 돌아다닌다(D37).
+      status: 'idle',
+      idle: 'stroll',
       appearance: avatarAppearance(agent.avatar),
       standing: true,
-      stationary: true,
     })
   }
   // 주인 자리 뒤(앉는 방향 반대쪽) 0.9칸에 선다. 막혔으면 자리 옆에 앉는다.
@@ -267,6 +271,8 @@ function fixedOfficeActors(
       agentStatus: look,
       appearance: 'agent',
       standing,
+      // 할 일이 없거나 기다리는 에이전트는 첫 자리에서 출발해 돌아다닌다(D37).
+      ...(life === 'idle' ? { idle: 'stroll' as const } : {}),
       // 연결이 끊긴 에이전트는 충전 자리에서 고개를 떨군 채 움직이지 않는다.
       ...(look === 'offline' ? { stationary: true, seated: true } : {}),
     })

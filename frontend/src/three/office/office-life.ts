@@ -1,6 +1,12 @@
 import type { Dir, Floor } from './floors'
 import { T } from './floors'
-import { gridWalkable, moveContinuous, smoothRoute, type Point } from './motion'
+import {
+  clearSegment,
+  gridWalkable,
+  moveContinuous,
+  smoothRoute,
+  type Point,
+} from './motion'
 import { findPath } from './path'
 import { officeSeats, seatApproach } from './social'
 import type { OfficeBehavior } from '@/lib/scene/office-intent'
@@ -13,6 +19,7 @@ export type OfficeLifeDestination =
   | 'visiting'
   | 'following'
   | 'waiting'
+  | 'strolling'
 export type OfficeLifeActivity = OfficeLifeDestination | 'walking' | 'standing'
 export interface OfficeLifeSnapshot {
   activity: OfficeLifeActivity
@@ -29,6 +36,8 @@ export interface OfficeLifeActor extends Point {
   stationary?: boolean
   /** 집 자리(x, y)에 앉지 않고 서 있는다(D37: 할 일 없는 에이전트가 주인 자리 뒤에 선다) */
   standing?: boolean
+  /** 할 일이 없을 때 다니는 곳(D37). 'stroll'은 가구를 쓰지 않고 빈 바닥만 걷다 멈춘다. 없으면 소파·창가·음료대를 오간다. */
+  idle?: 'stroll'
   moving: boolean
   heading?: number
   seated?: boolean
@@ -58,6 +67,7 @@ const LABELS: Record<OfficeLifeDestination | 'standing', string> = {
   visiting: '곁에서 대화하는 중',
   following: '곁에서 따라갈 준비를 하는 중',
   waiting: '말씀하신 자리에서 기다리는 중',
+  strolling: '잠깐 멈춰 둘러보는 중',
 }
 const WALK_LABELS: Record<OfficeLifeDestination, string> = {
   working: '작업하러 책상으로 가는 중',
@@ -67,6 +77,7 @@ const WALK_LABELS: Record<OfficeLifeDestination, string> = {
   visiting: '부른 사람에게 가는 중',
   following: '사용자를 따라가는 중',
   waiting: '멈출 자리로 이동하는 중',
+  strolling: '사무실을 돌아다니는 중',
 }
 // 사람끼리 지킬 거리(px, 1타일 = 32). 로봇 팀원 머리 지름(1.1타일, 약 35px)에 맞춘다.
 export const PERSONAL_SPACE = 34
@@ -79,6 +90,12 @@ const BLOCKED_RETRY_SECONDS = 5
 const hash = (id: string) =>
   [...id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 7)
 const feet = (x: number, y: number): Point => ({ x: x * T + 16, y: y * T + 27 })
+// 정수 하나를 고르게 흩는다. hash는 끝 글자만 다른 문자열의 순서가 거의 같아 섞는 데 쓰지 않는다.
+const mix = (value: number) => {
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b)
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b)
+  return (value ^ (value >>> 16)) >>> 0
+}
 
 interface Destination {
   id: string
@@ -127,12 +144,84 @@ export function keepsSpace(
   })
 }
 
+// 돌아다니다 멈출 자리는 지금 자리에서 3칸 넘게 떨어진 곳이다. 바로 옆 칸만 오가면 제자리처럼 보인다.
+const STROLL_MIN = 3 * T
+
+/**
+ * 돌아다닐 다음 자리 후보(D37). 같은 seed면 늘 같은 순서로 섞는다. 지금 자리에서 가까운 곳과, 누가 서 있거나 가기로 한
+ * 자리 곁(개인 거리의 1.5배 안)은 뺀다.
+ */
+export function strollCandidates(
+  spots: readonly Point[],
+  from: Point,
+  seed: number,
+  avoid: readonly Point[] = [],
+): Point[] {
+  return spots
+    .filter(
+      (spot) =>
+        Math.hypot(spot.x - from.x, spot.y - from.y) > STROLL_MIN &&
+        avoid.every(
+          (other) =>
+            Math.hypot(spot.x - other.x, spot.y - other.y) >=
+            PERSONAL_SPACE * 1.5,
+        ),
+    )
+    .map((spot, index) => ({ spot, order: mix(mix(seed) + index) }))
+    .sort((a, b) => a.order - b.order)
+    .map(({ spot }) => spot)
+}
+
+/**
+ * 막고 선 사람들에게서 한 걸음(40px) 물러설 자리. 여덟 방향 중 벽 없이 곧장 갈 수 있고 가장 가까운 사람과 가장 멀어지는
+ * 곳이고, 어디로 가도 지금보다 멀어지지 않으면 없다.
+ */
+export function retreatSpot(
+  from: Point,
+  blockers: readonly Point[],
+  free: (x: number, y: number) => boolean,
+): Point | undefined {
+  const gap = (point: Point) =>
+    Math.min(
+      ...blockers.map((other) =>
+        Math.hypot(point.x - other.x, point.y - other.y),
+      ),
+    )
+  let best: Point | undefined,
+    score = gap(from)
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI) / 4,
+      point = {
+        x: from.x + Math.cos(angle) * 40,
+        y: from.y + Math.sin(angle) * 40,
+      }
+    if (clearSegment(from, point, free) && gap(point) > score) {
+      best = point
+      score = gap(point)
+    }
+  }
+  return best
+}
+
+const dirOf = (dx: number, dy: number): Dir =>
+  Math.abs(dx) > Math.abs(dy)
+    ? dx > 0
+      ? 'right'
+      : 'left'
+    : dy > 0
+      ? 'down'
+      : 'up'
+
 export class OfficeLifeSimulation {
   private residents = new Map<string, Resident>()
   private lastFloor?: Floor
   private floorKey = ''
   private destinations: Destination[] = []
   private blocked: boolean[][] = []
+  /** 돌아다니다 멈출 수 있는 빈 바닥(발 위치) */
+  private strollSpots: Point[] = []
+  /** 이번 걸음의 제자리 배우(연결 전 에이전트 등)와 나. 돌아다닐 자리를 고를 때 피한다. */
+  private fixed: Point[] = []
 
   private readonly projectId: string
   constructor(projectId: string) {
@@ -173,6 +262,16 @@ export class OfficeLifeSimulation {
           floor.grid[y][x] === '#' ||
           floor.grid[y][x] === 'g' ||
           floor.grid[y][x] === 'o',
+      ),
+    )
+    // 둘레 여덟 칸이 모두 빈 바닥에서만 멈춘다. 좁은 통로에 서서 길을 막지 않는다.
+    this.strollSpots = this.blocked.flatMap((row, y) =>
+      row.flatMap((_, x) =>
+        [-1, 0, 1].every((dy) =>
+          [-1, 0, 1].every((dx) => this.blocked[y + dy]?.[x + dx] === false),
+        ) && this.free(feet(x, y).x, feet(x, y).y)
+          ? [feet(x, y)]
+          : [],
       ),
     )
     this.destinations = officeSeats({ ...floor, blocked: this.blocked })
@@ -312,7 +411,32 @@ export class OfficeLifeSimulation {
             },
           ]
         : []
-    else {
+    else if (actor.idle === 'stroll') {
+      // 다른 사람이 지금 선 곳, 가기로 한 곳, 제자리 배우와 나를 피한다. 길찾기는 몇 곳만 해 본다.
+      const avoid = [
+        ...[...this.residents.entries()]
+          .filter(([id]) => id !== actor.id)
+          .flatMap(([, state]) =>
+            state.target ? [state, state.target.landing] : [state],
+          ),
+        ...this.fixed,
+      ]
+      choices = strollCandidates(
+        this.strollSpots,
+        resident,
+        hash(actor.id) + resident.visits,
+        avoid,
+      )
+        .slice(0, 6)
+        .map((spot) => ({
+          id: `stroll/${spot.x}/${spot.y}`,
+          activity: 'strolling',
+          landing: spot,
+          pose: spot,
+          dir: dirOf(spot.x - resident.x, spot.y - resident.y),
+          seated: false,
+        }))
+    } else {
       const idle: OfficeLifeDestination[] = ['resting', 'window', 'coffee']
       const first = completed
         ? 0
@@ -605,6 +729,10 @@ export class OfficeLifeSimulation {
       ...actors.filter((other) => other.stationary && other.id !== selfId),
       ...(options.caller ? [options.caller] : []),
     ]
+    this.fixed = [
+      ...actors.filter((other) => other.stationary),
+      ...(options.caller ? [options.caller] : []),
+    ]
     for (const id of this.residents.keys())
       if (!live.has(id)) {
         this.residents.delete(id)
@@ -637,7 +765,11 @@ export class OfficeLifeSimulation {
           visits: 0,
         }
         this.residents.set(actor.id, resident)
-        this.choose(resident, actor, false)
+        // 돌아다니는 사람은 처음 자리에서 1~4초 서 있다가 걷기 시작한다. 사무실을 열자마자 모두 함께 걷지 않는다.
+        if (!working && actor.idle === 'stroll') {
+          resident.activity = 'strolling'
+          resident.dwell = 1 + (hash(actor.id) % 4)
+        } else this.choose(resident, actor, false)
       } else if (
         changed ||
         resident.working !== working ||
@@ -809,11 +941,25 @@ export class OfficeLifeSimulation {
                     AVOID_RADIUS
                 )
                   other.dwell = 0
-              const detour = this.route(
-                resident,
-                resident.target.landing,
-                blockers,
-              )
+              // 좁은 문에서 걷는 사람끼리 서로 막으면 어느 쪽도 개인 거리 안으로 내딛지 못해 함께 멈춘다. 돌아다니는
+              // 사람이 한 걸음 물러서 길을 내준다. 일하러 가는 사람에게는 늘 비키고, 둘 다 돌아다니면 id 순서가 늦은
+              // 쪽만 비켜 둘이 같이 물러섰다 다시 막히지 않는다.
+              const yields =
+                !resident.working &&
+                (!resident.behavior || resident.behavior === 'autonomous') &&
+                [...this.residents].some(
+                  ([id, other]) =>
+                    id !== actor.id &&
+                    Math.hypot(other.x - resident.x, other.y - resident.y) <
+                      AVOID_RADIUS &&
+                    (other.working || hash(id) > hash(actor.id)),
+                )
+              const back = yields
+                ? retreatSpot(resident, blockers, this.free)
+                : undefined
+              const detour = back
+                ? [back, ...(this.route(back, resident.target.landing) ?? [])]
+                : this.route(resident, resident.target.landing, blockers)
               if (detour) resident.route = detour
               else if (
                 !resident.behavior ||
@@ -834,7 +980,9 @@ export class OfficeLifeSimulation {
             resident.dwell =
               target.id === 'hold/waiting'
                 ? BLOCKED_RETRY_SECONDS
-                : 11 + (hash(`${actor.id}/${resident.visits}`) % 10)
+                : target.activity === 'strolling'
+                  ? 3 + (hash(`${actor.id}/${resident.visits}`) % 5)
+                  : 11 + (hash(`${actor.id}/${resident.visits}`) % 10)
             if (
               target.seated &&
               Math.hypot(
