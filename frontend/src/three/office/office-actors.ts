@@ -5,6 +5,8 @@ import { characterOf } from '@/lib/characters'
 import type { OfficeAppearance, OfficeEntity3D } from './OfficeRenderer3D'
 import type { Floor } from './floors'
 import { officeWorkZone } from './office-layout'
+import { PERSONAL_SPACE } from './office-life'
+import { officeLanding, officeWalkable } from './office-navigation'
 import { RECEPTIONIST } from './social'
 
 // 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D34).
@@ -174,6 +176,9 @@ function fixedOfficeActors(
       agent.kind !== 'lead' && !agent.hired_by && agent.duty_status !== 'off',
   )
   // 자리(의자)에서 앉는 방향 반대쪽으로 back칸, 옆으로 side칸 떨어진 빈 곳. 막혔거나 이미 누가 선 곳이면 없다.
+  const feet = (spot: Spot) => ({ x: spot.x * 32 + 16, y: spot.y * 32 + 27 })
+  /** 서서 출발하는 사람(팀원, 주인 뒤 에이전트)의 발 위치 */
+  const standing: { x: number; y: number }[] = []
   const standAt = (
     seat: Spot,
     back: number,
@@ -190,25 +195,46 @@ function fixedOfficeActors(
       y: seat.y + dy * back + dx * side,
       facing: seat.facing,
     }
+    // 몸 둘레까지 걸을 수 있는 바닥이고, 먼저 선 사람과 사람 사이 거리만큼 떨어진 곳이어야 한다. 소수점 좌표가
+    // 똑같은지만 보면 등을 맞댄 두 의자의 팀원이 같은 곳에 겹쳐 섰다.
+    const at = feet(spot)
     const free =
-      !floor.blocked[Math.floor(spot.y + 23 / 32)]?.[Math.floor(spot.x + 0.5)]
-    return free && !taken.has(key(spot))
-      ? (taken.add(key(spot)), spot)
-      : undefined
+      officeWalkable(floor, at.x, at.y) &&
+      !taken.has(key(spot)) &&
+      standing.every(
+        (other) => Math.hypot(other.x - at.x, other.y - at.y) >= PERSONAL_SPACE,
+      )
+    return free ? (taken.add(key(spot)), standing.push(at), spot) : undefined
   }
   for (const agent of people) {
     const seat = homeSeats.get(agent.id)
     if (seat) taken.add(key(seat))
+  }
+  const landNear = (seat: Spot): Spot | undefined => {
+    const point = officeLanding(floor, feet(seat), [
+      ...standing,
+      ...[...homeSeats.values()].map(feet),
+    ])
+    if (!point) return undefined
+    standing.push(point)
+    return {
+      x: (point.x - 16) / 32,
+      y: (point.y - 27) / 32,
+      facing: seat.facing,
+    }
   }
   for (const agent of people) {
     const seat = homeSeats.get(agent.id)
     if (!seat || agent.id === currentUserId) continue
     // 자기 의자 뒤 1.5칸, 이웃 의자 사이(옆 0.9칸)에 서서 책상을 본다. 의자 바로 뒤 0.9칸은 주인의 에이전트(연결됨)
     // 자리라 비워 두고, 둘 사이는 사람 사이 거리(PERSONAL_SPACE)보다 멀다. 빈 의자에는 그 팀원의 작업 중 에이전트만 앉는다.
+    // 벽을 등진 의자(나무 배치의 북·동쪽 벽 자리)는 뒤가 벽이라, 의자에서 가장 가까운 빈 칸 중 이미 선 사람과 모든
+    // 작업 의자에서 사람 사이 거리만큼 떨어진 곳에 선다. 그전에는 그 팀원이 사무실에서 빠졌다.
     const spot =
       standAt(seat, 1.5, 0.9) ??
       standAt(seat, 1.5, -0.9) ??
-      standAt(seat, 1.5, 0)
+      standAt(seat, 1.5, 0) ??
+      landNear(seat)
     if (!spot) continue
     result.push({
       id: agent.id,

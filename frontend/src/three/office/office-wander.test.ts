@@ -60,6 +60,41 @@ test('막혔을 때 물러설 자리는 벽 없이 곧장 가고 막은 사람�
 
 const DESIGNS = ['glass', 'brick', 'modern', 'tower', 'wood'] as const
 
+// 나무 배치의 북·동쪽 벽을 등진 의자는 뒤에 설 곳이 없어, 그 자리 팀원이 사무실에서 빠졌다. 작업 자리(10석)를 받은
+// 팀원은 배치와 상관없이 모두 사무실에 있고, 걸을 수 있는 바닥에서 서로 사람 사이 거리를 두고 출발한다.
+test.each(DESIGNS)(
+  '%s: 작업 자리를 받은 팀원은 모두 사무실에 있다',
+  (design) => {
+    const floor = makeDreamFloor(
+      makeBuilding(ALL_KEYS, design, null, {}).floors[1],
+      4,
+    )
+    const agents = officeSceneAgents([
+      { id: 'member:21', name: '나', kind: 'human' },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `member:${30 + index}`,
+        name: `팀원 ${index}`,
+        kind: 'agent' as const,
+      })),
+    ])
+    const homes = officeHomeSeats(floor, agents)
+    const people = officeActors(floor, agents, 4, 'member:21', homes).filter(
+      (actor) => actor.id.startsWith('member:3'),
+    )
+    expect(people.map((person) => person.id).sort()).toEqual(
+      [...homes.keys()].filter((id) => id.startsWith('member:3')).sort(),
+    )
+    expect(people).toHaveLength(10)
+    for (const [index, person] of people.entries()) {
+      expect(officeWalkable(floor, person.x, person.y)).toBe(true)
+      for (const other of people.slice(index + 1))
+        expect(
+          Math.hypot(person.x - other.x, person.y - other.y),
+        ).toBeGreaterThanOrEqual(PERSONAL_SPACE)
+    }
+  },
+)
+
 test.each(DESIGNS)(
   '%s: 팀원과 할 일 없는 에이전트는 벽·가구를 지나지 않고 서로 겹치지 않게 돌아다니고, 작업 중 에이전트는 자리에 있다',
   (design) => {
@@ -103,12 +138,15 @@ test.each(DESIGNS)(
       officeHomeSeats(floor, agents),
     )
     const at = (id: string) => actors.find((actor) => actor.id === id)!
-    // 팀원은 제자리 배우가 아니고, 일하는 상태가 없으며 가구를 쓰지 않는 걷기만 한다. 나무 배치는 벽에 붙은 의자의
-    // 팀원 둘이 설 곳을 못 찾아 빠지므로(이전부터) 사무실에 있는 팀원만 본다.
+    // 팀원은 제자리 배우가 아니고, 일하는 상태가 없으며 가구를 쓰지 않는 걷기만 한다.
     const people = actors.filter(
       (actor) => actor.id.startsWith('member:') && actor.id !== 'member:21',
     )
-    expect(people.length).toBeGreaterThan(0)
+    expect(people.map((person) => person.id)).toEqual([
+      'member:22',
+      'member:23',
+      'member:24',
+    ])
     for (const person of people) {
       expect(person).toMatchObject({ idle: 'stroll', status: 'idle' })
       expect(person.stationary).toBeFalsy()
