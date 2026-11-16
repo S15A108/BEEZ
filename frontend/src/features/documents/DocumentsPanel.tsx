@@ -42,7 +42,7 @@ import { reviewStage } from './reviewStage'
 import { VerifiedCitation } from './VerifiedCitation'
 
 // 공용 문서함 수정안(PNL-02 모달안 + 10-29 프로젝트 시작 보드): 목록 · 상세 · 등록 · 검토를 같은 창 안에서 바꿔 보여 준다.
-// 시작 전에는 필수 문서 4종 칸과 '프로젝트 시작'(PLN-A10), 시작 뒤에는 현재 문서만 두고 문서 수정은 변경 제안으로 보낸다.
+// 시작 전에는 필수 문서 4종 칸과 기획 분석을 여는 '설계 초안 만들기'(4종 승인 전에는 잠김), 시작 뒤에는 현재 문서만 두고 문서 수정은 변경 제안으로 보낸다.
 const KINDS = ['PLAN', 'REQUIREMENTS', 'ERD', 'API_SPEC'] as const
 type Kind = (typeof KINDS)[number]
 const kindIcon = {
@@ -519,7 +519,7 @@ export function DocumentsPanel({
                 <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3.5">
                   <Button variant="secondary" disabled>
                     <Lock />
-                    프로젝트 시작
+                    설계 초안 만들기
                   </Button>
                 </div>
               )}

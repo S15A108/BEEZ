@@ -427,8 +427,8 @@ it('등록 중 닫기를 막고 같은 제목의 기존 문서 대신 응답 문
   expect(useWorkspaceStore.getState().focusId).toBe('2')
 })
 
-// 10-29 보드: 시작 전에는 필수 문서 4종 칸에 승인 수를 보여 주고, 4종이 승인되기 전에는 '프로젝트 시작'을 잠근다.
-it('시작 전에는 필수 문서 4종 칸과 잠긴 프로젝트 시작을 보여 준다', async () => {
+// 10-29 보드: 시작 전에는 필수 문서 4종 칸에 승인 수를 보여 주고, 4종이 승인되기 전에는 '설계 초안 만들기'를 잠근다.
+it('시작 전에는 필수 문서 4종 칸과 잠긴 설계 초안 만들기를 보여 준다', async () => {
   const user = userEvent.setup()
   const approved = { ...version, status: 'APPROVED' as const }
   vi.mocked(documentsApi.list).mockResolvedValue({
@@ -446,7 +446,10 @@ it('시작 전에는 필수 문서 4종 칸과 잠긴 프로젝트 시작을 보
   })
   mount()
   expect(await screen.findByText('팀장 승인 2 / 4')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: '설계 초안 만들기' }),
+  ).toBeDisabled()
+  expect(screen.queryByRole('button', { name: '프로젝트 시작' })).toBeNull()
   expect(screen.getAllByText('승인 v1')).toHaveLength(2)
   await user.click(screen.getByRole('button', { name: '기획안 올리기' }))
   // 유형은 고르지 않고 누른 칸의 종류로 고정해 보인다(사용자 승인으로 라디오 확인을 바꿈).
