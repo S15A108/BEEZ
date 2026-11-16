@@ -851,6 +851,20 @@ it('참여자는 안건보다 앞 제목 줄에 있고, 펼친 안건은 대화 
   expect(log).toHaveClass('flex-1', 'lg:min-h-28')
 })
 
+// PR #306 리뷰: 역할은 툴팁으로 접어도, 다른 곳에 없는 참여 상태(참여 요청·불참)는 칩에 글자로 남긴다.
+it('관련자로 부른 사람의 칩에는 참여 요청이 글자로 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await screen.findByRole('heading', { name: '초대 안내 문구 검토' })
+  await user.click(screen.getByRole('button', { name: '관련자' }))
+  await user.click(await screen.findByRole('checkbox', { name: /박팀원/ }))
+  await user.keyboard('{Escape}')
+  const people = screen.getByRole('group', { name: '참여자' })
+  expect(await within(people).findByText('참여 요청')).not.toHaveClass(
+    'sr-only',
+  )
+})
+
 // live 모드: dev 백엔드에 회의 API가 아직 없으면 회의 칸만 '준비 중'으로 두고 창은 그대로 연다.
 it('회의 API가 서버에 없으면 오류 대신 준비 중으로 보인다', async () => {
   vi.spyOn(meetingsApi, 'list').mockRejectedValue(

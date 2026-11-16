@@ -627,10 +627,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                       roleOf(member, meeting.task_ids),
                                       item.added_by_member_id &&
                                         `${nameOfMember(item.added_by_member_id)}이 추가`,
-                                      participationLabel[item.status],
                                     ]
                                       .filter(Boolean)
                                       .join(' · ')}
+                                    status={participationLabel[item.status]}
                                   >
                                     {removable && (
                                       <button
@@ -1151,18 +1151,22 @@ function PersonChip({
   avatar,
   name,
   role,
+  status,
   children,
 }: {
   avatar: ReactNode
   name: string
   role?: string
+  /** 참여 요청·불참처럼 아직 대화에 없는 사람의 상태. 칩에 글자로 보인다. */
+  status?: string
   children?: ReactNode
 }) {
   // 칩이 제목 줄에 들어가도록 역할은 글자로 펼치지 않고 마우스를 올리면 보인다. 화면 읽기 프로그램은 그대로 읽는다.
-  // 이 회의의 작업과 담당자는 안건의 작업 버튼과 '관련자' 창에도 있다.
+  // 이 회의의 작업과 담당자는 안건의 작업 버튼과 '관련자' 창에도 있다. 참여 상태는 다른 곳에 없어 칩에 남긴다(리뷰 11-16).
+  const detail = [role, status].filter(Boolean).join(' · ')
   return (
     <span
-      title={role ? `${name} · ${role}` : undefined}
+      title={detail ? `${name} · ${detail}` : undefined}
       className={cn(
         'inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1',
         children ? 'pr-1.5' : 'pr-3',
@@ -1172,6 +1176,9 @@ function PersonChip({
       {avatar}
       <strong className="font-semibold">{name}</strong>
       {role && <span className="sr-only">{role}</span>}
+      {status && (
+        <span className="text-xs text-muted-foreground">{status}</span>
+      )}
       {children}
     </span>
   )
