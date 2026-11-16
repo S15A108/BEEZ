@@ -274,7 +274,16 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   // 담당자 없는 작업(assignee_member_id 생략)은 팀원 목록을 받기 전에도 내 작업으로 세지 않는다.
   const mine = (entry?: TaskDetail) =>
     !!entry?.assignee_member_id && entry.assignee_member_id === memberId
-  const shown = tab === 'mine' ? entries.filter(mine) : entries
+  // '팀 전체' 탭의 담당자 거르기(S15P31A108-418). ''는 전체, 'none'은 담당자 없는 작업(assignee_member_id 생략), 그 밖은 멤버 ID다.
+  const [assignee, setAssignee] = useState('')
+  const shown =
+    tab === 'mine'
+      ? entries.filter(mine)
+      : assignee
+        ? entries.filter(
+            (entry) => (entry.assignee_member_id ?? 'none') === assignee,
+          )
+        : entries
   // ponytail: 검색도 다 받은 목록에서 키·제목으로 거른다. 작업이 수백 개를 넘어 느려지면 서버 검색·개수로 옮긴다.
   const [query, setQuery] = useState('')
   const search = query.trim().toLowerCase()
@@ -558,6 +567,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                   aria-selected={tab === value}
                   onClick={() => {
                     setTab(value)
+                    setAssignee('')
                     setSelected(null)
                   }}
                   className={`rounded-full px-3 py-1 text-sm ${tab === value ? 'bg-foreground text-background' : 'bg-muted'}`}
@@ -571,13 +581,40 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
             <AsyncState query={tasks}>
               {() => (
                 <div className="space-y-3">
-                  <Input
-                    type="search"
-                    aria-label="작업 검색"
-                    placeholder="작업 이름이나 번호로 찾기"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      type="search"
+                      aria-label="작업 검색"
+                      placeholder="작업 이름이나 번호로 찾기"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                    />
+                    {tab === 'team' && (
+                      <NativeSelect
+                        aria-label="담당자"
+                        className="max-w-40 shrink-0"
+                        value={assignee}
+                        onChange={(event) => {
+                          setAssignee(event.target.value)
+                          setSelected(null)
+                        }}
+                      >
+                        <NativeSelectOption value="">
+                          담당자 전체
+                        </NativeSelectOption>
+                        {members.data?.items.map((member) => (
+                          <NativeSelectOption key={member.id} value={member.id}>
+                            {member.id === memberId
+                              ? `${member.name} (나)`
+                              : member.name}
+                          </NativeSelectOption>
+                        ))}
+                        <NativeSelectOption value="none">
+                          담당자 없음
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    )}
+                  </div>
                   <ul
                     aria-label="상태별 작업 수"
                     className="grid grid-cols-4 gap-1.5"
@@ -670,7 +707,11 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                     <EmptyState>
                       {tab === 'mine'
                         ? '아직 맡은 작업이 없어요. 첫 작업 계획을 등록하거나 팀 전체를 보세요.'
-                        : '맡을 작업의 목표와 범위부터 등록해 보세요.'}
+                        : assignee === 'none'
+                          ? '담당자 없는 작업이 없어요.'
+                          : assignee
+                            ? '이 팀원이 맡은 작업이 없어요. 다른 담당자를 골라 보세요.'
+                            : '맡을 작업의 목표와 범위부터 등록해 보세요.'}
                     </EmptyState>
                   ) : (
                     !found.length && (
