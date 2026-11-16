@@ -1,12 +1,13 @@
 import * as THREE from 'three'
 import { cloneKenney, loadKenney } from '../kenney'
 import { kenneyBuildingOf, kenneyBuildingUrl } from '../buildingModels'
-import { RING_RADIUS as R, RING_SLOTS as N } from './ring'
+import { RING_PITCH as P, RING_RADIUS as R, RING_SLOTS as N } from './ring'
 
 // 나의 도시(D33): 원형 도시(캔버스 SCR-04-v2-city v474, 그림 코드 ring2.html)를 앞쪽 호만 보이게 그린다(캔버스 미리보기
 // city-ring-queue-preview 4번, 사용자 결정 '12칸 유지'). 칸은 고리를 따라 놓이고 고리가 통째로 돈다. 화면은 고리 앞쪽만 담아
 // 부지가 가로로 한 줄 선 것처럼 보이고, 양 끝 칸은 가라앉지 않고 고리를 따라 뒤로 돌아 화면 밖으로 나간다.
-// 주변(순환 도로·보도·가로수·공원·가로등·벤치·흐린 먼 건물)은 고리와 함께 돌고, 고리 안쪽은 비워 둔다.
+// 주변(순환 도로와 차·버스, 보도·가로수·공원·가로등·벤치·사람, 칸 사이 쉼터, 고리 안쪽 공원, 작은 건물·흐린 먼 건물)은
+// 고리와 함께 돈다.
 export interface RingProject {
   id: string
   slot: number
@@ -28,12 +29,35 @@ const FIT: Record<string, number> = {
   tower: 54.76,
   wood: 46.34,
 }
-// 화면 틀. 나의 도시는 1310px 화면에 860단위를 담고(1단위 ≈ 1.52px) 앞 칸의 땅을 화면 높이 75%에 둔다(미리보기 4번).
+// 화면 틀. 나의 도시는 1310px 화면에 1000단위를 담고(1단위 ≈ 1.31px) 앞 칸의 땅을 화면 높이 75%에 둔다(미리보기 4번).
+// 칸 간격을 넓히며 860에서 1000으로 넓혀 건물은 0.86배, 부지 사이 빈 땅은 약 61px에서 118px가 됐다(목업 A안).
 // 만들기 창 배경은 820단위를 담고 고리 중심을 화면 위 끝에서 70단위 아래에 둔다(보드 SCR-04-v2-create-project).
 const FRAME = {
-  city: { view: 860, px: 1310, front: 0.75 },
+  city: { view: 1000, px: 1310, front: 0.75 },
   backdrop: { view: 820, top: 70 },
 }
+// 순환 도로의 차 색. 부지·건물보다 눈에 띄지 않게 흐리게 칠한다.
+const CAR_COLORS = [
+  '#e8a598',
+  '#9fc1d9',
+  '#f1d27a',
+  '#b9c7a5',
+  '#f7f3ea',
+  '#c9b3d6',
+]
+const PEOPLE_COLORS = ['#e3a07f', '#7fa7c9', '#d9c27a', '#a5b98d', '#c49bb8']
+// 가로수 띠 사이 작은 건물. 먼 건물처럼 한 가지씩 흐린 색으로 칠한다.
+const SMALL_MODELS = [
+  'low-detail-building-a',
+  'low-detail-building-b',
+  'low-detail-building-c',
+  'low-detail-building-d',
+  'low-detail-building-g',
+  'low-detail-building-h',
+  'low-detail-building-j',
+  'low-detail-building-m',
+]
+const SMALL_TINTS = ['#ece3d3', '#e2e6d8', '#efe0d8', '#e0e3e8']
 const EL = Math.PI / 4
 const AZ = Math.PI / 4
 // 먼 건물은 한 가지 흐린 색으로 칠한다. 캔버스는 b·c·d·f·h·k를 썼고, 레포에 없는 c·k 자리에 a·g를 쓴다.
@@ -74,7 +98,7 @@ export class CityRenderer3D {
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>()
   private readonly owned = new Set<{ dispose(): void }>()
   private readonly slots: Slot[] = []
-  /** 이웃 칸이 둘 다 쓰일 때만 보이는 생울타리·화단. gaps[s]는 칸 s와 s+1 사이 */
+  /** 이웃 칸이 둘 다 쓰일 때만 보이는 안쪽 화단. gaps[s]는 칸 s와 s+1 사이 */
   private readonly gaps: THREE.Object3D[][] = []
   private readonly highlight: THREE.Mesh
   private used = new Set<number>()
@@ -105,13 +129,15 @@ export class CityRenderer3D {
     const sun = new THREE.DirectionalLight('#fff4e0', 1.9)
     sun.position.set(-260, 700, 380)
     sun.castShadow = true
+    // 그림자는 바깥 길 끝(R + 786)까지 받는다.
+    const reach = R + 800
     Object.assign(sun.shadow.camera, {
-      left: -1100,
-      right: 1100,
-      top: 1100,
-      bottom: -1100,
+      left: -reach,
+      right: reach,
+      top: reach,
+      bottom: -reach,
       near: 10,
-      far: 2600,
+      far: 2600 + reach,
     })
     sun.shadow.mapSize.set(2048, 2048)
     sun.shadow.bias = -0.0006
@@ -663,16 +689,26 @@ export class CityRenderer3D {
     }
     this.farBuildings(farSpots)
 
-    // 고리 위: 칸 사이 낮은 생울타리와 안쪽 화단(이웃 칸이 둘 다 쓰일 때만), 가로등과 칸 사이 나무
-    const hedge = this.own(new THREE.BoxGeometry(9, 7, 92))
+    // 고리 위: 칸 사이 쉼터(둥근 잔디, 나무 셋, 벤치 둘), 안쪽 화단(이웃 칸이 둘 다 쓰일 때만), 가로등과 칸 사이 나무.
+    // 쉼터는 부지(110단위) 사이 빈 땅(P − 110)의 가운데에 두고, 나무·벤치는 그 반쯤 벌린다.
+    const gapHalf = (P - 110) / 2
+    const o = gapHalf / 2 / P
+    const patch = this.own(new THREE.CircleGeometry(gapHalf - 8, 24))
     for (let s = 0; s < N; s++) {
-      const h = this.at(
-        new THREE.Mesh(hedge, this.material('#a9bd92')),
+      const g = s + 0.5
+      const lawn = this.at(
+        new THREE.Mesh(patch, this.material('#d5e1bd')),
         R,
-        s + 0.5,
-        3.5,
+        g,
+        1.7,
       )
-      h.castShadow = true
+      lawn.rotation.set(-Math.PI / 2, 0, 0)
+      lawn.receiveShadow = true
+      tree(R - 24, g - o, 1)
+      tree(R + 22, g + o, 0.9)
+      tree(R + 2, g, 0.75)
+      bench(R - 26, g + o)
+      bench(R + 24, g - o)
       const box = this.at(
         new THREE.Mesh(bed, this.material('#c9b9a0')),
         R - 92,
@@ -689,13 +725,173 @@ export class CityRenderer3D {
         f.position.set(0, 3, dx)
         box.add(f)
       }
-      h.visible = box.visible = false
-      this.gaps.push([h, box])
+      box.visible = false
+      this.gaps.push([box])
       lamp(R + 95, s + 0.25)
       if (s % 3 !== 0) tree(R + 95, s + 0.5, 0.75)
       tree(R + 178, s + 0.15, 0.8)
       tree(R + 178, s + 0.85, 0.8)
     }
+
+    // 고리 안쪽 공원: 벌집 둘레 연못, 칸마다 벌집에서 뻗는 길, 산책로와 가로등·벤치, 꽃밭, 나무
+    const inner0 = 72
+    const inner1 = R - 105
+    const spoke = this.own(new THREE.BoxGeometry(10, 0.5, inner1 - inner0))
+    const soil = this.own(new THREE.BoxGeometry(44, 1, 26))
+    const strip = this.own(new THREE.BoxGeometry(40, 1.6, 5))
+    ringFlat(new THREE.RingGeometry(34, 62, 48), '#c7d9da', 1.95)
+    ringFlat(new THREE.RingGeometry(62, 70, 48), '#e9e3d6', 1.95)
+    ringFlat(new THREE.RingGeometry(R - 146, R - 134, 192), '#e9e3d6', 1.6)
+    for (let s = 0; s < N; s++) {
+      const g = s + 0.5
+      this.at(
+        new THREE.Mesh(spoke, this.material('#eee6d2')),
+        (inner0 + inner1) / 2,
+        s,
+        1.9,
+      )
+      lamp(R - 126, g)
+      for (const th of [s + 0.12, s + 0.88])
+        this.at(new THREE.Mesh(seat, this.material('#bca889')), R - 152, th, 3)
+      tree(R - 160, s + 0.3, 0.7)
+      tree(R - 160, s + 0.7, 0.7)
+      const garden = this.at(
+        new THREE.Mesh(soil, this.material('#c9b9a0')),
+        R - 215,
+        g,
+        2,
+      )
+      for (const [i, color] of ['#e3b7b0', '#e8d58f', '#d9b8cf'].entries()) {
+        const row = new THREE.Mesh(strip, this.material(color))
+        row.position.set(0, 1, (i - 1) * 8)
+        garden.add(row)
+      }
+      tree(R - 215, s + 0.15, 0.8 + rnd() * 0.2)
+      tree(R - 215, s + 0.85, 0.8 + rnd() * 0.2)
+      tree(R - 275, g + (rnd() - 0.5) * 0.1, 0.7)
+    }
+
+    // 순환 도로의 차와 버스, 정류장, 바깥 길 입구의 건널목과 길가에 세운 차
+    const body = this.own(new THREE.BoxGeometry(20, 6, 10))
+    const cabin = this.own(new THREE.BoxGeometry(11, 5, 8))
+    const car = (r: number, th: number, i: number) => {
+      const group = new THREE.Group()
+      const b = new THREE.Mesh(
+        body,
+        this.material(CAR_COLORS[i % CAR_COLORS.length]),
+      )
+      b.position.y = 4
+      const c = new THREE.Mesh(cabin, this.material('#f4f1ea'))
+      c.position.set(-1, 9.5, 0)
+      b.castShadow = c.castShadow = true
+      group.add(b, c)
+      return this.at(group, r, th, 1)
+    }
+    for (let i = 0; i < Math.round(N * 1.5); i++)
+      car(rnd() < 0.5 ? R + 116 : R + 138, rnd() * N, i)
+    const coach = this.own(new THREE.BoxGeometry(46, 12, 13))
+    const glass = this.own(new THREE.BoxGeometry(42, 3.5, 13.4))
+    const roof = this.own(new THREE.BoxGeometry(24, 1.5, 9))
+    const panel = this.own(new THREE.BoxGeometry(24, 10, 1))
+    for (let k = 0; k < N / 6; k++) {
+      const th = 6 * k + 1.75
+      const bus = new THREE.Group()
+      const b = new THREE.Mesh(coach, this.material('#f1d27a'))
+      b.position.y = 7
+      const w = new THREE.Mesh(glass, this.material('#e7eef0'))
+      w.position.y = 9
+      b.castShadow = true
+      bus.add(b, w)
+      this.at(bus, R + 138, th - 0.15, 1)
+      const stop = new THREE.Group()
+      const top = new THREE.Mesh(roof, this.material('#d8d2c6'))
+      top.position.y = 13
+      const back = new THREE.Mesh(panel, this.material('#cfe0e3'))
+      back.position.set(0, 7, 4)
+      top.castShadow = true
+      stop.add(top, back)
+      this.at(stop, R + 158, th)
+    }
+    const stripe = this.own(new THREE.BoxGeometry(3.5, 0.3, 14))
+    for (let k = 0; k < N / 3; k++) {
+      const th0 = 3 * k + 0.5
+      for (let x = -15; x <= 15; x += 6)
+        this.at(
+          new THREE.Mesh(stripe, this.material('#f7f3ea')),
+          R + 182,
+          th0,
+          1.2,
+        ).translateX(x)
+      for (let r = R + 210; r < R + 560; r += 34)
+        if (rnd() < 0.45)
+          car(r, th0, Math.floor(rnd() * 6)).translateX(
+            rnd() < 0.5 ? -14 : 14,
+          ).rotation.y += Math.PI / 2
+    }
+
+    // 사람: 칸 앞 광장, 안쪽 산책로, 바깥 보도, 정류장
+    const torso = this.own(new THREE.CylinderGeometry(1.8, 2.2, 7, 6))
+    const face = this.own(new THREE.IcosahedronGeometry(2, 0))
+    const person = (r: number, th: number) => {
+      const group = new THREE.Group()
+      const b = new THREE.Mesh(
+        torso,
+        this.material(PEOPLE_COLORS[Math.floor(rnd() * PEOPLE_COLORS.length)]),
+      )
+      b.position.y = 3.5
+      const h = new THREE.Mesh(face, this.material('#f1d9c0'))
+      h.position.y = 9
+      b.castShadow = h.castShadow = true
+      group.add(b, h)
+      return this.at(group, r, th, 1.5)
+    }
+    for (let s = 0; s < N; s++) {
+      person(R + 68 + rnd() * 10, s + 0.5 + (rnd() - 0.5) * 0.2)
+      if (rnd() < 0.6) person(R + 72, s + 0.35 + rnd() * 0.3)
+      person(R - 140 + (rnd() - 0.5) * 6, s + rnd())
+      person(R + 158, s + rnd())
+      if (rnd() < 0.5) person(R + 95, s + rnd())
+    }
+    for (let k = 0; k < N / 6; k++) {
+      person(R + 154, 6 * k + 1.7)
+      person(R + 154, 6 * k + 1.8)
+    }
+
+    // 가로수 띠 사이 작은 건물(Kenney low-detail)
+    const small: { r: number; th: number; s: number; i: number }[] = []
+    for (let th = 0.1, i = 0; th < N; th += 0.5, i++) {
+      const t1 = th + (rnd() - 0.5) * 0.12
+      const r1 = R + 212 + rnd() * 20
+      if (!nearStreet(t1) && !inPark(r1, t1))
+        small.push({ r: r1, th: t1, s: 13 + rnd() * 5, i })
+    }
+    this.smallBuildings(small)
+  }
+
+  private smallBuildings(
+    spots: { r: number; th: number; s: number; i: number }[],
+  ) {
+    void Promise.all(
+      SMALL_MODELS.map((name) => loadKenney(kenneyBuildingUrl(name))),
+    )
+      .then((models) => {
+        if (this.disposed) return
+        for (const spot of spots) {
+          const figure = cloneKenney(models[spot.i % models.length])
+          const tint = this.material(SMALL_TINTS[spot.i % SMALL_TINTS.length])
+          figure.traverse((object) => {
+            const mesh = object as THREE.Mesh
+            if (!mesh.isMesh) return
+            mesh.material = tint
+            mesh.castShadow = mesh.receiveShadow = true
+          })
+          figure.scale.setScalar(spot.s)
+          const group = new THREE.Group()
+          group.add(figure)
+          this.at(group, spot.r, spot.th).rotation.y += Math.PI
+        }
+      })
+      .catch(() => {})
   }
 
   private farBuildings(

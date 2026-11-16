@@ -200,7 +200,8 @@ function CityRuntime({
     const renderer = engine.current
     if (!renderer) return
     const v = view.current
-    v.rot += (v.target - v.rot) * Math.min(1, delta * 8)
+    // 멈춤 자리로 천천히 따라간다(초당 4배, 사용자 요청 "회전속도 더 늦추고"로 8에서 낮췄다).
+    v.rot += (v.target - v.rot) * Math.min(1, delta * 4)
     renderer.render({ ...v, backdrop: latest.current.backdrop })
     // 이름표가 도시 위에 겹친 제목·설명·만들기 버튼(넓은 화면)과 겹치면 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면
     // 겹칠 일이 없다.
