@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest'
 import {
+  BUS_SPOTS,
   initialRotation,
+  laneSpots,
+  ringOrder,
   nearestStop,
   RING_PITCH,
   RING_RADIUS,
@@ -59,4 +62,52 @@ it('도시에 들어오면 마지막으로 연 프로젝트 칸을 가운데에 
   // 기록이 없거나 그 프로젝트를 지웠거나 나가 도시에 없으면 가장 최근 칸
   expect(startRotation(undefined, 2)).toBe(initialRotation(2))
   expect(startRotation(null, null)).toBe(0)
+})
+
+// 리뷰(PR #305): 차 각도가 순수 무작위라 시드 7에서 같은 차로의 두 쌍이 13.9·17.7단위 거리로 파고들었다(차 길이 20).
+it('순환 도로 차는 차로마다 이웃 차 사이가 차 길이보다 넓고 버스 자리를 비운다', () => {
+  const CAR = 20
+  const BUS = 46
+  for (let seed = 1; seed <= 200; seed++) {
+    let state = seed
+    const rnd = () => (state = (state * 16807) % 2147483647) / 2147483647
+    for (const [radius, avoid] of [
+      [RING_RADIUS + 116, []],
+      [RING_RADIUS + 138, BUS_SPOTS],
+    ] as const) {
+      const unit = (2 * Math.PI * radius) / RING_SLOTS
+      const spots = laneSpots(RING_SLOTS * 0.75, rnd, avoid).sort(
+        (a, b) => a - b,
+      )
+      spots.forEach((th, i) => {
+        const next =
+          spots[(i + 1) % spots.length] +
+          (i + 1 === spots.length ? RING_SLOTS : 0)
+        expect((next - th) * unit).toBeGreaterThan(CAR * 2)
+      })
+      for (const at of avoid)
+        for (const th of spots)
+          expect(
+            (ringSlot(th, at).away / 360) * RING_SLOTS * unit,
+          ).toBeGreaterThan((BUS + CAR) / 2)
+    }
+  }
+})
+
+// 사용자 요청 '빈공터를 제거하고 … 1-2-3-4-새프로젝트-1-2-3.. 이런식으로'(2026-11-16)
+it('프로젝트와 빈 부지가 둘 이상이면 고리를 따라 차례를 되풀이해 꾸밈 칸 없이 이어 놓는다', () => {
+  const lots = [0, 1, 2, 3, 4] // 프로젝트 넷과 빈 부지
+  for (const rot of [0, 2, 2.4, 7, 13, -5]) {
+    // 앞(rot)에서 반 바퀴 안의 칸은 v번째 차례(v mod 5)를 놓아 1-2-3-4-새-1-…로 이어진다
+    for (let v = Math.ceil(rot) - 5; v <= Math.floor(rot) + 5; v++) {
+      const s = ((v % RING_SLOTS) + RING_SLOTS) % RING_SLOTS
+      expect(ringOrder(s, rot, lots)).toBe(((v % 5) + 5) % 5)
+    }
+    // 모든 칸이 부지다
+    for (let s = 0; s < RING_SLOTS; s++)
+      expect(ringOrder(s, rot, lots)).toBeGreaterThanOrEqual(0)
+  }
+  // 빈 부지 하나뿐이면 제 칸에만 두고 나머지는 꾸밈 칸이다
+  expect(ringOrder(0, 3, [0])).toBe(0)
+  expect(ringOrder(1, 3, [0])).toBe(-1)
 })
