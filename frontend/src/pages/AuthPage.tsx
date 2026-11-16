@@ -158,7 +158,8 @@ export default function AuthPage() {
     )
   return (
     <main className="mx-auto grid min-h-[calc(100dvh-4rem)] max-w-6xl items-center gap-14 px-6 py-12 lg:grid-cols-[1.15fr_0.85fr] lg:px-10">
-      <section className="space-y-6">
+      {/* 좁은 폭(로그인은 메일 링크로 휴대폰에서도 열린다)에서는 폼이 먼저 보이게 소개를 뒤로 보내고 그림은 뺀다. */}
+      <section className="order-2 space-y-6 lg:order-1">
         <h2 className="text-4xl leading-tight font-bold">
           우리 팀 프로젝트가
           <br />
@@ -168,7 +169,7 @@ export default function AuthPage() {
           프로젝트마다 건물이 하나씩 생겨요. 사람과 AI 팀장 비비가 승인된 설계를
           기준으로 함께 일해요.
         </p>
-        <figure className="overflow-hidden rounded-[22px] border bg-muted">
+        <figure className="hidden overflow-hidden rounded-[22px] border bg-muted lg:block">
           <img
             src={cityPreview}
             alt="BEEZ 나의 도시 화면 미리 보기"
@@ -195,7 +196,7 @@ export default function AuthPage() {
       </section>
       <section
         aria-labelledby="auth-title"
-        className="rounded-[22px] border bg-card p-7 shadow-sm sm:p-10"
+        className="order-1 rounded-[22px] border bg-card p-7 shadow-sm sm:p-10 lg:order-2"
       >
         <h2 id="auth-title" className="text-2xl font-bold">
           로그인
@@ -239,7 +240,7 @@ export default function AuthPage() {
             ]}
             footer={
               <div className="flex flex-wrap items-center gap-5 text-sm">
-                <label className="inline-flex items-center gap-2">
+                <label className="inline-flex min-h-6 items-center gap-2">
                   <input
                     type="checkbox"
                     className="size-4 accent-primary"
@@ -291,13 +292,16 @@ export default function AuthPage() {
           aria-label="계정 도움"
           className="mt-6 flex items-center justify-center gap-3 text-sm"
         >
-          <Link to={`/register${invite}`} className="font-semibold">
+          <Link
+            to={`/register${invite}`}
+            className="inline-flex min-h-6 items-center font-semibold"
+          >
             회원가입
           </Link>
           <span aria-hidden="true" className="h-3 w-px bg-border" />
           <button
             type="button"
-            className="text-muted-foreground"
+            className="inline-flex min-h-6 items-center text-muted-foreground"
             onClick={() => {
               setMode('forgot')
               setNotice('')
