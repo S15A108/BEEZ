@@ -363,7 +363,7 @@ function Workspace({ projectId }: { projectId: string }) {
                   if (pendingMutations) event.preventDefault()
                 }}
               >
-                <DialogHeader className="min-h-14 flex-row flex-wrap items-center gap-x-3 gap-y-2 border-b px-5 py-2.5 sm:px-10">
+                <DialogHeader className="min-h-14 flex-row flex-wrap items-center gap-x-3 gap-y-2 border-b px-5 py-2.5 sm:px-8">
                   {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
                   <DialogTitle className="shrink-0 text-lg font-semibold">
                     {pane && pane !== 'settings' ? paneTitles[pane] : ''}
@@ -371,7 +371,9 @@ function Workspace({ projectId }: { projectId: string }) {
                   {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). */}
                   <DialogDescription
                     className={
-                      pane === 'documents' ? 'sr-only' : 'min-w-0 truncate'
+                      pane === 'documents'
+                        ? 'sr-only'
+                        : 'mr-auto min-w-0 truncate'
                     }
                   >
                     {data.project.name}
@@ -406,7 +408,9 @@ function Workspace({ projectId }: { projectId: string }) {
                   </DialogClose>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>
-                  {/* 본문 스크롤. 아래 고정 줄(sticky -bottom-5 sm:-bottom-8)이 이 안쪽 여백만큼 내려가 창 바닥에 붙는다. */}
+                  {/* 본문 스크롤. 안쪽 여백(p-5 sm:p-8)은 예전 창과 같다. 패널이 이 여백에 맞춰 밖으로 넓히거나
+                      (회의실 -mx-8) 아래 고정 줄을 붙인다(sticky -bottom-5 sm:-bottom-8). 세로 flex라서 본문 자리가
+                      정해진 높이를 받아, 회의실처럼 높이를 %로 채우는 패널도 창 아래까지 찬다. */}
                   <div
                     key={pane}
                     ref={restoreScroll}
@@ -414,11 +418,11 @@ function Workspace({ projectId }: { projectId: string }) {
                       if (pane)
                         scrolls.current.set(pane, event.currentTarget.scrollTop)
                     }}
-                    className="min-h-0 overflow-y-auto p-5 sm:px-10 sm:pt-6 sm:pb-8"
+                    className="flex min-h-0 flex-col overflow-y-auto p-5 sm:p-8"
                   >
                     <PaneSheetHost
                       // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
-                      className="flex min-h-full min-w-0 flex-col"
+                      className="flex min-w-0 flex-1 flex-col"
                     >
                       {pane === 'documents' && (
                         <DocumentsPanel {...panelProps} />
