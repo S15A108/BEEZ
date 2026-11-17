@@ -21,6 +21,8 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { AsyncState } from '@/components/AsyncState'
 import { ActorAvatar } from './ActorAvatar'
 import { DailyCallsChart } from './DailyCallsChart'
+import { ProjectReadiness } from './ProjectReadiness'
+import { useActivityDocumentTitle } from './useActivityDocumentTitle'
 import {
   FEATURE_LABELS,
   activityChip,
@@ -57,6 +59,8 @@ export function DashboardOverview({
   actorName,
   onTab,
   periodName = '선택 기간',
+  started = true,
+  isLeader = false,
 }: {
   projectId: string
   usage: UseQueryResult<UsageResponse>
@@ -70,6 +74,9 @@ export function DashboardOverview({
   onTab: (tab: DashboardTab) => void
   // 고른 기간의 이름: '11월', '최근 7일', '선택 기간'
   periodName?: string
+  // 기준 설계가 발행됐는지(프로젝트 시작). 모르면 시작한 것으로 보고 지금 화면을 그린다.
+  started?: boolean
+  isLeader?: boolean
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const statusOf = useAgentStatusOf(projectId)
@@ -125,6 +132,7 @@ export function DashboardOverview({
     : []
   const connected = members.length - disconnected.length
   const recent: Activity[] = activities.data?.items.slice(0, 4) ?? []
+  const documentTitle = useActivityDocumentTitle(projectId, recent)
   const agents: AgentWork[] = work.data?.items.slice(0, 2) ?? []
   // 서버는 기능별을 호출이 없어도 0으로 채워 보낸다. 호출이 있는 기능만 보인다.
   const features = (usage.data?.by_feature ?? [])
@@ -156,6 +164,12 @@ export function DashboardOverview({
     allUnreported(usage.data.call_count, usage.data.cost_unknown_call_count)
       ? cost
       : `추정 ${cost}`
+  // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다. 받는 중이거나 못 받았으면 0회로 보이지 않는다.
+  const callValue = usage.isError
+    ? '—'
+    : usage.isPending
+      ? '…'
+      : `${calls.toLocaleString('ko-KR')}회`
   const metrics: {
     label: string
     value: string
@@ -199,12 +213,7 @@ export function DashboardOverview({
     },
     {
       label: `${periodName} AI 호출`,
-      // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다. 받는 중이거나 못 받았으면 0회로 보이지 않는다.
-      value: usage.isError
-        ? '—'
-        : usage.isPending
-          ? '…'
-          : `${calls.toLocaleString('ko-KR')}회`,
+      value: callValue,
       onClick: () => onTab('usage'),
       note: calls ? costNote : undefined,
     },
@@ -229,6 +238,221 @@ export function DashboardOverview({
   const rank = (metric: (typeof metrics)[number]) =>
     !metric.todo ? 2 : metric.label === '진행 중 작업' ? 1 : 0
   const ordered = [...metrics].sort((a, b) => rank(a) - rank(b))
+  const recentCard = (
+    <div className="flex flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
+      <div className="flex items-baseline gap-2">
+        <h4 className="text-sm font-bold">최근 활동</h4>
+        <button
+          type="button"
+          className={LINK}
+          onClick={() => onTab('timeline')}
+        >
+          활동 타임라인 ›
+        </button>
+      </div>
+      {recent.length ? (
+        <ul>
+          {recent.map((item) => {
+            const chip = activityChip(item)
+            const open = item.task_id
+              ? () => openPane('tasks', item.task_id)
+              : item.change_proposal_id
+                ? () => openPane('changes', item.change_proposal_id)
+                : item.baseline_id
+                  ? () => openPane('documents')
+                  : undefined
+            const row = (
+              <>
+                <span className="text-[11.5px] text-muted-foreground tabular-nums">
+                  {recentTime(item.created_at)}
+                </span>
+                <ActorAvatar
+                  agent={item.actor_type === 'AGENT'}
+                  label={
+                    item.actor_type === 'AGENT'
+                      ? 'AI'
+                      : actorName(item).slice(0, 1)
+                  }
+                />
+                <span className="truncate">
+                  <strong className="font-semibold">{actorName(item)}</strong>
+                  {ACTOR_PARTICLE}{' '}
+                  <span className="text-[#57534e]">
+                    {activityText(item, members)}
+                    {documentTitle(item) && ` · ${documentTitle(item)}`}
+                  </span>
+                </span>
+                {chip.notable ? (
+                  <span
+                    className={cn(
+                      'rounded-full px-2 py-0.5 text-[11px] font-bold',
+                      chip.className,
+                    )}
+                  >
+                    {chip.label}
+                  </span>
+                ) : (
+                  <span />
+                )}
+              </>
+            )
+            const rowClass =
+              'grid w-full grid-cols-[40px_26px_minmax(0,1fr)_auto] items-center gap-2.5 py-1.5 text-left text-[12.5px]'
+            return (
+              <li key={item.id} className="border-b last:border-0">
+                {open ? (
+                  <button
+                    type="button"
+                    className={cn(rowClass, 'hover:bg-muted/40')}
+                    onClick={open}
+                  >
+                    {row}
+                  </button>
+                ) : (
+                  <div className={rowClass}>{row}</div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {activities.isError
+            ? '최근 활동을 불러오지 못했어요.'
+            : activities.isPending
+              ? '불러오는 중…'
+              : '최근 활동이 없어요.'}
+        </p>
+      )}
+    </div>
+  )
+  const agentCard = (
+    <div className="flex flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
+      <div className="flex items-baseline gap-2">
+        <h4 className="text-sm font-bold">에이전트</h4>
+        {!!work.data?.items.length && (
+          <span className="text-xs text-muted-foreground">
+            {work.data.items.length}개
+          </span>
+        )}
+        <button type="button" className={LINK} onClick={() => onTab('agents')}>
+          에이전트 현황 ›
+        </button>
+      </div>
+      {agents.length ? (
+        <ul>
+          {agents.map((agent) => {
+            // 팀원을 못 찾으면 연결 상태를 모른다(에이전트 현황 탭과 같은 표기).
+            const member = members.find((entry) => entry.id === agent.member_id)
+            const agentStatus = member ? statusOf(member).status : 'recheck'
+            const isConnected = agentStatus === 'connected'
+            const row = usage.data?.by_agent.find(
+              (entry) => entry.key === agent.agent_session_id,
+            )
+            return (
+              <li
+                key={`${agent.member_id}:${agent.agent_session_id ?? ''}`}
+                className="grid grid-cols-[minmax(0,1fr)] gap-0.5 border-b py-2 last:border-0"
+              >
+                <span className="flex items-center gap-2 text-[13px]">
+                  <ActorAvatar agent label="AI" />
+                  <strong className="font-semibold">
+                    {`${memberName(agent.member_id) ?? '팀원'}의 에이전트${agentTokenSuffix(agent, work.data?.items ?? [])}`}
+                  </strong>
+                  <span
+                    className={cn(
+                      'ml-auto inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap',
+                      !member
+                        ? 'text-muted-foreground'
+                        : isConnected
+                          ? 'text-[#00753a]'
+                          : 'text-[#8a6a00]',
+                    )}
+                  >
+                    {member &&
+                      (isConnected ? (
+                        <Check aria-hidden="true" className="size-3" />
+                      ) : (
+                        <TriangleAlert aria-hidden="true" className="size-3" />
+                      ))}
+                    {agentStatusLabels[agentStatus]}
+                  </span>
+                </span>
+                <span className="flex justify-between gap-2 pl-8.5 text-xs text-muted-foreground">
+                  <span className="min-w-0 truncate">
+                    {agent.current_task_id ? (
+                      `${agent.task_title ?? '이름 없는 작업'} ${statusLabel(agent.task_status)}${
+                        agent.reported_at
+                          ? ` · ${formatShort(agent.reported_at)} 보고`
+                          : ''
+                      }`
+                    ) : isConnected || !member ? (
+                      '보고된 작업 없음'
+                    ) : (
+                      <>
+                        연결을 확인해요 ·{' '}
+                        <button
+                          type="button"
+                          className="font-semibold text-[#8a6a00]"
+                          onClick={() => openPane('settings', 'agent')}
+                        >
+                          연결 확인
+                        </button>
+                      </>
+                    )}
+                  </span>
+                  {/* 서버가 호출자별로 나누지 않으면(빈 배열) 사용량을 적지 않는다. 0회로 단정하지 않는다. */}
+                  {!!usage.data?.by_agent.length && (
+                    <span className="whitespace-nowrap tabular-nums">
+                      {row ? callsText(row, usage.data.currency) : '0회'}
+                    </span>
+                  )}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {work.isPending
+            ? '불러오는 중…'
+            : work.isError
+              ? '에이전트 현황을 불러오지 못했어요.'
+              : work.data
+                ? '연결된 에이전트가 없어요.'
+                : '에이전트 현황은 준비 중이에요.'}
+        </p>
+      )}
+    </div>
+  )
+  // 시작 전(기준 v1 발행 전)에는 작업·변경 제안이 열리지 않아 숫자 칸과 호출 그래프 대신 준비 상태와 다음 할 일을 먼저 둔다
+  // (디자인 검수 F08). 사용량 상세는 사용량·비용 탭에 그대로 있고, 여기에는 한 줄만 남긴다.
+  if (!started)
+    return (
+      <section
+        id="dashboard-overview"
+        aria-labelledby="dashboard-overview-title"
+        className="grid gap-3"
+      >
+        <h3 id="dashboard-overview-title" className="sr-only">
+          한눈에 보기
+        </h3>
+        <ProjectReadiness projectId={projectId} isLeader={isLeader} />
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+          {recentCard}
+          {agentCard}
+        </div>
+        <p className="flex flex-wrap items-baseline gap-2 px-1 text-xs text-muted-foreground">
+          <span>
+            {`${periodName} AI 호출 ${callValue}`}
+            {calls ? ` · ${costNote}` : ''}
+          </span>
+          <button type="button" className={LINK} onClick={() => onTab('usage')}>
+            사용량·비용 ›
+          </button>
+        </p>
+      </section>
+    )
   return (
     <section
       id="dashboard-overview"
@@ -394,201 +618,8 @@ export function DashboardOverview({
               )
             )}
           </div>
-          <div className="flex flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
-            <div className="flex items-baseline gap-2">
-              <h4 className="text-sm font-bold">최근 활동</h4>
-              <button
-                type="button"
-                className={LINK}
-                onClick={() => onTab('timeline')}
-              >
-                활동 타임라인 ›
-              </button>
-            </div>
-            {recent.length ? (
-              <ul>
-                {recent.map((item) => {
-                  const chip = activityChip(item)
-                  const open = item.task_id
-                    ? () => openPane('tasks', item.task_id)
-                    : item.change_proposal_id
-                      ? () => openPane('changes', item.change_proposal_id)
-                      : item.baseline_id
-                        ? () => openPane('documents')
-                        : undefined
-                  const row = (
-                    <>
-                      <span className="text-[11.5px] text-muted-foreground tabular-nums">
-                        {recentTime(item.created_at)}
-                      </span>
-                      <ActorAvatar
-                        agent={item.actor_type === 'AGENT'}
-                        label={
-                          item.actor_type === 'AGENT'
-                            ? 'AI'
-                            : actorName(item).slice(0, 1)
-                        }
-                      />
-                      <span className="truncate">
-                        <strong className="font-semibold">
-                          {actorName(item)}
-                        </strong>
-                        {ACTOR_PARTICLE}{' '}
-                        <span className="text-[#57534e]">
-                          {activityText(item, members)}
-                        </span>
-                      </span>
-                      {chip.notable ? (
-                        <span
-                          className={cn(
-                            'rounded-full px-2 py-0.5 text-[11px] font-bold',
-                            chip.className,
-                          )}
-                        >
-                          {chip.label}
-                        </span>
-                      ) : (
-                        <span />
-                      )}
-                    </>
-                  )
-                  const rowClass =
-                    'grid w-full grid-cols-[40px_26px_minmax(0,1fr)_auto] items-center gap-2.5 py-1.5 text-left text-[12.5px]'
-                  return (
-                    <li key={item.id} className="border-b last:border-0">
-                      {open ? (
-                        <button
-                          type="button"
-                          className={cn(rowClass, 'hover:bg-muted/40')}
-                          onClick={open}
-                        >
-                          {row}
-                        </button>
-                      ) : (
-                        <div className={rowClass}>{row}</div>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {activities.isError
-                  ? '최근 활동을 불러오지 못했어요.'
-                  : activities.isPending
-                    ? '불러오는 중…'
-                    : '최근 활동이 없어요.'}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
-            <div className="flex items-baseline gap-2">
-              <h4 className="text-sm font-bold">에이전트</h4>
-              {!!work.data?.items.length && (
-                <span className="text-xs text-muted-foreground">
-                  {work.data.items.length}개
-                </span>
-              )}
-              <button
-                type="button"
-                className={LINK}
-                onClick={() => onTab('agents')}
-              >
-                에이전트 현황 ›
-              </button>
-            </div>
-            {agents.length ? (
-              <ul>
-                {agents.map((agent) => {
-                  // 팀원을 못 찾으면 연결 상태를 모른다(에이전트 현황 탭과 같은 표기).
-                  const member = members.find(
-                    (entry) => entry.id === agent.member_id,
-                  )
-                  const agentStatus = member
-                    ? statusOf(member).status
-                    : 'recheck'
-                  const isConnected = agentStatus === 'connected'
-                  const row = usage.data?.by_agent.find(
-                    (entry) => entry.key === agent.agent_session_id,
-                  )
-                  return (
-                    <li
-                      key={`${agent.member_id}:${agent.agent_session_id ?? ''}`}
-                      className="grid grid-cols-[minmax(0,1fr)] gap-0.5 border-b py-2 last:border-0"
-                    >
-                      <span className="flex items-center gap-2 text-[13px]">
-                        <ActorAvatar agent label="AI" />
-                        <strong className="font-semibold">
-                          {`${memberName(agent.member_id) ?? '팀원'}의 에이전트${agentTokenSuffix(agent, work.data?.items ?? [])}`}
-                        </strong>
-                        <span
-                          className={cn(
-                            'ml-auto inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap',
-                            !member
-                              ? 'text-muted-foreground'
-                              : isConnected
-                                ? 'text-[#00753a]'
-                                : 'text-[#8a6a00]',
-                          )}
-                        >
-                          {member &&
-                            (isConnected ? (
-                              <Check aria-hidden="true" className="size-3" />
-                            ) : (
-                              <TriangleAlert
-                                aria-hidden="true"
-                                className="size-3"
-                              />
-                            ))}
-                          {agentStatusLabels[agentStatus]}
-                        </span>
-                      </span>
-                      <span className="flex justify-between gap-2 pl-8.5 text-xs text-muted-foreground">
-                        <span className="min-w-0 truncate">
-                          {agent.current_task_id ? (
-                            `${agent.task_title ?? '이름 없는 작업'} ${statusLabel(agent.task_status)}${
-                              agent.reported_at
-                                ? ` · ${formatShort(agent.reported_at)} 보고`
-                                : ''
-                            }`
-                          ) : isConnected || !member ? (
-                            '보고된 작업 없음'
-                          ) : (
-                            <>
-                              연결을 확인해요 ·{' '}
-                              <button
-                                type="button"
-                                className="font-semibold text-[#8a6a00]"
-                                onClick={() => openPane('settings', 'agent')}
-                              >
-                                연결 확인
-                              </button>
-                            </>
-                          )}
-                        </span>
-                        {/* 서버가 호출자별로 나누지 않으면(빈 배열) 사용량을 적지 않는다. 0회로 단정하지 않는다. */}
-                        {!!usage.data?.by_agent.length && (
-                          <span className="whitespace-nowrap tabular-nums">
-                            {row ? callsText(row, usage.data.currency) : '0회'}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {work.isPending
-                  ? '불러오는 중…'
-                  : work.isError
-                    ? '에이전트 현황을 불러오지 못했어요.'
-                    : work.data
-                      ? '연결된 에이전트가 없어요.'
-                      : '에이전트 현황은 준비 중이에요.'}
-              </p>
-            )}
-          </div>
+          {recentCard}
+          {agentCard}
         </div>
       )}
     </section>

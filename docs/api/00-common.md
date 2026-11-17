@@ -16,6 +16,8 @@
 
 2026-11-09: Q05의 초대 메일 발송 한도를 정함으로 고쳤다(S15P31A108-334). 초대한 계정마다 1시간 30통(MEM-A01 새 초대 + MEM-A11 다시 보내기)이고, 넘으면 요청 전체를 429 `rate_limited`로 거부한다. 결과 `status` 값은 늘리지 않는다.
 
+2026-11-16: TSK-A06 권한에 "자기가 맡은 작업을 다른 멤버에게 넘기는 MEMBER"를 더했다(S15P31A108-419, #302, 사용자 결정). 남의 작업은 지금처럼 팀장만 바꾼다. 팀장 인계·대리 범위(Q02)에 속하는 팀 합의 항목이다.
+
 2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 팀장의 나가기는 넘길 팀원을 골라 위임과 한 번에 하고(넘길 사람이 없으면 `leader_transfer_required`), 삭제는 PRJ-A05로만 한다(PR #113 리뷰). 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
 2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q24에 올렸다. 기준 v1 뒤의 문서 변경은 dev처럼 모두 변경 제안으로 간다.
@@ -375,7 +377,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [TSK-A03 작업 상세](01-backend-rest.md#tsk-a03) | GET `/api/projects/{id}/tasks/{task_id}` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A04 작업 계획 새 리비전 저장](01-backend-rest.md#tsk-a04) | POST `/api/projects/{id}/tasks/{task_id}/plan-revisions` | MEMBER + TASK_OWNER | 변준성 | — | 박민용 |
 | [TSK-A05 작업 계획 리비전 이력](01-backend-rest.md#tsk-a05) | GET `/api/projects/{id}/tasks/{task_id}/plan-revisions` | MEMBER | 변준성 | — | 박민용 |
-| [TSK-A06 작업 담당자 변경](01-backend-rest.md#tsk-a06) | PATCH `/api/projects/{id}/tasks/{task_id}/assignee` | LEADER (미배정 작업을 자기에게 맡길 때는 MEMBER. 수정안 요청 · 11-04) | 변준성 | — | 박민용 |
+| [TSK-A06 작업 담당자 변경](01-backend-rest.md#tsk-a06) | PATCH `/api/projects/{id}/tasks/{task_id}/assignee` | LEADER (미배정 작업을 자기에게 맡길 때는 MEMBER. 수정안 요청 · 11-04. 자기가 맡은 작업을 다른 멤버에게 넘길 때도 MEMBER. 수정안 요청 · 11-16) | 변준성 | — | 박민용 |
 | [VAL-A01 작업 검증 접수](01-backend-rest.md#val-a01) | POST `/api/projects/{id}/tasks/{task_id}/validations` | MEMBER + TASK_OWNER | 변준성 | 양지훈 | 박민용 |
 | [VAL-A02 검증 결과 조회](01-backend-rest.md#val-a02) | GET `/api/projects/{id}/validations/{validation_id}` | MEMBER | 변준성 | 양지훈 | 박민용 |
 | [VAL-A03 작업 검증 이력](01-backend-rest.md#val-a03) | GET `/api/projects/{id}/tasks/{task_id}/validations` | MEMBER | 변준성 | 양지훈 | 박민용 |

@@ -848,16 +848,18 @@ export function taskRoutes(
         body.expected_lock_version,
         'revision_conflict',
       )
-      // 예외: 팀원은 담당자 없는 작업을 자기에게만 맡길 수 있다(11-04 사용자 결정).
+      // 팀원은 담당자 없는 작업을 자기에게 맡기거나(11-04 사용자 결정), 자기가 맡은 작업을 넘길 수 있다(S15P31A108-419).
+      // 넘길 때 진행 중이면 팀장이 바꿀 때와 같이 reassignTask가 WAITING(REVALIDATION)으로 내린다.
       if (
         context.member?.role !== 'LEADER' &&
+        !isAssignee(context, task!) &&
         (task!.assignee_member_id ||
           body.assignee_member_id !== context.member?.id)
       )
         fail(
           403,
           'forbidden',
-          '팀원은 담당자 없는 작업을 자기에게만 맡길 수 있어요.',
+          '팀원은 담당자 없는 작업을 자기에게 맡기거나 자기 작업만 넘길 수 있어요.',
         )
       if (['COMPLETED', 'CANCELLED'].includes(task!.status))
         fail(

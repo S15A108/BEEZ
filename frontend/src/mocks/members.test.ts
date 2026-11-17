@@ -172,6 +172,30 @@ it('팀원은 담당자 없는 작업만 자기에게 맡고, 늦게 맡으면 4
   expect(getApiErrorCode(late)).toBe('revision_conflict')
 })
 
+// S15P31A108-419: 팀원도 자기가 맡은 작업은 다른 팀원에게 넘긴다. 진행 중이면 팀장이 바꿀 때처럼 재검증 대기가 된다.
+it('팀원은 자기가 맡은 진행 중 작업을 넘기면 재검증 대기가 되고, 남의 작업은 넘기지 못한다', async () => {
+  await as('backend@beez.local')
+  const own = await tasksApi.get('101', '503')
+  expect(own).toMatchObject({ assignee_member_id: '26', status: 'IN_PROGRESS' })
+  const moved = await tasksApi.assign('101', '503', {
+    assignee_member_id: '25',
+    expected_lock_version: own.lock_version,
+  })
+  expect(moved).toMatchObject({
+    assignee_member_id: '25',
+    status: 'WAITING',
+    waiting_reason: 'REVALIDATION',
+  })
+  const others = await tasksApi.get('101', '501')
+  const denied = await tasksApi
+    .assign('101', '501', {
+      assignee_member_id: '25',
+      expected_lock_version: others.lock_version,
+    })
+    .catch((cause) => cause)
+  expect(getApiErrorCode(denied)).toBe('forbidden')
+})
+
 it('작업 목록에 unassigned와 assignee_member_id를 함께 주면 400 validation_failed', async () => {
   const error = await tasksApi
     .list('101', { unassigned: true, assignee_member_id: '21' })

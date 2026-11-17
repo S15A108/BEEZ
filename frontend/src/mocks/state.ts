@@ -298,14 +298,21 @@ function seededActivities(account: Account, created: string): Activity[] {
     ['TASK_PLAN_REVISED', { task_id: '502' }],
     ['VALIDATION_FINISHED', { task_id: '502' }],
     ['VALIDATION_FINISHED', { task_id: '503', result: 'FAILURE' }],
-    ['DOCUMENT_APPROVED', {}],
+    // 문서 활동의 대상은 문서 버전이다(서버와 같다). 211 = 기획안 승인본, 212 = ERD 승인본.
+    [
+      'DOCUMENT_APPROVED',
+      { target_type: 'DOCUMENT_VERSION', target_id: '211' },
+    ],
     ['CHANGE_PROPOSAL_COMMENTED', {}],
     ['TASK_ASSIGNEE_CHANGED', { task_id: '502' }],
     ['TASK_STARTED', { task_id: '502' }],
     ['TASK_WAITING', { task_id: '503' }],
     ['BASELINE_CREATED', { baseline_id: '401' }],
     ['CHANGE_PROPOSAL_REVIEW_REQUESTED', {}],
-    ['DOCUMENT_REGISTERED', {}],
+    [
+      'DOCUMENT_REGISTERED',
+      { target_type: 'DOCUMENT_VERSION', target_id: '212' },
+    ],
     ['TASK_COMPLETION_REPORTED', { task_id: '502' }],
     ['TASK_RESUMED', { task_id: '503' }],
     // 제외된 멤버(29)는 팀원 목록에 없다
@@ -674,6 +681,30 @@ function seededProject(
     origin: 'BEE_CONFLICT',
     task_ids: ['501', '502'],
     conflict_summary: '만료된 초대를 어떻게 안내할지 정해 주세요',
+    // 서버는 충돌 회의를 열 때 검증 결과로 만든 안내를 함께 준다(ConflictGuidanceBuilder). 안건 줄의 요구사항 번호가 여기서 온다.
+    conflict_guidance: {
+      validation_id: validation.id,
+      tasks: [
+        { task_id: '502', title: '초대 화면 정보 바꾸기' },
+        { task_id: '501', title: '프로젝트 목록 화면 구현' },
+      ],
+      conflicts: [
+        {
+          message:
+            "TASK-002는 만료된 초대에 '새 링크를 요청하세요' 안내를 따로 보여 주고, TASK-001은 쓸 수 없는 초대를 원인 없이 '찾을 수 없어요'로 보여 줘요. REQ-005에는 어느 쪽인지 없어요.",
+          design_item: {
+            id: '305',
+            version_id: '315',
+            key: 'REQ-005',
+            title: '초대받은 사용자는 링크로 프로젝트에 참여한다',
+            document_id: '203',
+            document_version_id: '213',
+            location: 'REQ-005',
+          },
+          differences: [],
+        },
+      ],
+    },
     status: 'OPEN',
     participants: ['21', '22', '25'].map((member_id) => ({
       member_id,

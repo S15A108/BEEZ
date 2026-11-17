@@ -656,6 +656,44 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
+     * 깨지면: 팀원이 자기가 맡은 작업을 다른 팀원에게 넘기지 못하거나, 남의 작업까지 넘길 수 있게 열리거나,
+     * 팀원이 넘긴 진행 중 작업이 옛 검증으로 계속 가거나, 넘겨받은 사람이 알림을 못 받는다
+     * (S15P31A108-419, #302, TSK-A06 수정안 11-16, 04 §2.2 S5).
+     */
+    @Test
+    void member_handsOverOwnTask_toAnotherMember_butNotOthersTasks() {
+        long ready = createTaskAsMember("넘길 작업");
+        long running = createTaskAsMember("진행 중에 넘길 작업");
+        long pass = api.passValidation(running);
+        report(running, "START", "\"validation_id\":\"" + pass + "\"");
+        long memberMemberId = api.memberId("member@test");
+        long carol = joinAsMember();
+        long dave = joinAsMember();
+        long carolMemberId = memberIdOf(carol);
+        long daveMemberId = memberIdOf(dave);
+
+        // 담당자가 아닌 팀원은 남의 작업을 넘기지 못한다
+        assertCode(assignAs(carol, ready, carolMemberId, lockOf(ready)), 403, "forbidden");
+        assertCode(assignAs(carol, ready, daveMemberId, lockOf(ready)), 403, "forbidden");
+        assertThat(taskRow(ready)).isEqualTo("READY|null|" + memberMemberId);
+
+        // 담당자 본인은 다른 팀원에게 넘긴다. 활동이 남고 넘겨받은 사람에게 알림이 간다
+        HttpResponse<String> moved = assignAs(member, ready, carolMemberId, lockOf(ready));
+        assertThat(moved.statusCode()).as(moved.body()).isEqualTo(200);
+        assertThat(taskRow(ready)).isEqualTo("READY|null|" + carolMemberId);
+        assertThat(assigneeActivities(ready)).containsExactly("HUMAN|" + member);
+        assertThat(assignedRecipients(ready)).containsExactly(carol);
+
+        // 넘긴 뒤에는 이전 담당자도 남이라 다시 바꾸지 못한다
+        assertCode(assignAs(member, ready, memberMemberId, lockOf(ready)), 403, "forbidden");
+
+        // 진행 중 작업을 넘기면 팀장이 넘길 때와 같이 S5: 재검증 대기, 옛 검증은 STALE
+        assertThat(assignAs(member, running, daveMemberId, lockOf(running)).statusCode()).isEqualTo(200);
+        assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + daveMemberId);
+        assertThat(validationRow(pass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+    }
+
+    /**
      * 깨지면: 화면의 '담당자 없는 작업'(unassigned=true + 열린 상태 여러 개)이 비거나, 상태를 여러 개 주면 첫 값만 걸리거나,
      * 서로 어긋나는 필터(unassigned + assignee_member_id)를 조용히 받는다 (S15P31A108-301 완료 조건 3, TSK-A02 수정안).
      */
