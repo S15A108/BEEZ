@@ -32,10 +32,10 @@ import {
   enterTarget,
   officeLanding,
   officeWalkable,
+  officeWalkRoute,
 } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
-import { navNearest, navOf, navRoute } from './office/office-nav'
 import { officeDesignOf, type OfficeTime } from './office/officeLook'
 import type { OfficeScreens } from './office/office-screens'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
@@ -177,11 +177,13 @@ function OfficeRuntime(
     clearInput.current = clear
     const free = (x: number, y: number) =>
       officeWalkable(latest.current.floor, x, y)
+    // 시뮬레이션의 사람들과 같은 판정·길찾기(office-nav)로 걷는다. 막힌 곳을 누르면 가장 가까운 빈 곳으로 간다.
     const walkTo = (destination: Point) => {
-      // 시뮬레이션의 사람들과 같은 판정·길찾기(office-nav)로 걷는다. 막힌 곳을 누르면 가장 가까운 빈 곳으로 간다.
-      const nav = navOf(latest.current.floor)
-      const goal = navNearest(nav, destination)
-      route.current = (goal && navRoute(nav, player.current, goal)) ?? []
+      route.current = officeWalkRoute(
+        latest.current.floor,
+        player.current,
+        destination,
+      )
     }
     const exit = () => {
       const portal = latest.current.floor.outdoorExit
