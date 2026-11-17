@@ -17,6 +17,7 @@ import {
   inboxApi,
 } from '@/api/services'
 import type { Member, TaskDetail } from '@/api/contracts/common'
+import { useAccountDialog } from '@/features/account/useAccountDialog'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import type { GetResponse as Project } from '@/features/projects/schemas'
@@ -157,6 +158,8 @@ export function WorkspaceHud({
   const navigate = useNavigate()
   const openPane = useWorkspaceStore((state) => state.openPane)
   const pane = useWorkspaceStore((state) => state.pane)
+  // 사무실 위에 회원 설정 창(D48)이 떠 있으면 단축 바 숫자 키를 끈다.
+  const accountOpen = useAccountDialog().view !== null
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const isLeader = project.my_role === 'LEADER'
   const started = onboarding.baseline_published
@@ -853,7 +856,7 @@ export function WorkspaceHud({
         </div>
       </section>
       <Hotbar
-        shortcutsOff={tour !== null}
+        shortcutsOff={tour !== null || accountOpen}
         locked={started ? [] : ['changes', 'meetings', 'tasks', 'relations']}
         lockedReason="프로젝트를 시작하면 열려요"
         badges={{ changes: reviewCount, meetings: meetingCount }}

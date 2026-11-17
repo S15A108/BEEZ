@@ -12,7 +12,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
-import AccountPage from './AccountPage'
+import { AccountDialog } from './AccountDialog'
 
 // 프로필 저장(ACC-A05)은 목 어댑터로 실제 경로를 탄다. 데모 계정(이팀장)의 아바타는 예전 값 bee-yellow라 화면에는 '벌'로 보인다.
 let restore: () => void
@@ -37,9 +37,9 @@ async function renderPage() {
   })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/account']}>
+      <MemoryRouter initialEntries={['/?account=profile']}>
         <Routes>
-          <Route path="/account" element={<AccountPage />} />
+          <Route path="/" element={<AccountDialog />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

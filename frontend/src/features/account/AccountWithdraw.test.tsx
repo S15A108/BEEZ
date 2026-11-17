@@ -13,7 +13,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
-import AccountWithdrawPage from './AccountWithdrawPage'
+import { AccountDialog } from './AccountDialog'
 
 // 회원 탈퇴(ACC-A10·A13)는 목 어댑터로 실제 경로를 탄다.
 // 이팀장(DEMO)은 프로젝트 101(팀원 3명)·102(팀원 1명)의 팀장이라 막히고, 김동료는 팀원으로만 참여해 탈퇴할 수 있다.
@@ -40,9 +40,9 @@ function renderPage() {
   })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/account/withdraw']}>
+      <MemoryRouter initialEntries={['/?account=withdraw']}>
         <Routes>
-          <Route path="/account/withdraw" element={<AccountWithdrawPage />} />
+          <Route path="/" element={<AccountDialog />} />
           <Route path="/login" element={<p>로그인 화면</p>} />
         </Routes>
       </MemoryRouter>

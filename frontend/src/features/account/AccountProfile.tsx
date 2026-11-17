@@ -1,16 +1,14 @@
-import { useState } from 'react'
-import { Link, useLocation } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, CircleCheckBig } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { getApiErrorMessage } from '@/api/error'
 import { agentsApi, authApi, projectsApi } from '@/api/services'
 import { allTokens } from '@/features/agents/allTokens'
-import { RequireAccount } from '@/features/auth/RequireAccount'
 import { useSession } from '@/features/auth/useSession'
-import { AccountLayout } from '@/features/auth/AccountLayout'
 import { AsyncState } from '@/components/AsyncState'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,12 +33,14 @@ function ProfileForm({
   joinedAt,
   avatarChanged,
   onSave,
+  onDirtyChange,
 }: {
   name: string
   email: string
   joinedAt?: string
   avatarChanged: boolean
   onSave: (name: string) => Promise<unknown>
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const {
     register,
@@ -55,6 +55,8 @@ function ProfileForm({
   // name은 서버 값이라, 저장 뒤 계정을 다시 읽으면 입력과 같아져 버튼이 저절로 꺼진다.
   const typedName = useWatch({ control, name: 'name' })
   const changed = avatarChanged || typedName.trim() !== name
+  // 고치던 중이면 회원 설정 창을 닫기 전에 한 번 묻는다(D48).
+  useEffect(() => onDirtyChange?.(changed), [changed, onDirtyChange])
   return (
     <form
       onSubmit={handleSubmit(async (values) => {
@@ -132,11 +134,16 @@ function ProfileForm({
   )
 }
 
-function Account() {
+// 회원 설정 창(D48)의 첫 화면: 프로필·캐릭터, 비밀번호 변경·회원 탈퇴로 가는 줄, 내 에이전트 토큰.
+export function AccountProfile({
+  onShow,
+  onDirtyChange,
+}: {
+  onShow: (view: 'password' | 'withdraw') => void
+  onDirtyChange?: (dirty: boolean) => void
+}) {
   const session = useSession()
   const queryClient = useQueryClient()
-  const location = useLocation()
-  const toast = (location.state as { toast?: string } | null)?.toast
   const [revoking, setRevoking] = useState<string | null>(null)
   const [avatar, setAvatar] = useState(session.data?.avatar)
   const mutation = useMutation({
@@ -160,19 +167,7 @@ function Account() {
   })
   const picked = characterOf(avatar)
   return (
-    <AccountLayout title="회원 설정">
-      {toast && (
-        <p
-          role="status"
-          className="fixed top-[84px] right-8 z-30 flex max-w-[360px] items-center gap-2.5 rounded-xl bg-foreground px-4 py-3 text-sm text-white shadow-lg"
-        >
-          <CircleCheckBig
-            aria-hidden="true"
-            className="size-[18px] shrink-0 text-[#7bd88f]"
-          />
-          {toast}
-        </p>
-      )}
+    <>
       <section
         aria-labelledby="profile-title"
         className="grid gap-5 rounded-[14px] bg-card p-6 ring-1 ring-foreground/10"
@@ -250,6 +245,7 @@ function Account() {
           joinedAt={session.data?.created_at}
           // 예전 값(bee-yellow)이나 빈 값도 모든 화면에서 같은 캐릭터로 보이므로, 화면에 보이는 캐릭터가 같으면 바뀌지 않은 것이다.
           avatarChanged={picked.key !== characterOf(session.data?.avatar).key}
+          onDirtyChange={onDirtyChange}
           onSave={(name) =>
             mutation.mutateAsync(() =>
               authApi.updateMe({ name, avatar: picked.key }),
@@ -272,9 +268,9 @@ function Account() {
         <Button
           variant="outline"
           className="border-[#d4d4d4] font-semibold"
-          asChild
+          onClick={() => onShow('password')}
         >
-          <Link to="/account/password">비밀번호 변경</Link>
+          비밀번호 변경
         </Button>
       </section>
       <section
@@ -388,18 +384,11 @@ function Account() {
         <Button
           variant="outline"
           className="border-destructive/40 font-semibold text-[#c10007]"
-          asChild
+          onClick={() => onShow('withdraw')}
         >
-          <Link to="/account/withdraw">회원 탈퇴</Link>
+          회원 탈퇴
         </Button>
       </section>
-    </AccountLayout>
-  )
-}
-export default function AccountPage() {
-  return (
-    <RequireAccount>
-      <Account />
-    </RequireAccount>
+    </>
   )
 }

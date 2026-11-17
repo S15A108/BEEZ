@@ -42,10 +42,6 @@ function renderApp(path: string, me: MeResponse) {
         <Routes>
           <Route path="/" element={<App />}>
             <Route index element={<p>도시 화면</p>} />
-            <Route
-              path="account/password"
-              element={<p>비밀번호 변경 화면</p>}
-            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -59,7 +55,7 @@ it('임시 비밀번호로 로그인했으면 비밀번호 변경 화면으로 �
 
   expect(
     await screen.findByRole('link', { name: '비밀번호 변경' }),
-  ).toHaveAttribute('href', '/account/password')
+  ).toHaveAttribute('href', '/?account=password')
   expect(screen.getByText('도시 화면')).toBeInTheDocument()
 })
 
@@ -71,10 +67,11 @@ it('비밀번호를 바꿀 필요가 없으면 안내를 보여 주지 않는다
   ).not.toBeInTheDocument()
 })
 
-it('비밀번호 변경 화면에서는 안내를 다시 보여 주지 않는다', async () => {
-  renderApp('/account/password', account(true))
+// D48: 비밀번호 변경은 회원 설정 창의 하위 화면(?account=password)이다.
+it('비밀번호 변경 창이 열려 있으면 안내를 다시 보여 주지 않는다', async () => {
+  renderApp('/?account=password', account(true))
   expect(await screen.findByText('김동료')).toBeInTheDocument()
   expect(
-    screen.queryByRole('link', { name: '비밀번호 변경' }),
+    screen.queryByText(/임시 비밀번호로 로그인했어요/),
   ).not.toBeInTheDocument()
 })
