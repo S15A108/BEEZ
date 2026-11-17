@@ -325,11 +325,11 @@ export class CityRenderer3D {
   }
 
   /**
-   * 이름표(HTML, data-slot = 칸 번호 lot)를 그 프로젝트·빈 부지 가운데 앞에 가장 가까운 칸 위로 옮긴다. 겹치면 안 되는 화면 글자(blocked, 캔버스 기준 사각형)와 겹치거나 화면
-   * 양옆·위에서 잘리는 이름표는 숨긴다. 이웃 이름표끼리 겹치면 가운데에 가까운 쪽만 남긴다.
+   * 이름표(HTML, data-slot = 칸 번호 lot)를 그 프로젝트·빈 부지 가운데 앞에 가장 가까운 칸 위로 옮긴다. 화면 양옆·위에서 잘리는
+   * 이름표는 숨긴다. 이웃 이름표끼리 겹치면 가운데에 가까운 쪽만 남긴다.
    */
-  placeTags(overlay: HTMLElement | null, blocked: readonly Box[]) {
-    const taken = [...blocked]
+  placeTags(overlay: HTMLElement | null) {
+    const taken: Box[] = []
     const tags = [...(overlay?.children ?? [])]
       .map((element) => {
         const tag = element as HTMLElement

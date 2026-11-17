@@ -12,7 +12,6 @@ import {
   FileText,
   ListChecks,
   Lock,
-  Play,
   Search,
   Sparkles,
   Upload,
@@ -34,7 +33,6 @@ import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { parseCitationFocus, type CitationTarget } from '@/lib/citationTarget'
-import { useProjectStart } from '@/features/projects/useProjectStart'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useSession } from '@/features/auth/useSession'
 import { membersQuery } from '@/features/members/membersQuery'
@@ -44,7 +42,7 @@ import { reviewStage } from './reviewStage'
 import { VerifiedCitation } from './VerifiedCitation'
 
 // 공용 문서함 수정안(PNL-02 모달안 + 10-29 프로젝트 시작 보드): 목록 · 상세 · 등록 · 검토를 같은 창 안에서 바꿔 보여 준다.
-// 시작 전에는 필수 문서 4종 칸과 '프로젝트 시작'(PLN-A10), 시작 뒤에는 현재 문서만 두고 문서 수정은 변경 제안으로 보낸다.
+// 시작 전에는 필수 문서 4종 칸과 기획 분석을 여는 '설계 초안 만들기'(4종 승인 전에는 잠김), 시작 뒤에는 현재 문서만 두고 문서 수정은 변경 제안으로 보낸다.
 const KINDS = ['PLAN', 'REQUIREMENTS', 'ERD', 'API_SPEC'] as const
 type Kind = (typeof KINDS)[number]
 const kindIcon = {
@@ -239,10 +237,6 @@ export function DocumentsPanel({
     return { kind, document, copy, approved }
   })
   const approvedCount = slots.filter((slot) => slot.approved).length
-  const start = useProjectStart(
-    projectId,
-    isLeader && !started && approvedCount === 4,
-  )
   const current = docs
     .filter((document) => document.approved_version)
     .toSorted((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind))
@@ -522,79 +516,35 @@ export function DocumentsPanel({
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/50 bg-primary/10 p-4">
                   <div className="grid min-w-0 flex-1 gap-1">
                     <strong>
-                      필수 문서 4종이 모두 승인됐어요. 이제 프로젝트를 시작할 수
-                      있어요
+                      {isLeader
+                        ? '문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요'
+                        : '문서 승인을 마쳤어요. 팀장이 설계 초안을 만들면 시작돼요'}
                     </strong>
                     <span className="text-sm text-muted-foreground">
                       {isLeader
-                        ? start.indexed
-                          ? '시작하면 4종으로 기준 v1이 발행되고 변경 제안과 작업 현황이 열려요. 그 뒤 문서 수정은 모두 변경 제안으로 가요.'
-                          : start.needsDrafts
-                            ? '기준 v1에 넣을 설계 항목 초안이 아직 없어요. 기획 분석에서 초안을 만들거나 직접 추가하면 시작할 수 있어요.'
-                            : '설계 항목 초안을 확인하는 중이에요. 끝나면 버튼이 켜져요.'
+                        ? '기획 분석에서 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요.'
                         : '팀장이 프로젝트를 시작하면 알려 드려요.'}
                     </span>
-                    {isLeader && start.needsDrafts && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="justify-self-start"
-                        onClick={() => openPane('planning')}
-                      >
-                        <Sparkles />
-                        기획 분석에서 초안 만들기
-                      </Button>
-                    )}
-                    {isLeader && !start.needsDrafts && start.work.open && (
-                      <>
-                        <span className="text-sm text-muted-foreground">
-                          {start.work.summary}이 남아 있어요. 시작하면 아직
-                          채택하지 않은 후보는 기준에 들어가지 않아요.
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="justify-self-start"
-                          onClick={() => openPane('planning')}
-                        >
-                          <Sparkles />
-                          {start.work.label}
-                        </Button>
-                      </>
-                    )}
-                    {start.error && (
-                      <span role="alert" className="text-sm text-destructive">
-                        {start.error}
-                      </span>
-                    )}
                   </div>
+                  {/* 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다.
+                      '설계 초안 만들기'는 그 창을 연다. 남은 후보 안내도 발행 확인 창이 보여 준다. */}
                   {isLeader && (
-                    <Button
-                      disabled={!start.ready || start.busy}
-                      onClick={() =>
-                        void start
-                          .start()
-                          .then(() =>
-                            setNotice({
-                              title: '프로젝트를 시작했어요',
-                              text: '기준 v1이 발행됐어요. 이제 문서 수정은 변경 제안으로 해요.',
-                            }),
-                          )
-                          .catch(() => undefined)
-                      }
-                    >
-                      <Play />
-                      프로젝트 시작
+                    <Button onClick={() => openPane('planning')}>
+                      <Sparkles />
+                      설계 초안 만들기
                     </Button>
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3.5">
-                  <Button variant="secondary" disabled>
-                    <Lock />
-                    프로젝트 시작
-                  </Button>
-                </div>
+                // 팀원은 설계 초안을 만들 수 없어 끝까지 풀리지 않는 버튼이라 팀장에게만 보인다.
+                isLeader && (
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3.5">
+                    <Button variant="secondary" disabled>
+                      <Lock />
+                      설계 초안 만들기
+                    </Button>
+                  </div>
+                )
               )}
             </section>
           )}
