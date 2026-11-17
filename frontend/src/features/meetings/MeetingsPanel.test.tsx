@@ -1266,3 +1266,36 @@ it('팀원에게는 다시 정리 요청이 없다', async () => {
     screen.queryByRole('button', { name: '다시 정리 요청' }),
   ).not.toBeInTheDocument()
 })
+
+// PR #328 확인 요청: 제안 없이 회의를 끝내면(바뀔 문서 없음·회의 중단) 회의실에 머물며 바로 결과가 보인다.
+// 끝낸 직후에는 회의 정보를 다시 읽기 전이라 단계를 옛 상태로 고정하지 않고 결과 단계로 정한다.
+it('제안 없이 회의를 끝내면 바로 끝낸 결과가 보인다', async () => {
+  // 예시 서버는 자기 정리(바뀔 문서 있음)로 제안을 만들므로, 응답과 회의 정보에서 제안을 빼 '변경 없이 끝낸' 경우를 만든다.
+  // 실제 네트워크처럼 끝낸 뒤 회의 정보는 늦게 온다.
+  const realClose = meetingsApi.close.bind(meetingsApi)
+  const realGet = meetingsApi.get.bind(meetingsApi)
+  let closed = false
+  vi.spyOn(meetingsApi, 'close').mockImplementation(async (...args) => {
+    const result = await realClose(...args)
+    closed = true
+    return { ...result, change_proposal_id: undefined }
+  })
+  vi.spyOn(meetingsApi, 'get').mockImplementation(async (...args) => {
+    const meeting = {
+      ...(await realGet(...args)),
+      change_proposal_id: undefined,
+    }
+    if (closed) await new Promise((resolve) => setTimeout(resolve, 300))
+    return meeting
+  })
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
+  await user.click(screen.getByRole('button', { name: '변경 제안' }))
+  expect(
+    await screen.findByRole('region', { name: '회의 끝낸 결과' }),
+  ).toHaveTextContent('변경 제안은 만들지 않았어요')
+  expect(useWorkspaceStore.getState().pane).toBe('meetings')
+  vi.restoreAllMocks()
+})

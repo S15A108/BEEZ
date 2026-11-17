@@ -210,7 +210,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const participant = detail.data?.participants.find(
     (item) => item.member_id === me?.id,
   )
-  const closedMeeting = detail.data?.status === 'CLOSED'
+  // 방금 끝낸 회의는 회의 정보를 다시 읽기 전에도 끝난 회의로 본다(단계를 옛 상태로 고정하지 않게).
+  const closedMeeting =
+    detail.data?.status === 'CLOSED' ||
+    (!!closeResult && closeResult.meetingId === selectedId)
   // 서버가 이 정리로는 끝낼 수 없다고 거절했다(정리 뒤 새 기록, 또는 정리 뒤 문서 기준이 바뀜). 다시 정리해야 한다.
   const summaryRejected = !!summary && summary.id === rejectedSummaryId
   // 끝낼 수 있는 정리: 최신 정리이고, 그 뒤에 새 대화가 없고, 서버가 거절하지 않았다.
@@ -356,7 +359,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
         })
         // 진행 중 목록에서 빠져도 방금 끝낸 회의를 계속 보여 준다(목록은 '끝남'으로).
         setSelection({ id: meetingId, focus })
-        setStepView(null)
+        // 결과 단계로 바로 정한다. 비워 두면 회의 정보를 다시 읽기 전의 옛 단계로 고정될 수 있다(PR #328 확인 요청).
+        setStepView({ meetingId, step: 3 })
         setListFilter(null)
         // 변경 제안을 만들었으면 변경 제안 창(단축 바 2)에서 그 제안을 골라 둔 채 연다(알림·링크와 같은 openPane + focus id).
         // 응답은 제안 하나(change_proposal_id)다. 제안이 없으면(바뀔 문서 없음) 회의실에 결과를 보인다.
