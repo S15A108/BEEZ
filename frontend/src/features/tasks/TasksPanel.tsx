@@ -144,7 +144,7 @@ const statusTone: Partial<Record<string, string>> = {
 const tonePill = (value: string) => (
   <StatusPill value={value} className={statusTone[value]} />
 )
-// 노란 선택(S15P31A108-416): 고른 탭·필터는 노란 바탕, 고르지 않은 필터는 노란 테두리, 호버는 조금 짙은 회색이다.
+// 노란 선택(S15P31A108-416): 고른 탭은 노란 바탕, 표시한 상태 상자는 노란 테두리, 호버는 조금 짙은 회색이다.
 const focusRing =
   'outline-none focus-visible:ring-3 focus-visible:ring-ring/60 focus-visible:ring-offset-1'
 // 창 안 화면 아래 버튼 줄(SheetSubmit과 같은 모양)
@@ -319,6 +319,9 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   )
   const selectedId =
     selected?.focus === focusId ? selected.id : (focusId ?? ordered[0]?.id)
+  const selectedGroup = groupOf(
+    entries.find((entry) => entry.id === selectedId)?.status,
+  )
   // 계획 이력·작업 기록 카드와 '더 보기'의 담당 후보 추천이 여는 창 안 화면
   const [sheet, setSheet] = useState<
     'history' | 'records' | 'recommend' | null
@@ -651,13 +654,16 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                       </NativeSelect>
                     )}
                   </div>
-                  {/* 상태별 작업 수를 겸하는 필터 버튼(S15P31A108-416). 개수는 거르기 전 목록(탭·담당자 기준)으로 센다. */}
+                  {/* 상태별 작업 수를 겸하는 필터 버튼(S15P31A108-416). 개수는 거르기 전 목록(탭·담당자 기준)으로 센다.
+                      모양은 원래 타일 그대로 두고, 표시한 상자의 테두리만 검정에서 노랑으로 바꾼다(11-17 #325 리뷰 반영).
+                      표시는 원래처럼 고른 작업의 상태이고, 필터를 고르면 그 상태다(필터를 고르면 고른 작업도 그 상태로 옮겨 둘이 같다). */}
                   <ul
                     aria-label="상태별 작업 수"
                     className="grid grid-cols-4 gap-1.5"
                   >
                     {statusGroups.map((group) => {
                       const on = statusFilter === group.label
+                      const marked = statusFilter ? on : group === selectedGroup
                       return (
                         <li key={group.label} className="grid">
                           <button
@@ -685,11 +691,11 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                 })
                             }}
                             className={cn(
-                              'grid gap-px rounded-[10px] border-2 border-primary px-2 py-[6px] text-center transition-colors',
+                              'grid gap-px rounded-[10px] border px-2 py-[7px] text-center',
                               focusRing,
-                              on
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-card hover:bg-primary/15',
+                              marked
+                                ? 'border-primary bg-card'
+                                : 'bg-muted text-muted-foreground',
                             )}
                           >
                             <strong className="text-[15px] leading-5 font-bold">
@@ -699,12 +705,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                 ).length
                               }
                             </strong>
-                            <span
-                              className={cn(
-                                'text-[11px] leading-[14px]',
-                                on ? 'font-semibold' : 'text-muted-foreground',
-                              )}
-                            >
+                            <span className="text-[11px] leading-[14px] text-muted-foreground">
                               {group.label}
                             </span>
                           </button>
