@@ -76,7 +76,7 @@ export function graphLabel(
 }
 
 export const NODE_W = 172
-export const NODE_H = 56
+export const NODE_H = 62
 export const COLUMN_GAP = 64
 const ROW_GAP = 32
 const HEADER = 32 // 열 제목 자리
@@ -86,9 +86,9 @@ export const nodeX = (col: number) => col * (NODE_W + COLUMN_GAP)
 
 type Cell = { col: number; row: number }
 
-// 이름이 들어갈 폭의 어림값(11px 글자와 양옆 테두리).
+// 이름이 들어갈 폭의 어림값(12px 글자와 양옆 테두리).
 const labelWidth = (text: string) =>
-  [...text].reduce((width, char) => width + (char > '⹿' ? 11 : 7), 6)
+  [...text].reduce((width, char) => width + (char > '⹿' ? 12 : 7), 6)
 
 // 상자 면에서 면으로 잇는 선 경로와 이름 자리. 상자가 없는 열 사이 칸과 행 사이 줄로만 다닌다.
 function edgeRoute(

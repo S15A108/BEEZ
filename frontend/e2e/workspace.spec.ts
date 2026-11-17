@@ -114,6 +114,8 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await dialog.getByRole('button', { name: '닫기', exact: true }).click()
   await page.getByRole('button', { name: '작업 현황', exact: true }).click()
   dialog = page.getByRole('dialog')
+  // S15P31A108-416: 통과한 작업은 계획 탭부터 열리고 검증 결과는 탭을 골라 본다.
+  await dialog.getByRole('tab', { name: /검증 결과/ }).click()
   await expect(
     dialog.getByText('설계와 계획의 검증 결과', { exact: true }),
   ).toBeVisible()
@@ -245,6 +247,61 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
     .getByRole('button', { name: '채택' })
     .click()
   await expect(dialog.getByText('후보를 채택했어요.').first()).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+// S15P31A108-460: 문서 4종이 승인되면 기획 분석의 '프로젝트 시작' 한 번으로 기준 v1을 발행한다('승인' 입력 창 없음).
+test('기획 분석에서 프로젝트 시작을 누르면 바로 기준 v1이 생긴다', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await login(page)
+  // 예시 프로젝트 102의 문서 4종을 팀장 승인 상태로 둔다(브라우저 예시 저장소).
+  await page.evaluate(() => {
+    const key = 'beez.mock.api.v13'
+    const database = JSON.parse(localStorage.getItem(key)!)
+    const project = database.projects.find(
+      (item: { project: { id: string } }) => item.project.id === '102',
+    )
+    for (const version of project.versions) version.status = 'APPROVED'
+    for (const document of project.documents) {
+      document.approved_version = project.versions.find(
+        (version: { document_id: string }) =>
+          version.document_id === document.id,
+      )
+      delete document.latest_draft
+    }
+    for (const copy of project.working_copies) copy.status = 'APPROVED'
+    localStorage.setItem(key, JSON.stringify(database))
+  })
+  await page.goto('/projects/102')
+  await expect(page.locator('canvas')).toBeVisible()
+  await page.evaluate(async () => {
+    const path = '/src/stores/workspaceStore.ts'
+    const store = await import(/* @vite-ignore */ path)
+    store.useWorkspaceStore.getState().openPane('planning')
+  })
+  const dialog = page.getByRole('dialog')
+  const start = dialog.getByRole('button', { name: '프로젝트 시작' })
+  await expect(start).toBeEnabled({ timeout: 15_000 })
+  await start.click()
+  // 발행 뒤에는 작업 만들기가 다음 할 일로 맨 위에 오고, 성공 안내가 그 카드 안에 붙는다.
+  const next = dialog.getByRole('region', { name: '승인 설계에서 작업 만들기' })
+  await expect(next.getByText('첫 기준 설계를 발행했어요.')).toBeVisible()
+  await expect(
+    next.getByRole('button', { name: '작업 만들고 배정하기' }),
+  ).toBeVisible()
+  await expect(dialog.getByText(/기준 설계 v1이 발행되어 있어요/)).toBeVisible()
+  await expect(dialog.getByRole('textbox', { name: /승인/ })).toHaveCount(0)
+  // 초안 탭 대신 기준 설계 v1의 승인 항목을 읽기만 한다.
+  await dialog.getByRole('tab', { name: /기준 설계 v1/ }).click()
+  await expect(
+    dialog.getByRole('tabpanel').getByRole('heading', { name: 'REQ-001' }),
+  ).toBeVisible()
+  await expect(
+    dialog.getByRole('button', { name: /항목 추가|내용 수정/ }),
+  ).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
@@ -440,7 +497,7 @@ test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카�
   await expect(tooltip).toHaveCount(0)
 
   await running.hover()
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   await expect(tooltip).toContainText('팀장')
   await expect(tooltip).toContainText('검토할 변경')
   await expect(tooltip).toContainText('승인 문서')
@@ -472,7 +529,7 @@ test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카�
   await expect(tooltip).toContainText('시작 준비 중')
   await page.keyboard.press('Tab')
   await expect(running).toBeFocused()
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   // 마지막 카드에서 목록 밖으로 나가면 닫힌다.
   await page.keyboard.press('Tab')
   await expect(tooltip).toHaveCount(0)
@@ -488,7 +545,7 @@ test('지도 이름표에 올리면 호버 카드가 제목 아래 고정 자리
   await expect(tag).toBeVisible()
   await expect(tag).toHaveAccessibleName(/안 읽은 알림 2건/)
   await tag.hover()
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   const box = (await page
     .getByRole('region', { name: '내 프로젝트 도시' })
     .boundingBox())!
@@ -501,7 +558,7 @@ test('지도 이름표에 올리면 호버 카드가 제목 아래 고정 자리
   // 이름표 아래 건물에 올려도 같은 카드가 열린다.
   const at = (await tag.boundingBox())!
   await page.mouse.move(at.x + at.width / 2, at.y + at.height + 40)
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   await page.mouse.move(0, 0)
   await expect(tooltip).toHaveCount(0)
   await tag.focus()

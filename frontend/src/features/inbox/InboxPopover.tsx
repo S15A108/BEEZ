@@ -19,7 +19,6 @@ import { targetFocus, targetLabel, targetPane } from './notificationTarget'
 // 벨 아래 팝오버. 알림을 누르면 그 창으로 가고 그 알림만 읽음 처리한다.
 export function InboxPopover({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false)
-  const [unreadOnly, setUnreadOnly] = useState(false)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const queryClient = useQueryClient()
   const query = useQuery({
@@ -44,8 +43,6 @@ export function InboxPopover({ projectId }: { projectId: string }) {
   const unreadCount = unread.length
     ? `${unread.length}${unreadQuery.data?.has_more ? '+' : ''}`
     : ''
-  const active = unreadOnly ? unreadQuery : query
-  const shown = unreadOnly ? unread : items
   const go = (item: Notification) => {
     if (!item.read_at) read.mutate({ ids: [item.id] })
     setOpen(false)
@@ -82,35 +79,14 @@ export function InboxPopover({ projectId }: { projectId: string }) {
             모두 읽음
           </Button>
         </div>
-        <div className="flex gap-1 px-4 pt-3 text-xs" role="group">
-          {[
-            [false, '전체'],
-            [true, `읽지 않음 ${unreadCount}`.trim()],
-          ].map(([value, label]) => (
-            <button
-              key={String(value)}
-              type="button"
-              aria-pressed={unreadOnly === value}
-              onClick={() => setUnreadOnly(value as boolean)}
-              className={cn(
-                'rounded-full px-3 py-1',
-                unreadOnly === value
-                  ? 'bg-foreground text-background'
-                  : 'bg-muted',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
         <ul className="max-h-96 overflow-y-auto p-2">
-          {active.isPending && (
+          {query.isPending && (
             <li role="status" className="p-4 text-sm text-muted-foreground">
               불러오는 중…
             </li>
           )}
-          {active.error &&
-            (isMissingApi(active.error) ? (
+          {query.error &&
+            (isMissingApi(query.error) ? (
               <li role="status" className="p-4 text-sm text-muted-foreground">
                 알림은 서버에서 아직 준비 중이에요.
               </li>
@@ -119,13 +95,13 @@ export function InboxPopover({ projectId }: { projectId: string }) {
                 알림을 불러오지 못했어요.
               </li>
             ))}
-          {active.data && !shown.length && (
+          {query.data && !items.length && (
             <li className="p-4 text-sm text-muted-foreground">
               새 알림이 없어요. 변경 제안 검토 요청, 회의, 작업 검증 결과가 오면
               여기에 떠요.
             </li>
           )}
-          {shown.map((item) => (
+          {items.map((item) => (
             <li key={item.id}>
               <button
                 type="button"
@@ -139,7 +115,7 @@ export function InboxPopover({ projectId }: { projectId: string }) {
                   aria-hidden="true"
                   className={cn(
                     'mt-1.5 size-2 shrink-0 rounded-full',
-                    item.read_at ? 'bg-muted' : 'bg-primary',
+                    item.read_at ? 'bg-muted' : 'bg-success',
                   )}
                 />
                 <span className="grid gap-1">

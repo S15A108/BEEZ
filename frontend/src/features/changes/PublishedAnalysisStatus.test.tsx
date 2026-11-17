@@ -82,6 +82,15 @@ describe('발행 후 분석 상태', () => {
     },
   )
 
+  // S15P31A108-456: 상태 줄을 짧게 두고, 발행 전 분석과의 차이 설명은 접어 둔 채 열어 볼 수 있다.
+  it('발행 전 분석과의 차이 설명은 접혀 있고 펼치면 보인다', async () => {
+    renderStatus({ status: 'RUNNING', guidance: 'WAIT' })
+    const explain = screen.getByText(/발행 전 분석은 승인하기 전에/)
+    expect(explain).not.toBeVisible()
+    await userEvent.setup().click(screen.getByText('발행 전 분석과 다른 점'))
+    expect(explain).toBeVisible()
+  })
+
   it('평가가 완료된 경우에만 완료를 표시하고 최신 기준 여부와 새로고침을 제공한다', async () => {
     const refresh = vi.fn()
     renderStatus(

@@ -2,7 +2,7 @@
 
 // shadcn popover와 같은 모양. `npx shadcn add popover`가 막혀 있어 radix-ui로 직접 작성했다.
 import * as React from 'react'
-import { cn } from 'cn'
+import { cn } from '@/lib/utils'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 
 function Popover({

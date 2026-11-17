@@ -61,7 +61,7 @@ export function InboxPanel({ projectId }: { projectId: string }) {
                     className={`flex items-start gap-4 rounded-xl border p-4 ${item.read_at ? '' : 'bg-primary/5'}`}
                   >
                     <span
-                      className={`mt-2 size-2 shrink-0 rounded-full ${item.read_at ? 'bg-muted' : 'bg-primary'}`}
+                      className={`mt-2 size-2 shrink-0 rounded-full ${item.read_at ? 'bg-muted' : 'bg-success'}`}
                     />
                     <div className="flex-1">
                       <button

@@ -2,7 +2,7 @@
 
 // shadcn tooltip과 같은 모양. `npx shadcn add`가 막혀 있어 popover처럼 radix-ui로 직접 작성했다.
 import * as React from 'react'
-import { cn } from 'cn'
+import { cn } from '@/lib/utils'
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
 
 function Tooltip({

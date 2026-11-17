@@ -84,7 +84,7 @@ function AccountDialogBody({
             type="button"
             disabled={busy}
             onClick={goBack}
-            className="inline-flex items-center gap-1 self-start text-[13px] font-semibold text-[#57534e] hover:text-foreground"
+            className="inline-flex items-center gap-1 self-start text-sub font-semibold text-[#57534e] hover:text-foreground"
           >
             <ChevronLeft className="size-4" />
             회원 설정
