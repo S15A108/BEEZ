@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -76,5 +77,32 @@ it('비밀번호 변경 화면에서는 안내를 다시 보여 주지 않는다
   expect(await screen.findByText('김동료')).toBeInTheDocument()
   expect(
     screen.queryByRole('link', { name: '비밀번호 변경' }),
+  ).not.toBeInTheDocument()
+})
+
+// S15P31A108-446: 헤더 오른쪽은 이름 버튼 하나이고, 누르면 회원 설정·로그아웃 메뉴가 열린다.
+it('이름 버튼을 누르면 회원 설정과 로그아웃 메뉴가 열린다', async () => {
+  const user = userEvent.setup()
+  const logout = vi.spyOn(authApi, 'logout').mockResolvedValue(undefined)
+  renderApp('/', account(false))
+
+  await user.click(await screen.findByRole('button', { name: '김동료' }))
+  expect(
+    await screen.findByRole('menuitem', { name: '회원 설정' }),
+  ).toHaveAttribute('href', '/account')
+  await user.click(screen.getByRole('menuitem', { name: '로그아웃' }))
+  await waitFor(() => expect(logout).toHaveBeenCalled())
+})
+
+it('회원 설정 안에서는 이름 메뉴에 로그아웃만 있다', async () => {
+  const user = userEvent.setup()
+  renderApp('/account/password', account(false))
+
+  await user.click(await screen.findByRole('button', { name: '김동료' }))
+  expect(
+    await screen.findByRole('menuitem', { name: '로그아웃' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('menuitem', { name: '회원 설정' }),
   ).not.toBeInTheDocument()
 })

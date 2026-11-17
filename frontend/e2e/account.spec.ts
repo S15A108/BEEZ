@@ -68,7 +68,12 @@ test('회원 설정에서 비밀번호 변경과 회원 탈퇴를 별도 페이�
   await expect(
     page.getByRole('heading', { name: /님의 프로젝트/ }),
   ).toBeVisible()
-  await page.getByRole('link', { name: '회원 설정' }).click()
+  // 회원 설정·로그아웃은 헤더의 이름 메뉴 안에 있다(S15P31A108-446).
+  await page
+    .getByRole('navigation', { name: '계정' })
+    .getByRole('button')
+    .click()
+  await page.getByRole('menuitem', { name: '회원 설정' }).click()
   await page.getByRole('link', { name: '비밀번호 변경' }).click()
   await expect(page).toHaveURL(/\/account\/password$/)
   await page

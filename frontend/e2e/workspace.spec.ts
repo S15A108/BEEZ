@@ -252,6 +252,21 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
     page.getByRole('button', { name: '참여하기', exact: true }),
   ).toHaveCount(0)
   const log = page.getByRole('log', { name: '회의 대화' })
+  // 참여자는 제목 줄에 있어 입력줄에 가리지 않고, 창은 스크롤하지 않고 대화 칸만 스크롤한다(S15P31A108-438).
+  await expect(
+    log.getByText('TASK-002에서 만료 전용 안내는 뺄게요.'),
+  ).toBeVisible()
+  const people = await page.getByRole('group', { name: '참여자' }).boundingBox()
+  const input = await page
+    .getByRole('textbox', { name: /메시지/ })
+    .boundingBox()
+  expect(people!.y + people!.height).toBeLessThan(input!.y)
+  expect(
+    await log.evaluate((element) => {
+      const panel = element.closest('section')!
+      return panel.scrollHeight - panel.clientHeight
+    }),
+  ).toBeLessThanOrEqual(1)
   await page
     .getByRole('textbox', { name: /메시지/ })
     .fill('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.')
@@ -293,6 +308,39 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
   ).toBeVisible()
   await expect(
     page.getByRole('button', { name: '변경 제안 보기', exact: true }),
+  ).toBeVisible()
+})
+
+// PR #306 재검토(S15P31A108-438): 낮은 창에서 비비 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 납작해지지 않고
+// (초안은 버튼과 초안 몇 줄, 안건은 '정할 것' 줄과 안내 몇 줄), 모자라면 창이 스크롤해 '접기'를 다시 누를 수 있다.
+test('1024×768에서 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 보이고 다시 접을 수 있다', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '회의실', exact: true }).click()
+  const log = page.getByRole('log', { name: '회의 대화' })
+  await page
+    .getByRole('button', { name: '비비에게 정리 요청', exact: true })
+    .click()
+  await expect(log.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
+  await page.getByRole('button', { name: '회의 수정 초안 만들기' }).click()
+  const fold = page.getByRole('button', { name: '회의 수정 초안 접기' })
+  const draft = fold.locator('..')
+  const agenda = page.getByRole('region', { name: '안건' })
+  await agenda.getByRole('button', { name: '펼치기' }).click()
+  await expect(agenda.getByRole('button', { name: '접기' })).toBeVisible()
+  const draftBox = await draft.boundingBox()
+  const foldBox = await fold.boundingBox()
+  const agendaBox = await agenda.boundingBox()
+  expect(draftBox!.height).toBeGreaterThanOrEqual(150)
+  expect(foldBox!.y + foldBox!.height).toBeLessThanOrEqual(
+    draftBox!.y + draftBox!.height,
+  )
+  expect(agendaBox!.height).toBeGreaterThanOrEqual(120)
+  await fold.click()
+  await expect(
+    page.getByRole('button', { name: '회의 수정 초안 만들기' }),
   ).toBeVisible()
 })
 
@@ -365,10 +413,20 @@ test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카�
 
   await page.mouse.move(0, 0)
   await expect(tooltip).toHaveCount(0)
+  // 제목 줄의 정렬 뒤로 만들기 버튼과 도시 이름표를 지나 첫 카드까지 키보드로 간다(S15P31A108-446).
   await page.getByLabel('정렬').focus()
-  await page.keyboard.press('Tab')
+  for (let i = 0; i < 30; i++) {
+    if (await preparing.evaluate((element) => element.matches(':focus'))) break
+    await page.keyboard.press('Tab')
+  }
+  await expect(preparing).toBeFocused()
   await expect(tooltip).toHaveCount(1)
-  await page.keyboard.press('Shift+Tab')
+  await expect(tooltip).toContainText('시작 준비 중')
+  await page.keyboard.press('Tab')
+  await expect(running).toBeFocused()
+  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  // 마지막 카드에서 목록 밖으로 나가면 닫힌다.
+  await page.keyboard.press('Tab')
   await expect(tooltip).toHaveCount(0)
 })
 
@@ -466,7 +524,8 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
 })
 
 // S15P31A108-285: 팀장 시작 가이드 1단계에 에이전트 연결이 없었다(SCR-06-v2-workspace-preparing, -docs-ready).
-test('팀장 시작 가이드 1단계에서 초대와 에이전트 연결을 하고, 건너뛰면 링크로 다시 간다', async ({
+// S15P31A108-430: 선택인 초대·연결은 단계가 아니라 가이드 아래 링크다. 맨 위에는 필수인 문서 올리기가 크게 보인다.
+test('팀장 시작 가이드는 문서 올리기를 먼저 보이고, 초대와 에이전트 연결은 선택 링크로 연다', async ({
   page,
 }) => {
   await login(page)
@@ -483,24 +542,21 @@ test('팀장 시작 가이드 1단계에서 초대와 에이전트 연결을 하
   await expect(
     page.getByRole('heading', { name: '가이드 확인', exact: true }),
   ).toBeVisible()
-  const setup = page.getByRole('list', { name: '팀원 초대와 에이전트 연결' })
-  await setup.getByRole('button', { name: '내 에이전트 연결 연결하기' }).click()
+  const guide = page.getByRole('region', { name: /프로젝트 시작 가이드/ })
+  await expect(guide.getByRole('heading', { level: 3 })).toContainText(
+    '문서 초안 4종 올리기',
+  )
+  await guide.getByRole('button', { name: '에이전트 연결하기' }).click()
   await expect(
     page.getByRole('heading', { name: 'Claude Code에 BEEZ 추가' }),
   ).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(
-    setup.getByRole('button', { name: '팀원 초대 초대하기' }),
+    guide.getByRole('button', { name: '지금 초대하기' }),
   ).toBeVisible()
-  await page.getByRole('button', { name: '나중에 할게요' }).click()
-  await expect(setup).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: '지금 초대하기' }),
-  ).toBeVisible()
-  await page.getByRole('button', { name: '에이전트 연결하기' }).click()
-  await expect(
-    page.getByRole('heading', { name: 'Claude Code에 BEEZ 추가' }),
-  ).toBeVisible()
+    guide.getByRole('button', { name: '나중에 할게요' }),
+  ).toHaveCount(0)
 })
 
 // S15P31A108-285: 창이 검색칸에 포커스를 주면서 창을 연 숫자가 검색어로 들어갔다.

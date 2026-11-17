@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   CircleHelp,
   Lock,
@@ -35,7 +36,6 @@ import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { Toast } from '@/components/Toast'
 import { BibiStatusRow } from './BibiStatusRow'
 import { Hotbar } from './Hotbar'
-import { leaderSetupStep } from './leaderSetupStep'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 import { Button } from '@/components/ui/button'
@@ -114,12 +114,7 @@ type Step = {
   done: boolean
   /** 필수 표시(문서 초안 4종) */
   required?: boolean
-  /** 건너뛴 선택 단계: 완료로 세고 '건너뜀'과 다시 하기 링크를 둔다 */
-  skipped?: boolean
-  /** 건너뛴 뒤 설정에서 다시 할 링크 */
-  links?: { label: string; focus: string }[]
   locked?: boolean
-  optional?: boolean
   action?: { label: string; pane: WorkspacePane; focus?: string }
   note?: string
   children?: ReactNode
@@ -226,14 +221,23 @@ export function WorkspaceHud({
   })
   const hiddenKey = guideKey(project.id, isLeader ? 'leader' : 'member')
   const readKey = guideKey(project.id, 'baseline-read')
-  // API 없음: 가이드 상태 저장 필드(시작 가이드 백엔드 메모 1). 건너뛴 초대는 브라우저에 둔다.
-  const inviteSkipKey = guideKey(project.id, 'invite-skipped')
-  const setup = leaderSetupStep({
-    invited: onboarding.member_count > 1,
-    agentConnected: onboarding.my_agent_connected,
-    skipFlag: readFlag(inviteSkipKey),
-    started,
-  })
+  // 팀장의 선택 단계(팀원 초대 · 에이전트 연결)는 다음 할 일로 고르지 않고 가이드 아래 링크로만 둔다(S15P31A108-430).
+  // 끝낸 쪽은 링크가 사라진다.
+  const setupLinks = isLeader
+    ? [
+        ...(onboarding.member_count > 1
+          ? []
+          : [
+              {
+                label: started ? '팀원 초대하기' : '지금 초대하기',
+                focus: 'team',
+              },
+            ]),
+        ...(onboarding.my_agent_connected
+          ? []
+          : [{ label: '에이전트 연결하기', focus: 'agent' }]),
+      ]
+    : []
   const uploaded = onboarding.required_documents.filter(
     (item) => item.uploaded,
   ).length
@@ -263,45 +267,8 @@ export function WorkspaceHud({
     stage !== null && seenStage !== null && stage > seenStage
       ? notices[stage]
       : undefined
-  // 10-29: 팀원 초대(선택)를 1순위로, 건너뛸 수 있게. 시작 조건은 그대로 4종 승인.
+  // 시작 조건은 4종 승인이다. 선택인 팀원 초대 · 에이전트 연결은 단계로 세지 않고 setupLinks 로만 둔다.
   const leaderSteps: Step[] = [
-    {
-      title: '팀원 초대 · 에이전트 연결',
-      detail: setup.detail,
-      done: setup.done,
-      skipped: setup.skipped,
-      links: setup.links,
-      optional: true,
-      children: (
-        <ul aria-label="팀원 초대와 에이전트 연결" className="mt-2 grid gap-1">
-          {setup.rows.map((row) => (
-            <li
-              key={row.focus}
-              className="flex items-center justify-between rounded-lg bg-muted/50 px-2.5 py-1.5 text-xs"
-            >
-              <span className="flex items-center gap-1.5">
-                {row.done && <Check className="size-3.5 text-green-700" />}
-                {row.label}
-              </span>
-              {!row.done && (
-                <button
-                  type="button"
-                  className="font-semibold underline"
-                  aria-label={`${row.label} ${row.action}`}
-                  onClick={() => openPane('settings', row.focus)}
-                >
-                  {row.action}
-                </button>
-              )}
-            </li>
-          ))}
-          <li className="text-[11px] text-muted-foreground">
-            에이전트는 설정 › 내 에이전트 관리에서 토큰을 발급하고 Claude Code에
-            BEEZ MCP를 추가하면 연결돼요.
-          </li>
-        </ul>
-      ),
-    },
     {
       title: '문서 초안 4종 올리기',
       required: true,
@@ -366,7 +333,8 @@ export function WorkspaceHud({
         ? '프로젝트를 시작했어요.'
         : allApproved
           ? '문서 4종 승인 4 / 4 · 기획 분석에서 설계 항목을 검토하고 발행하면 시작돼요'
-          : `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '설계 초안 만들기'가 켜져요. 기획 분석에서 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요.`,
+          : // 승인 전 버튼은 '승인 요청 보기'·'문서함 보기'라서 '켜진다'고 하지 않고 다음 순서만 알린다(잠긴 줄의 이유 글자로도 쓰인다).
+            `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '설계 초안 만들기'로 기획 분석을 열어요. 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요.`,
       done: started,
       locked: !allUploaded,
       // 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다. '설계 초안 만들기'는 그 창을 연다.
@@ -426,7 +394,29 @@ export function WorkspaceHud({
     (isLeader
       ? !started || onboarding.member_count <= 1
       : steps.some((step) => !step.done))
-  const current = steps.findIndex((step) => !step.done && !step.locked)
+  // 가이드는 남은 단계 하나만 크게 보이고(focus) 나머지는 한 줄씩, 끝낸 단계는 접는다(S15P31A108-430).
+  // 할 수 있는 버튼이 있는 단계를 먼저 고른다(팀장이 정할 담당 도메인은 기다리기만 하는 단계라 그다음).
+  // 팀장에게 승인 요청이 와 있으면 그 단계('승인 요청 보기')를 먼저 연다. 비비 검토 단계는 4종이 다 승인돼야 끝나서
+  // 그대로 두면 승인 대기가 접힌 줄에 묻힌다(PR #315 리뷰).
+  const isOpen = (step: Step) => !step.done && !step.locked
+  const firstOpen = (match: (step: Step) => boolean) =>
+    steps.findIndex((step) => isOpen(step) && match(step))
+  const current =
+    [
+      firstOpen((step) => step.action?.label === '승인 요청 보기'),
+      firstOpen((step) => Boolean(step.action ?? step.children)),
+      firstOpen(() => true),
+    ].find((index) => index >= 0) ?? -1
+  // 남은 단계 줄을 누르면 그 단계를 크게 연다. 끝났거나 잠긴 단계를 고른 채면 current 로 돌아간다.
+  const [picked, setPicked] = useState<string>()
+  const [showDone, setShowDone] = useState(false)
+  const [teamOpen, setTeamOpen] = useState(false)
+  const doneSteps = steps.filter((step) => step.done)
+  // 남은 단계가 모두 잠겼으면(시작을 기다리는 팀원) 첫 잠긴 단계를 기다림 카드로 크게 보이고 잠긴 이유를 적는다.
+  const focus =
+    steps.find((step) => step.title === picked && isOpen(step)) ??
+    steps[current] ??
+    steps.find((step) => !step.done)
   const agentStepNow =
     !isLeader && guideOpen && steps[current]?.title === '내 에이전트 연결하기'
   // 비비 대화 창이 열린 동안은 단축 바만 남기고 다른 위젯은 숨긴다(PNL-12 B안).
@@ -451,6 +441,13 @@ export function WorkspaceHud({
     DRAFT: '계획 작성 중',
     READY: '시작 전',
   } as Record<string, string>
+  // 연결된 에이전트(연결 미확인 포함, AGT-A05). 끊김·연결 전은 목록에 내 것만 남기고 팀 카드 수에도 세지 않는다.
+  const linked = (status: string) =>
+    status === 'connected' || status === 'recheck'
+  // 팀 카드 인원(디자인 검수 F05): 사람과 에이전트 줄을 합쳐 세지 않는다. 사람 수는 팀 관리 목록과 같은 팀원 목록이다.
+  const agentCount = members.filter((member) =>
+    linked(statusOf(member).status),
+  ).length
   const teamRows = [
     ...members
       .toSorted((a, b) => Number(b.id === me?.id) - Number(a.id === me?.id))
@@ -459,26 +456,30 @@ export function WorkspaceHud({
         const seen = presenceView(
           presence?.find((item) => item.member_id === member.id),
         )
+        // 사람 줄은 접속 상태(MON-A07)를 '접속 중'·'오프라인'으로 쓴다. 에이전트의 연결 상태 이름과 섞지 않는다(디자인 검수 F05).
+        const status =
+          seen.online === undefined
+            ? undefined
+            : seen.online
+              ? '접속 중'
+              : (seen.detail ?? '오프라인')
         return {
           online: seen.online,
           key: member.id,
           initial: member.name.slice(0, 1),
           color: member.color,
           name: `${member.name}${member.id === me?.id ? ' · 나' : ''}`,
+          status,
           // 위치는 presence(MON-A07)에서 온다. 아직 못 받았으면 나만 '사무실 내 자리'로 두고, 다른 팀원은 하는 일만 보여 준다.
+          // 위치(zone)가 없으면 presenceView가 위치 칸에 '접속 중'을 채우는데, 상태 이름에 이미 있어 한 번만 쓴다.
           place:
-            seen.place ??
+            (seen.place !== status && seen.place) ||
             (member.id === me?.id && !presence ? '사무실 내 자리' : undefined),
-          detail: [
-            seen.detail,
-            task
-              ? `${task.key} ${taskText[task.status]}`
-              : [member.role === 'LEADER' ? '인간 팀장' : '팀원', member.domain]
-                  .filter(Boolean)
-                  .join(' · '),
-          ]
-            .filter(Boolean)
-            .join(' · '),
+          detail: task
+            ? `${task.key} ${taskText[task.status]}`
+            : [member.role === 'LEADER' ? '인간 팀장' : '팀원', member.domain]
+                .filter(Boolean)
+                .join(' · '),
           open: () =>
             task ? openPane('tasks', task.id) : openPane('settings', 'team'),
         }
@@ -487,12 +488,7 @@ export function WorkspaceHud({
     // 연결은 사무실과 같은 연결 현황(AGT-A05)으로 본다. 첫 조회의 agent_connected는 연 뒤의 연결·끊김을 담지 못한다.
     ...members
       .map((member) => ({ member, ...statusOf(member) }))
-      .filter(
-        ({ member, status }) =>
-          status === 'connected' ||
-          status === 'recheck' ||
-          member.id === me?.id,
-      )
+      .filter(({ member, status }) => linked(status) || member.id === me?.id)
       .map(({ member, status, lastReportAt }) => {
         const mine = member.id === me?.id
         return {
@@ -501,7 +497,9 @@ export function WorkspaceHud({
           initial: 'AI',
           color: undefined,
           name: `${member.name}의 에이전트`,
-          place: agentStatusLabels[status],
+          // 연결 상태는 위치가 아니므로 지도 핀이 붙는 위치 칸에 두지 않는다. 연결 미확인은 그 이름 그대로 보인다(F05).
+          status: agentStatusLabels[status],
+          place: undefined,
           detail:
             status === 'recheck' && lastReportAt
               ? `마지막 보고 ${formatShort(lastReportAt)}`
@@ -737,18 +735,30 @@ export function WorkspaceHud({
           })}
         </div>
         <div className="grid gap-1 border-t pt-2.5">
-          <div className="flex items-center justify-between gap-2 px-0.5">
-            <span className="text-xs font-semibold">
-              팀{' '}
-              <span className="font-normal text-muted-foreground">
-                {teamRows.length}
-              </span>
-              {members.length <= 1 && (
-                <span className="ml-1.5 font-normal text-muted-foreground">
-                  아직 혼자예요
+          <div className="flex items-center justify-between gap-2">
+            {/* 팀 목록은 요약 한 줄로 접어 두고 누르면 펼친다(S15P31A108-430). */}
+            {/* '팀 2 · 아직 혼자예요'처럼 에이전트 줄까지 합친 수였다(F05). 혼자인지는 '팀원 1명'과 초대 버튼이 말한다. */}
+            <button
+              type="button"
+              aria-expanded={teamOpen}
+              aria-controls="hud-team-list"
+              onClick={() => setTeamOpen((value) => !value)}
+              className="flex min-w-0 items-center gap-1 rounded-lg px-1 py-0.5 hover:bg-muted"
+            >
+              <span className="text-xs font-semibold">
+                팀원 {members.length}명{' '}
+                <span className="font-normal text-muted-foreground">
+                  · 에이전트 {agentCount}개
                 </span>
-              )}
-            </span>
+              </span>
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  'size-3.5 text-muted-foreground transition-transform',
+                  teamOpen && 'rotate-180',
+                )}
+              />
+            </button>
             {isLeader && members.length <= 1 ? (
               <Button
                 size="xs"
@@ -767,11 +777,13 @@ export function WorkspaceHud({
               </Button>
             )}
           </div>
+          {/* 비비 줄은 검토·회의 중일 때만 생기는 소식이라 접어도 보인다. */}
           <ul
+            id="hud-team-list"
             aria-label="팀 목록"
             className="grid max-h-64 gap-0.5 overflow-y-auto"
           >
-            {teamRows.map((row) => (
+            {(teamOpen ? teamRows : []).map((row) => (
               <li key={row.key}>
                 <button
                   type="button"
@@ -790,19 +802,14 @@ export function WorkspaceHud({
                       {row.initial}
                     </span>
                     {row.online !== undefined && (
-                      <>
-                        {/* 접속 점(MON-A07): 접속 중은 초록, 오프라인은 회색 */}
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            'absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-background',
-                            row.online ? 'bg-emerald-500' : 'bg-stone-400',
-                          )}
-                        />
-                        <span className="sr-only">
-                          {row.online ? '접속 중' : '오프라인'}
-                        </span>
-                      </>
+                      // 접속 점(MON-A07): 접속 중은 초록, 오프라인은 회색. 상태 이름은 아래 줄에 글로 있다.
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          'absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-background',
+                          row.online ? 'bg-emerald-500' : 'bg-stone-400',
+                        )}
+                      />
                     )}
                   </span>
                   <span className="min-w-0">
@@ -811,6 +818,8 @@ export function WorkspaceHud({
                       {row.name}
                     </strong>
                     <span className="block truncate text-xs leading-[18px] text-muted-foreground">
+                      {row.status}
+                      {row.status && (row.place || row.detail) && ' · '}
                       {row.place && (
                         <span className="inline-flex items-center gap-0.5 text-[#57534e]">
                           <MapPin className="size-3" aria-hidden="true" />
@@ -877,146 +886,178 @@ export function WorkspaceHud({
             >
               {isLeader ? '프로젝트 시작 가이드' : '팀원 시작 가이드'}
               <span className="text-xs font-semibold text-muted-foreground">
-                {steps.filter((step) => step.done).length} / {steps.length}{' '}
-                {isLeader ? '단계' : '완료'}
+                {doneSteps.length} / {steps.length} {isLeader ? '단계' : '완료'}
               </span>
             </h2>
-            <ol className="mt-2 grid gap-1.5">
-              {steps.map((step, index) => {
-                const locked = Boolean(step.locked) && !step.done
-                return (
-                  <li
-                    key={step.title}
-                    className={cn(
-                      'rounded-xl border p-2.5',
-                      (index === current || (step.skipped && started)) &&
-                        'border-primary bg-primary/5',
-                      locked && 'opacity-55',
-                    )}
-                  >
-                    <div className="flex items-start gap-2">
-                      <span
-                        className={cn(
-                          'grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-bold',
-                          step.done
-                            ? 'bg-green-600 text-white'
-                            : 'bg-muted text-muted-foreground',
-                        )}
-                      >
-                        {step.done ? (
-                          <Check className="size-3" />
-                        ) : locked ? (
-                          <Lock className="size-3" />
-                        ) : (
-                          index + 1
-                        )}
+            {focus && (
+              <div
+                className={cn(
+                  'mt-2 flex items-start gap-2 rounded-xl border p-2.5',
+                  focus.locked
+                    ? 'border-dashed bg-muted/40'
+                    : 'border-primary bg-primary/5',
+                )}
+              >
+                <span
+                  className={cn(
+                    'grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-bold',
+                    focus.locked
+                      ? 'bg-muted text-muted-foreground'
+                      : 'bg-primary text-primary-foreground',
+                  )}
+                >
+                  {focus.locked ? (
+                    <Lock className="size-3" aria-hidden="true" />
+                  ) : (
+                    steps.indexOf(focus) + 1
+                  )}
+                </span>
+                <div className="grid flex-1 gap-0.5">
+                  <h3 className="text-sm font-bold">
+                    {focus.title}
+                    {focus.required && (
+                      <span className="ml-1.5 rounded bg-destructive/10 px-1 text-[10px] text-destructive">
+                        필수
                       </span>
-                      <div className="grid flex-1 gap-0.5">
-                        <strong className="text-sm">
-                          {step.title}
-                          {step.required && (
-                            <span className="ml-1.5 rounded bg-destructive/10 px-1 text-[10px] text-destructive">
-                              필수
-                            </span>
-                          )}
-                          {step.optional && !step.done && (
-                            <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">
-                              선택
-                            </span>
-                          )}
-                          {step.done && !step.skipped && (
-                            <span className="ml-1.5 text-[11px] font-semibold text-green-700">
-                              완료
-                            </span>
-                          )}
-                          {step.skipped && (
-                            <span className="ml-1.5 text-[11px] font-semibold text-muted-foreground">
-                              건너뜀
-                            </span>
-                          )}
-                        </strong>
-                        <span className="text-xs text-muted-foreground">
-                          {step.detail}
+                    )}
+                  </h3>
+                  <span className="text-xs text-muted-foreground">
+                    {focus.detail}
+                  </span>
+                  {!focus.locked && focus.children}
+                  {!focus.locked && (
+                    <span className="mt-1 flex flex-wrap items-center gap-2 empty:hidden">
+                      {focus.action && (
+                        <Button
+                          size="xs"
+                          onClick={() =>
+                            openPane(focus.action!.pane, focus.action!.focus)
+                          }
+                        >
+                          {focus.action.label}
+                        </Button>
+                      )}
+                      {!isLeader && focus.title === '기준 문서 v1 읽기' && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => {
+                            writeFlag(readKey)
+                            rerender((value) => value + 1)
+                          }}
+                        >
+                          읽었어요
+                        </Button>
+                      )}
+                      {focus.note && (
+                        <span className="text-[11px] text-muted-foreground">
+                          {focus.note}
                         </span>
-                        {!step.done && !locked && step.children}
-                        {/* 건너뛴 1단계: 시작 전에는 링크, 시작 뒤에는 노란 칸에 버튼을 다시 보여 준다(10-29). */}
-                        {step.skipped && (
-                          <span className="mt-1 flex flex-wrap items-center gap-2">
-                            {step.links?.map((link, linkIndex) => (
-                              <Button
-                                key={link.focus}
-                                size="xs"
-                                variant={
-                                  !started
-                                    ? 'link'
-                                    : linkIndex === 0
-                                      ? 'default'
-                                      : 'outline'
-                                }
-                                className={started ? undefined : 'h-auto p-0'}
-                                onClick={() => openPane('settings', link.focus)}
-                              >
-                                {link.label}
-                              </Button>
-                            ))}
-                          </span>
-                        )}
-                        {!step.done && !locked && (
-                          <span className="mt-1 flex flex-wrap items-center gap-2">
-                            {step.action && (
-                              <Button
-                                size="xs"
-                                variant={
-                                  index === current ? 'default' : 'outline'
-                                }
-                                onClick={() =>
-                                  openPane(
-                                    step.action!.pane,
-                                    step.action!.focus,
-                                  )
-                                }
-                              >
-                                {step.action.label}
-                              </Button>
-                            )}
-                            {!isLeader &&
-                              step.title === '기준 문서 v1 읽기' && (
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() => {
-                                    writeFlag(readKey)
-                                    rerender((value) => value + 1)
-                                  }}
-                                >
-                                  읽었어요
-                                </Button>
-                              )}
-                            {step.optional && index === current && (
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => {
-                                  writeFlag(inviteSkipKey)
-                                  rerender((value) => value + 1)
-                                }}
-                              >
-                                나중에 할게요
-                              </Button>
-                            )}
-                            {step.note && (
-                              <span className="text-[11px] text-muted-foreground">
-                                {step.note}
-                              </span>
-                            )}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                )
-              })}
-            </ol>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            {/* 남은 단계는 한 줄씩. 잠기지 않은 줄을 누르면 그 단계가 위 칸에 크게 열린다.
+                잠긴 줄은 이유를 툴팁이 아닌 글로 아래에 둔다(키보드·터치에서도 보이게, PR #315 리뷰). */}
+            {steps.some((step) => !step.done && step !== focus) && (
+              <ol aria-label="남은 단계" className="mt-1.5 grid gap-0.5">
+                {steps.map((step, index) =>
+                  step.done || step === focus ? null : (
+                    <li key={step.title}>
+                      <button
+                        type="button"
+                        aria-disabled={step.locked || undefined}
+                        title={step.locked ? step.detail : undefined}
+                        onClick={() => !step.locked && setPicked(step.title)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:text-muted-foreground aria-disabled:hover:bg-transparent"
+                      >
+                        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-[11px] font-bold text-muted-foreground">
+                          {step.locked ? (
+                            <Lock className="size-3" aria-hidden="true" />
+                          ) : (
+                            index + 1
+                          )}
+                        </span>
+                        <span className="grid min-w-0">
+                          <span className="truncate">{step.title}</span>
+                          {step.locked && (
+                            <span className="line-clamp-2 text-[11px]">
+                              {step.detail}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  ),
+                )}
+              </ol>
+            )}
+            {doneSteps.length > 0 && (
+              <div className="mt-1.5">
+                <button
+                  type="button"
+                  aria-expanded={showDone}
+                  aria-controls="hud-guide-done"
+                  onClick={() => setShowDone((value) => !value)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-green-700 hover:bg-muted"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="grid size-5 shrink-0 place-items-center rounded-full bg-green-600 text-white"
+                  >
+                    <Check className="size-3" />
+                  </span>
+                  {/* 필수 단계를 다 끝내면 가이드는 이 한 줄과 선택 링크만 남는다. */}
+                  {focus
+                    ? `완료 ${doneSteps.length}단계`
+                    : `필수 ${doneSteps.length}단계를 모두 마쳤어요`}
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={cn(
+                      'ml-auto size-3.5 transition-transform',
+                      showDone && 'rotate-180',
+                    )}
+                  />
+                </button>
+                <ul
+                  id="hud-guide-done"
+                  aria-label="완료한 단계"
+                  hidden={!showDone}
+                  className="grid gap-1 pr-2.5 pb-1 pl-9"
+                >
+                  {doneSteps.map((step) => (
+                    <li key={step.title} className="min-w-0 text-xs">
+                      <span className="font-semibold">{step.title}</span>
+                      <span
+                        title={step.detail}
+                        className="block truncate text-muted-foreground"
+                      >
+                        {step.detail}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {setupLinks.length > 0 && (
+              <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-1 pt-2 text-xs">
+                <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                  선택
+                </span>
+                {setupLinks.map((link) => (
+                  <button
+                    key={link.focus}
+                    type="button"
+                    className="font-semibold underline"
+                    onClick={() => openPane('settings', link.focus)}
+                  >
+                    {link.label}
+                  </button>
+                ))}
+              </p>
+            )}
             <button
               type="button"
               className="mt-2 w-full text-center text-xs text-muted-foreground underline"
