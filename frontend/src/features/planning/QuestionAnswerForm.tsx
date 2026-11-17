@@ -421,9 +421,11 @@ export function QuestionAnswerForm({
           <Button
             type="button"
             variant="ghost"
+            // 다시 그릴 때마다 지금 포커스가 이 버튼에 있는지 그대로 대입한다. 참일 때만 쓰면 포커스가 떠난 뒤에도
+            // 기록이 남아, 나중에 버튼이 사라질 때 엉뚱하게 포커스를 옮긴다(PR #303 재검토).
             ref={(node) => () => {
-              if (node && document.activeElement === node)
-                dismissHadFocus.current = true
+              dismissHadFocus.current =
+                !!node && document.activeElement === node
             }}
             disabled={closingId !== undefined}
             title="닫아도 나중에 다시 답할 수 있어요."

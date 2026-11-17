@@ -423,3 +423,28 @@ it('답하지 않고 닫는 동안에는 그 질문의 입력과 자동 저장�
   expect(onSave).toHaveBeenCalledTimes(1)
   expect(onSave).toHaveBeenLastCalledWith('1', { status: 'DISMISSED' })
 })
+
+// PR #303 재검토(371f3dfb): 닫기 버튼에 포커스를 둔 사이 다시 그려진 기록이 남아, 나중에 엉뚱하게 포커스를 옮기지 않는다.
+it('닫기 버튼에 포커스를 둔 채 다시 그려진 뒤 답변 칸으로 돌아가 쓰면 저장돼도 포커스가 답변 칸에 남는다', async () => {
+  const user = setup()
+  const onSave = vi.fn().mockResolvedValue(undefined)
+  const list = [short('1'), short('2')]
+  const { rerender } = render(<Harness list={list} onSave={onSave} />)
+  await user.click(screen.getByLabelText('답변'))
+  await user.tab()
+  expect(
+    screen.getByRole('button', { name: '답변하지 않고 닫기' }),
+  ).toHaveFocus()
+  // 포커스를 둔 사이 화면이 다시 그려진다(목록 다시 읽기 등).
+  rerender(<Harness list={list} onSave={onSave} />)
+  await user.tab({ shift: true })
+  expect(screen.getByLabelText('답변')).toHaveFocus()
+  await user.type(screen.getByLabelText('답변'), '답')
+  await pass()
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: '답변하지 않고 닫기' }),
+    ).toBeNull(),
+  )
+  expect(screen.getByLabelText('답변')).toHaveFocus()
+})
