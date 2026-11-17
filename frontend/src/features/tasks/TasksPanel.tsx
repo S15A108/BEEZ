@@ -312,14 +312,19 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
     .flatMap((group) =>
       shown.filter((entry) => groupOf(entry.status) === group),
     )
-  // 목록과 상태 필터 뒤 자동 선택이 같은 검색 조건을 쓴다(#325 리뷰).
-  const matchesSearch = (entry: TaskDetail) =>
+  const found = ordered.filter((entry) =>
     `${entry.key} ${entry.current_plan_revision.plan.title}`
       .toLowerCase()
-      .includes(search)
-  const found = ordered.filter(matchesSearch)
-  const selectedId =
+      .includes(search),
+  )
+  const picked =
     selected?.focus === focusId ? selected.id : (focusId ?? ordered[0]?.id)
+  // 상태 필터나 검색으로 거른 동안에는 목록에 없는 작업을 상세에 두지 않고 목록의 첫 작업을, 없으면 선택 없음(#325 리뷰).
+  // 거르지 않을 때는 알림·근거로 연 작업(지금 탭 목록 밖일 수 있음)을 그대로 둔다.
+  const selectedId =
+    (statusFilter || search) && !found.some((entry) => entry.id === picked)
+      ? found[0]?.id
+      : picked
   const selectedGroup = groupOf(
     entries.find((entry) => entry.id === selectedId)?.status,
   )
@@ -670,29 +675,9 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                           <button
                             type="button"
                             aria-pressed={on}
-                            onClick={() => {
+                            onClick={() =>
                               setStatusFilter(on ? undefined : group.label)
-                              // 고른 작업이 걸러져 목록에서 사라지면 남은 첫 작업을 고른다. 목록처럼 검색어도 따른다.
-                              const visible = statusGroups
-                                .filter((next) => on || next === group)
-                                .flatMap((next) =>
-                                  shown.filter(
-                                    (entry) =>
-                                      groupOf(entry.status) === next &&
-                                      matchesSearch(entry),
-                                  ),
-                                )
-                              if (
-                                visible[0] &&
-                                !visible.some(
-                                  (entry) => entry.id === selectedId,
-                                )
-                              )
-                                setSelected({
-                                  id: visible[0].id,
-                                  focus: focusId,
-                                })
-                            }}
+                            }
                             className={cn(
                               'grid gap-px rounded-[10px] border px-2 py-[7px] text-center',
                               focusRing,
@@ -1083,24 +1068,18 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             </DropdownMenuItem>
                             {isOwner && (
                               <DropdownMenuItem
-                                onSelect={() =>
-                                  void navigator.clipboard
-                                    .writeText(
+                                onSelect={async () => {
+                                  // http처럼 보안 컨텍스트가 아니면 navigator.clipboard가 없어 바로 던진다. 그때도 실패 안내를 보인다(#325 리뷰).
+                                  let copied = true
+                                  try {
+                                    await navigator.clipboard.writeText(
                                       agentTaskInstructions(current.id),
                                     )
-                                    .then(
-                                      () =>
-                                        setHandoff({
-                                          taskId: current.id,
-                                          copied: true,
-                                        }),
-                                      () =>
-                                        setHandoff({
-                                          taskId: current.id,
-                                          copied: false,
-                                        }),
-                                    )
-                                }
+                                  } catch {
+                                    copied = false
+                                  }
+                                  setHandoff({ taskId: current.id, copied })
+                                }}
                               >
                                 에이전트용 작업 지시 복사
                               </DropdownMenuItem>

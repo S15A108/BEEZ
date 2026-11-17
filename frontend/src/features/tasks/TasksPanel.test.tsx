@@ -2162,6 +2162,73 @@ it('고른 상태의 작업이 없으면 다른 상태를 고르라고 안내한
   expect(screen.queryByRole('region', { name: '지금 할 것' })).toBeNull()
 })
 
+// #325 리뷰(DreamingGenie 1): 직접 고른 작업도 필터에 걸러지면 상세에 남기지 않는다.
+it('직접 고른 작업이 필터에 걸러지면 상세를 비운다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [task, listed('506', 'TASK-006', 'IN_PROGRESS', '진행 중인 작업')],
+    has_more: false,
+  })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: /진행 중인 작업/ }),
+  )
+  const filters = screen.getByRole('list', { name: '상태별 작업 수' })
+  await userEvent.click(within(filters).getByRole('button', { name: /대기/ }))
+  expect(
+    await screen.findByText(
+      '작업을 선택하면 계획과 검증 결과를 확인할 수 있어요.',
+    ),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('list', { name: '작업 단계' })).toBeNull()
+})
+
+it('할 것 필터에서 작업을 시작해 목록에서 빠지면 남은 할 것 작업을 고른다', async () => {
+  vi.spyOn(tasksApi, 'list').mockImplementation(async () => ({
+    items: [task, listed('505', 'TASK-005', 'DRAFT', '다른 할 일')],
+    has_more: false,
+  }))
+  vi.spyOn(tasksApi, 'state').mockImplementation(async () => {
+    task = { ...task, status: 'IN_PROGRESS', lock_version: 8 }
+    return task
+  })
+  show(false)
+  const filters = await screen.findByRole('list', { name: '상태별 작업 수' })
+  await userEvent.click(within(filters).getByRole('button', { name: /할 것/ }))
+  fireEvent.click(await screen.findByRole('button', { name: '작업 시작' }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /다른 할 일/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
+  expect(
+    screen.queryByRole('button', { name: /사용자 프로필 구현/ }),
+  ).toBeNull()
+})
+
+// #325 리뷰(DreamingGenie 2): 보안 컨텍스트가 아니라 클립보드가 없어도 실패 안내를 보인다.
+it('클립보드를 쓸 수 없으면 에이전트용 작업 지시 복사가 실패 안내를 보인다', async () => {
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  const item = await screen.findByRole('menuitem', {
+    name: '에이전트용 작업 지시 복사',
+  })
+  const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  Object.defineProperty(navigator, 'clipboard', {
+    value: undefined,
+    configurable: true,
+  })
+  try {
+    fireEvent.click(item)
+    expect(
+      await screen.findByText(/복사할 수 없어요\. 에이전트에게 작업 ID 501/),
+    ).toBeInTheDocument()
+  } finally {
+    if (original) Object.defineProperty(navigator, 'clipboard', original)
+    else delete (navigator as { clipboard?: unknown }).clipboard
+  }
+})
+
 it('검색하면 키나 제목이 맞는 작업만 남기고, 없으면 안내한다', async () => {
   vi.spyOn(tasksApi, 'list').mockResolvedValue({
     items: [task, listed('502', 'TASK-002', 'IN_PROGRESS', '로그인 화면')],
