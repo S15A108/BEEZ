@@ -11,6 +11,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ActorAvatar } from './ActorAvatar'
 import { activityChip, agentLabel } from './labels'
 import { monthDayText, seoulClock, seoulDay } from './period'
+import { useActivityDocumentTitle } from './useActivityDocumentTitle'
 
 // 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일', 올해가 아니면 '2025년 10월 27일'
 function groupByDay<T extends { created_at: string }>(items: T[]) {
@@ -74,6 +75,10 @@ export function ActivityTimeline({
       }),
     getNextPageParam: (last) => (last.has_more ? last.next_cursor : undefined),
   })
+  const documentTitle = useActivityDocumentTitle(
+    projectId,
+    timeline.data?.pages.flatMap((page) => page.items) ?? [],
+  )
   return (
     <div id="dashboard-timeline" className="grid gap-3.5">
       <div
@@ -157,6 +162,7 @@ export function ActivityTimeline({
                               {actorName(item)}
                             </strong>
                             {ACTOR_PARTICLE} {activityText(item, members)}
+                            {documentTitle(item) && ` · ${documentTitle(item)}`}
                             {item.task_id && (
                               <Button
                                 variant="link"

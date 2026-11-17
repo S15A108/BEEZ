@@ -259,7 +259,8 @@ export function TeamPanel({
         <AsyncState query={members}>
           {(data) => (
             <>
-              <ul className="divide-y border-y">
+              {/* 열 폭은 목록 전체가 함께 정한다(subgrid). 줄마다 grid를 따로 잡으면 마지막 칸 버튼 폭에 따라 열이 어긋난다(S15P31A108-447). */}
+              <ul className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-x-4 divide-y border-y">
                 {data.pages
                   .flatMap((page) => page.items)
                   .toSorted((a, b) => teamOrder(a) - teamOrder(b))
@@ -268,15 +269,16 @@ export function TeamPanel({
                     return (
                       <li
                         key={member.id}
-                        className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] items-center gap-4 px-1 py-3.5"
+                        className="col-span-full grid grid-cols-subgrid items-center px-1 py-3.5"
                       >
                         <span className="flex min-w-0 items-center gap-2.5">
+                          {/* 개인 색은 테두리와 옅은 바탕에만 쓰고, 글자는 기본 글자색으로 대비 4.5:1을 지킨다(S15P31A108-447). */}
                           <span
                             aria-hidden="true"
-                            className="grid size-8 shrink-0 place-items-center rounded-full text-xs font-bold"
+                            className="grid size-8 shrink-0 place-items-center rounded-full border-2 text-xs font-bold text-foreground"
                             style={{
                               backgroundColor: `${member.color ?? '#e5b743'}25`,
-                              color: member.color ?? '#a98419',
+                              borderColor: member.color ?? '#e5b743',
                             }}
                           >
                             {member.name.slice(0, 1)}

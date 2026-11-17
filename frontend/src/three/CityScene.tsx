@@ -5,7 +5,13 @@ import { Plus } from 'lucide-react'
 import { UNREAD_BADGE } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { CityRenderer3D } from './city/CityRenderer3D'
-import { nearestStop, RING_PITCH, startRotation, stepStop } from './city/ring'
+import {
+  nearestStop,
+  RING_PITCH,
+  RING_SLOTS,
+  startRotation,
+  stepStop,
+} from './city/ring'
 import type { SceneProject } from './types'
 
 export interface CitySceneProps {
@@ -16,8 +22,6 @@ export interface CitySceneProps {
   nextLot: number | null
   /** 프로젝트 만들기 창 뒤에 깔 때. 이름표를 숨기고 더 가깝게 본다. */
   backdrop?: boolean
-  /** 도시 위에 겹쳐 놓은 제목 영역. 제목 글자·버튼과 겹치는 이름표는 숨긴다. */
-  titleRef?: RefObject<HTMLElement | null>
   onProjectSelect: (id: string) => void
   onLotSelect: (lot: number) => void
   /** 건물·이름표에 마우스를 올리거나 이름표에 키보드로 들어오면 그 프로젝트, 벗어나면 null. 터치에서는 부르지 않는다. */
@@ -115,7 +119,7 @@ function CityRuntime({
       const moved = press.moved
       press = null
       canvas.style.cursor = 'grab'
-      // 놓으면 가장 가까운 멈춤 자리(프로젝트 칸·빈 부지)로 간다. 꾸밈 칸에는 멈추지 않는다.
+      // 놓으면 가장 가까운 멈춤 자리(프로젝트·빈 부지)로 간다.
       if (moved) {
         view.current.target = nearestStop(
           view.current.rot,
@@ -136,7 +140,7 @@ function CityRuntime({
       hover(null)
     }
     // 휠·트랙패드 스크롤도 고리를 돌린다. 250px마다 다음 멈춤 자리(아래·오른쪽이면 다음 칸)로 가고, 빈 부지 다음은
-    // 꾸밈 칸을 한 번에 지나 1번이 온다(사용자 결정 '꾸밈 구간 한 번에 넘기기'). 250px에 못 미친 만큼은 다음 자리 쪽으로
+    // 바로 1번이 온다(차례를 되풀이해 이어 놓는다, ringOrder). 250px에 못 미친 만큼은 다음 자리 쪽으로
     // 그만큼 돌려 보이고, 멈추면 반을 넘었으면 다음 자리, 아니면 원래 자리로 간다. 도시 위에서만 페이지 스크롤을 막는다.
     let settle = 0
     let base: number | null = null
@@ -200,32 +204,27 @@ function CityRuntime({
     const renderer = engine.current
     if (!renderer) return
     const v = view.current
-    v.rot += (v.target - v.rot) * Math.min(1, delta * 8)
+    // 멈춤 자리로 천천히 따라간다(초당 4배, 사용자 요청 "회전속도 더 늦추고"로 8에서 낮췄다).
+    v.rot += (v.target - v.rot) * Math.min(1, delta * 4)
     renderer.render({ ...v, backdrop: latest.current.backdrop })
-    // 이름표가 도시 위에 겹친 제목·설명·만들기 버튼(넓은 화면)과 겹치면 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면
-    // 겹칠 일이 없다.
-    const origin = gl.domElement.getBoundingClientRect()
-    const blocked = [...(latest.current.titleRef?.current?.children ?? [])].map(
-      (element) => {
-        const rect = element.getBoundingClientRect()
-        return {
-          left: rect.left - origin.left - 8,
-          right: rect.right - origin.left + 8,
-          top: rect.top - origin.top - 8,
-          bottom: rect.bottom - origin.top + 8,
-        }
-      },
-    )
-    renderer.placeTags(overlay.current, blocked)
+    renderer.placeTags(overlay.current)
   }, 1)
   return null
 }
 
-/** 멈춤 자리: 부지가 있는 프로젝트 칸과 빈 부지 칸 */
-const stopsOf = ({ projects, nextLot }: CitySceneProps) => [
-  ...cityLots(projects).map((lot) => lot.slot),
-  ...(nextLot === null ? [] : [nextLot]),
-]
+/**
+ * 멈춤 자리. 프로젝트와 빈 부지가 둘 이상이면 고리를 따라 차례를 되풀이해 모든 칸이 부지라 칸마다 멈춘다(ringOrder).
+ * 빈 부지 하나뿐이면 그 칸뿐이다.
+ */
+const stopsOf = ({ projects, nextLot }: CitySceneProps) => {
+  const lots = [
+    ...cityLots(projects).map((lot) => lot.slot),
+    ...(nextLot === null ? [] : [nextLot]),
+  ]
+  return lots.length > 1
+    ? Array.from({ length: RING_SLOTS }, (_, s) => s)
+    : lots
+}
 
 const cityLots = (projects: readonly SceneProject[]) =>
   projects.flatMap((project) =>

@@ -417,21 +417,23 @@ class TaskPlanApiIntegrationTests extends IntegrationTestSupport {
     // TSK-A06 담당자 변경
     // ------------------------------------------------------------------
 
+    /** 남의 작업은 사람 팀장만 바꾼다. 팀원이 자기 작업을 넘기는 경우는 ProjectMemberApiIntegrationTests 에서 본다 (-419) */
     @Test
-    void changeAssignee_onlyHumanLeader() throws Exception {
-        HttpResponse<String> created = api.post(tasksPath(), api.planJson("v1", api.readsRef("API-01"), "[]"), member);
+    void changeAssignee_ofOthersTask_onlyHumanLeader() throws Exception {
+        HttpResponse<String> created = api.post(tasksPath(), api.planJson("v1", api.readsRef("API-01"), "[]"), leader);
         long taskId = TaskApiSupport.longField(created.body(), "id");
         long lockVersion = TaskApiSupport.longField(created.body(), "lock_version");
         String body = """
                 {"assignee_member_id": "%d", "expected_lock_version": %d}
-                """.formatted(api.memberId("leader@test"), lockVersion);
+                """.formatted(api.memberId("member@test"), lockVersion);
 
+        // 팀장이 맡은 작업을 팀원이 바꾸려 하면 403
         HttpResponse<String> byMember = api.patch(tasksPath() + "/" + taskId + "/assignee", body, member);
         assertThat(byMember.statusCode()).isEqualTo(403);
 
         // 팀장의 에이전트 토큰이라도 사람이 아니면 거절 (403 forbidden). 메시지는 AccessErrors 로 통일
         assertThatThrownBy(() -> assigneeService.changeAssignee(CallerContext.agent(leader, api.leaderAgentTokenId()),
-                projectId, taskId, api.memberId("leader@test"), (int) lockVersion))
+                projectId, taskId, api.memberId("member@test"), (int) lockVersion))
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
                     assertThat(e.getCode()).isEqualTo("forbidden");
@@ -439,7 +441,7 @@ class TaskPlanApiIntegrationTests extends IntegrationTestSupport {
 
         HttpResponse<String> byLeader = api.patch(tasksPath() + "/" + taskId + "/assignee", body, leader);
         assertThat(byLeader.statusCode()).isEqualTo(200);
-        assertThat(TaskApiSupport.longField(byLeader.body(), "assignee_member_id")).isEqualTo(api.memberId("leader@test"));
+        assertThat(TaskApiSupport.longField(byLeader.body(), "assignee_member_id")).isEqualTo(api.memberId("member@test"));
     }
 
     // ------------------------------------------------------------------
