@@ -80,7 +80,7 @@ function ProfileForm({
             {...register('name')}
           />
           {errors.name && (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-sub text-destructive">
               {errors.name.message}
             </p>
           )}
@@ -94,7 +94,7 @@ function ProfileForm({
             className="h-10 bg-muted text-muted-foreground"
           />
           {joinedAt && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sub text-muted-foreground">
               가입일 {formatDay(joinedAt)}
             </p>
           )}
@@ -107,7 +107,7 @@ function ProfileForm({
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* 바꾼 것이 없어 버튼이 꺼져 있으면 왜 못 누르는지 알린다. */}
-        <p id="profile-save-hint" className="text-[13px] text-muted-foreground">
+        <p id="profile-save-hint" className="text-sub text-muted-foreground">
           {changed
             ? '저장하면 워크스페이스 HUD, 팀 목록, 3D 사무실에 이 캐릭터로 보여요.'
             : '이름이나 캐릭터를 바꾸면 저장할 수 있어요.'}
@@ -116,7 +116,7 @@ function ProfileForm({
           {isSubmitSuccessful && !changed && (
             <p
               role="status"
-              className="flex items-center gap-1 text-[13px] text-green-700"
+              className="flex items-center gap-1 text-sub text-green-700"
             >
               <Check aria-hidden="true" className="size-3.5" />
               저장했어요
@@ -178,7 +178,7 @@ export function AccountProfile({
           <h3 id="profile-title" className="font-semibold">
             프로필 · 내 캐릭터
           </h3>
-          <p className="mt-1 text-[13px] text-muted-foreground">
+          <p className="mt-1 text-sub text-muted-foreground">
             3D 사무실에서 내가 쓰는 캐릭터예요. 프로젝트마다 같은 캐릭터로
             보여요.
           </p>
@@ -216,7 +216,7 @@ export function AccountProfile({
                   </span>
                   <span
                     className={cn(
-                      'flex items-center justify-center gap-1.5 text-[13px] font-semibold',
+                      'flex items-center justify-center gap-1.5 text-sub font-semibold',
                       checked && 'font-bold',
                     )}
                   >
@@ -263,7 +263,7 @@ export function AccountProfile({
           <h3 id="password-section-title" className="font-semibold">
             비밀번호 변경
           </h3>
-          <p className="mt-1 text-[13px] text-muted-foreground">
+          <p className="mt-1 text-sub text-muted-foreground">
             현재 비밀번호를 확인한 뒤 새 비밀번호로 바꿀 수 있어요.
           </p>
         </div>
@@ -282,7 +282,7 @@ export function AccountProfile({
         <h3 id="tokens-title" className="font-semibold">
           내 에이전트 토큰
         </h3>
-        <p className="mt-1.5 text-[13px] text-muted-foreground">
+        <p className="mt-1.5 text-sub text-muted-foreground">
           프로젝트마다 따로 발급하는 개인 토큰이에요. 내 컴퓨터의 Claude Code가
           그 프로젝트에 접속할 때 써요. 새 토큰은 각 프로젝트의 에이전트
           연결에서 발급해요.
@@ -293,7 +293,7 @@ export function AccountProfile({
               const active = data.tokens.filter((token) => !token.revoked_at)
               return active.length ? (
                 <table className="w-full text-left text-sm">
-                  <thead className="text-xs text-muted-foreground">
+                  <thead className="text-caption text-muted-foreground">
                     <tr className="border-b">
                       <th className="py-2 font-medium">프로젝트</th>
                       <th className="py-2 font-medium">토큰 이름</th>
@@ -324,7 +324,7 @@ export function AccountProfile({
                         </td>
                         <td className="text-right">
                           {revoking === token.id ? (
-                            <span className="inline-flex items-center gap-2 text-xs">
+                            <span className="inline-flex items-center gap-2 text-sub">
                               연결이 바로 끊겨요.
                               <Button
                                 variant="destructive"
@@ -378,7 +378,7 @@ export function AccountProfile({
           <h3 id="withdraw-title" className="font-semibold">
             회원 탈퇴
           </h3>
-          <p className="mt-1 text-[13px] text-muted-foreground">
+          <p className="mt-1 text-sub text-muted-foreground">
             팀원이 있는 팀 프로젝트는 팀장을 위임하거나 삭제한 뒤 탈퇴할 수
             있어요.
           </p>

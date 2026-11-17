@@ -31,7 +31,7 @@ export function ContextPanel({ projectId }: { projectId: string }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-bold">작업 맥락</h3>
-          <p className="mt-2 text-xs text-muted-foreground">
+          <p className="mt-2 text-sub text-muted-foreground">
             판단·진행·중단·인수인계의 이유와 근거를 남겨요.
           </p>
         </div>
@@ -64,13 +64,13 @@ export function ContextPanel({ projectId }: { projectId: string }) {
                       }[item.kind]
                     }
                   </Badge>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-caption text-muted-foreground">
                     r{item.revision_no} ·{' '}
                     {item.visibility === 'PRIVATE' ? '개인' : '팀 공유'}
                   </span>
                 </div>
                 <p className="mt-3 text-sm font-semibold">{item.summary}</p>
-                <time className="mt-2 block text-xs text-muted-foreground">
+                <time className="mt-2 block text-caption text-muted-foreground">
                   {formatDate(item.created_at)}
                 </time>
               </button>
@@ -89,7 +89,7 @@ export function ContextPanel({ projectId }: { projectId: string }) {
               <p className="text-sm leading-7 whitespace-pre-wrap">
                 {item.detail}
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sub text-muted-foreground">
                 {item.references_current
                   ? '현재 승인 근거와 연결됨'
                   : '근거 버전을 다시 확인해 주세요.'}
