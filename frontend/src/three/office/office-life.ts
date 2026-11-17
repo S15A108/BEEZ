@@ -1,6 +1,8 @@
 import type { Dir, Floor } from './floors'
 import { T } from './floors'
 import {
+  clearOfChairs,
+  clearOfFurniture,
   clearSegment,
   gridWalkable,
   moveContinuous,
@@ -81,6 +83,9 @@ const WALK_LABELS: Record<OfficeLifeDestination, string> = {
 }
 // 사람끼리 지킬 거리(px, 1타일 = 32). 로봇 팀원 머리 지름(1.1타일, 약 35px)에 맞춘다.
 export const PERSONAL_SPACE = 34
+// 걷는 사람이 다른 사람에게 다가갈 수 있는 거리. 사람 폭(약 1.13타일, 36px)보다 넓혀 지나칠 때 어깨가 겹쳐 보이지 않게 한다.
+// 자리 간격과 서 있는 자리 규칙은 PERSONAL_SPACE 그대로다.
+const WALK_SPACE = 38
 // 이 거리 안의 사람에게서 조금씩 비켜 걷는다.
 const AVOID_RADIUS = 50
 // 이만큼 못 나아가면 지금 자리에서 길을 다시 찾는다(초).
@@ -218,6 +223,13 @@ export class OfficeLifeSimulation {
   private floorKey = ''
   private destinations: Destination[] = []
   private blocked: boolean[][] = []
+  /** 길찾기 칸. 막힌 칸에 더해, 발 위치가 단단한 가구에 붙는 칸도 막는다(가구가 칸에 반쯤 걸친 곳). */
+  private paths: boolean[][] = []
+  /** 칸 가운데에서 오른쪽·아래 이웃 칸 가운데로 가구를 스치지 않고 곧장 갈 수 있는지. 배치마다 한 번 계산한다. */
+  private steps: { right: boolean; down: boolean }[][] = []
+  /** 빈 의자 곁 칸에 더할 걸음 수 */
+  private chairCost: number[][] = []
+  private furniture: Floor['furniture'] = []
   /** 돌아다니다 멈출 수 있는 빈 바닥(발 위치) */
   private strollSpots: Point[] = []
   /** 이번 걸음의 제자리 배우(연결 전 에이전트 등)와 나. 돌아다닐 자리를 고를 때 피한다. */
@@ -230,15 +242,24 @@ export class OfficeLifeSimulation {
   }
 
   private free = (x: number, y: number) =>
-    gridWalkable({ x, y: y - 4 }, this.blocked, T, 6)
+    gridWalkable({ x, y: y - 4 }, this.blocked, T, 6) &&
+    clearOfFurniture(this.furniture, x, y)
 
   private nearestLanding(point: Point): Point | undefined {
     if (this.free(point.x, point.y)) return point
+    // 의자처럼 가구에 바짝 붙은 자리는 먼저 바로 곁(1.5칸 안)에서 가장 가까운 빈 곳을 찾는다. 앉을 때 그곳에서 자리로 옮겨 앉는다.
+    for (let radius = 4; radius <= 48; radius += 4)
+      for (let i = 0; i < 16; i++) {
+        const angle = (i * Math.PI) / 8,
+          x = point.x + Math.cos(angle) * radius,
+          y = point.y + Math.sin(angle) * radius
+        if (this.free(x, y)) return { x, y }
+      }
     let nearest: Point | undefined,
       distance = Infinity
-    for (let y = 0; y < this.blocked.length; y++)
-      for (let x = 0; x < this.blocked[y].length; x++) {
-        if (this.blocked[y][x]) continue
+    for (let y = 0; y < this.paths.length; y++)
+      for (let x = 0; x < this.paths[y].length; x++) {
+        if (this.paths[y][x]) continue
         const candidate = feet(x, y),
           next = Math.hypot(candidate.x - point.x, candidate.y - point.y)
         if (next < distance && this.free(candidate.x, candidate.y)) {
@@ -264,26 +285,52 @@ export class OfficeLifeSimulation {
           floor.grid[y][x] === 'o',
       ),
     )
+    this.furniture = floor.furniture
+    this.paths = this.blocked.map((row, y) =>
+      row.map(
+        (blocked, x) => blocked || !this.free(feet(x, y).x, feet(x, y).y),
+      ),
+    )
+    this.steps = this.paths.map((row, y) =>
+      row.map((_, x) => ({
+        right: clearSegment(feet(x, y), feet(x + 1, y), this.free),
+        down: clearSegment(feet(x, y), feet(x, y + 1), this.free),
+      })),
+    )
+    this.chairCost = this.paths.map((row, y) =>
+      row.map((_, x) =>
+        clearOfChairs(floor.furniture, feet(x, y).x, feet(x, y).y) ? 0 : 3,
+      ),
+    )
     // 둘레 여덟 칸이 모두 빈 바닥에서만 멈춘다. 좁은 통로에 서서 길을 막지 않는다.
-    this.strollSpots = this.blocked.flatMap((row, y) =>
+    this.strollSpots = this.paths.flatMap((row, y) =>
       row.flatMap((_, x) =>
         [-1, 0, 1].every((dy) =>
-          [-1, 0, 1].every((dx) => this.blocked[y + dy]?.[x + dx] === false),
-        ) && this.free(feet(x, y).x, feet(x, y).y)
+          [-1, 0, 1].every((dx) => this.paths[y + dy]?.[x + dx] === false),
+        ) &&
+        this.free(feet(x, y).x, feet(x, y).y) &&
+        clearOfChairs(floor.furniture, feet(x, y).x, feet(x, y).y)
           ? [feet(x, y)]
           : [],
       ),
     )
     this.destinations = officeSeats({ ...floor, blocked: this.blocked })
       .filter((seat) => seat.kind === 'sofa' || seat.kind === 'bench')
-      .map((seat) => ({
-        id: seat.id,
-        activity: 'resting',
-        landing: seatApproach(seat),
-        pose: { x: seat.x, y: seat.y },
-        dir: seat.facing,
-        seated: true,
-      }))
+      .flatMap((seat): Destination[] => {
+        const landing = this.nearestLanding(seatApproach(seat))
+        return landing
+          ? [
+              {
+                id: seat.id,
+                activity: 'resting',
+                landing,
+                pose: { x: seat.x, y: seat.y },
+                dir: seat.facing,
+                seated: true,
+              },
+            ]
+          : []
+      })
     // The dream office has full-height rear windows even while wall decoration is hidden.
     const windows = floor.decor
       .filter((decor) => decor.kind === 'window')
@@ -369,24 +416,51 @@ export class OfficeLifeSimulation {
         .map(([x, y]) => `${x}/${y}`),
     )
     const blocked = taken.size
-      ? this.blocked.map((row, y) =>
+      ? this.paths.map((row, y) =>
           row.map((cell, x) => cell || taken.has(`${x}/${y}`)),
         )
-      : this.blocked
+      : this.paths
     const free = taken.size
       ? (x: number, y: number) =>
           this.free(x, y) && !taken.has(tile({ x, y }).join('/'))
       : this.free
-    const tiles = findPath(blocked, sx, sy, gx, gy)
-    const route = smoothRoute(
-      from,
-      [...tiles.map(([x, y]) => feet(x, y)), to],
-      free,
+    const chairFree = (x: number, y: number) =>
+      clearOfChairs(this.furniture, x, y)
+    // 칸 가운데끼리 잇는 걸음이 가구 모서리를 스치면 그 걸음은 쓰지 않는다. 도착 칸으로 들어가는 걸음은 도착 자리로 곧장 간다.
+    // 빈 의자 곁 칸은 세 칸만큼 돌아가더라도 피한다.
+    const tiles = findPath(
+      blocked,
+      sx,
+      sy,
+      gx,
+      gy,
+      (ax, ay, bx, by) =>
+        (bx === gx && by === gy) ||
+        (ax === bx
+          ? this.steps[Math.min(ay, by)][ax].down
+          : this.steps[ay][Math.min(ax, bx)].right),
+      (x, y) => this.chairCost[y][x],
     )
-    const end = route.at(-1)
-    return end && Math.hypot(end.x - to.x, end.y - to.y) < 0.1
-      ? route
-      : undefined
+    // 지금 칸 가운데를 먼저 넣어, 칸 안에서 비스듬히 선 사람이 가구 모서리 너머 이웃 칸으로 곧장 가지 못해도 길이 이어진다.
+    const start = feet(sx, sy)
+    const points = [
+      ...(free(start.x, start.y) ? [start] : []),
+      ...tiles.map(([x, y]) => feet(x, y)),
+      to,
+    ]
+    const reaches = (route: Point[]) => {
+      const end = route.at(-1)
+      return !!end && Math.hypot(end.x - to.x, end.y - to.y) < 0.1
+    }
+    // 지름길도 의자를 스치지 않는 쪽을 먼저 쓰고, 의자 곁에서 출발하거나 앉으러 가는 길이면 의자 곁을 지난다.
+    const clear = smoothRoute(
+      from,
+      points,
+      (x, y) => free(x, y) && chairFree(x, y),
+    )
+    if (reaches(clear)) return clear
+    const route = smoothRoute(from, points, free)
+    return reaches(route) ? route : undefined
   }
 
   private choose(
@@ -405,7 +479,8 @@ export class OfficeLifeSimulation {
               activity:
                 resident.working && !actor.standing ? 'working' : 'waiting',
               landing: home,
-              pose: home,
+              // 앉는 자리가 가구에 붙어 있으면 곁의 빈 곳까지 걸어가 자리로 옮겨 앉는다.
+              pose: actor.standing ? home : { x: actor.x, y: actor.y },
               dir: actor.dir,
               seated: !actor.standing,
             },
@@ -881,9 +956,21 @@ export class OfficeLifeSimulation {
             }
             const moved = moveContinuous(resident, { x: vx, y: vy }, this.free)
             const stuckBefore = resident.stuck ?? 0
+            // 앉아 있거나 움직이지 않는 사람과는 사람 사이 거리, 서 있거나 걷는 사람과는 그보다 넓게 떨어진다.
+            const settled = (other: Point) =>
+              ('seated' in other && !!other.seated) ||
+              ('stationary' in other && !!other.stationary)
+            const spaced = (point: Point) =>
+              keepsSpace(resident, point, others.filter(settled)) &&
+              keepsSpace(
+                resident,
+                point,
+                others.filter((other) => !settled(other)),
+                WALK_SPACE,
+              )
             // 벽에 막혀 한 걸음도 못 나간 것도 막힌 것으로 센다(옆걸음 뒤 지름길이 벽을 지날 때).
             if (
-              keepsSpace(resident, moved, others) &&
+              spaced(moved) &&
               Math.hypot(moved.x - resident.x, moved.y - resident.y) > 0.001
             ) {
               Object.assign(resident, moved)
@@ -903,7 +990,7 @@ export class OfficeLifeSimulation {
                 .find(
                   (point) =>
                     Math.hypot(point.x - resident.x, point.y - resident.y) >
-                      0.001 && keepsSpace(resident, point, others),
+                      0.001 && spaced(point),
                 )
               if (sidestep) Object.assign(resident, sidestep)
             }
@@ -943,17 +1030,20 @@ export class OfficeLifeSimulation {
                   other.dwell = 0
               // 좁은 문에서 걷는 사람끼리 서로 막으면 어느 쪽도 개인 거리 안으로 내딛지 못해 함께 멈춘다. 돌아다니는
               // 사람이 한 걸음 물러서 길을 내준다. 일하러 가는 사람에게는 늘 비키고, 둘 다 돌아다니면 id 순서가 늦은
-              // 쪽만 비켜 둘이 같이 물러섰다 다시 막히지 않는다.
+              // 쪽만 비켜 둘이 같이 물러섰다 다시 막히지 않는다. 움직이지 않는 사람(서 있는 비비, 충전 중인 에이전트, 나)과
+              // 가구 사이에 끼었을 때도 물러선다. 그 사람은 비키지 않는다.
+              const walkers = new Set<Point>(this.residents.values())
               const yields =
                 !resident.working &&
                 (!resident.behavior || resident.behavior === 'autonomous') &&
-                [...this.residents].some(
-                  ([id, other]) =>
-                    id !== actor.id &&
-                    Math.hypot(other.x - resident.x, other.y - resident.y) <
-                      AVOID_RADIUS &&
-                    (other.working || hash(id) > hash(actor.id)),
-                )
+                (blockers.some((other) => !walkers.has(other)) ||
+                  [...this.residents].some(
+                    ([id, other]) =>
+                      id !== actor.id &&
+                      Math.hypot(other.x - resident.x, other.y - resident.y) <
+                        AVOID_RADIUS &&
+                      (other.working || hash(id) > hash(actor.id)),
+                  ))
               const back = yields
                 ? retreatSpot(resident, blockers, this.free)
                 : undefined
