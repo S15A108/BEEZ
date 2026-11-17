@@ -942,13 +942,15 @@ it('대기 중인 작업은 지금 단계에 대기라고 보인다', async () =
   expect(within(steps).queryByText('지금')).toBeNull()
 })
 
-it('담당 후보 추천은 더 보기에서 창 안 화면으로 열고 담당자가 아닌 팀원도 볼 수 있다', async () => {
+it('팀장은 담당자가 아니어도 더 보기에서 담당 후보 추천을 창 안 화면으로 연다', async () => {
   task = { ...task, assignee_member_id: '22' }
-  show(false)
+  show(true)
   await screen.findByRole('list', { name: '작업 단계' })
   expect(screen.queryByRole('button', { name: '후보 추천받기' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: '더 보기' }))
-  expect(screen.queryByRole('menuitem', { name: '작업 취소' })).toBeNull()
+  expect(
+    await screen.findByRole('menuitem', { name: '작업 취소' }),
+  ).toBeInTheDocument()
   expect(
     screen.queryByRole('menuitem', { name: '에이전트용 작업 지시 복사' }),
   ).toBeNull()
@@ -1781,6 +1783,88 @@ it('팀장이 담당자 없는 작업의 담당자를 정할 때는 첫 팀원�
     }),
   )
 })
+
+// S15P31A108-419: 팀원도 자기가 맡은 작업은 '더 보기'에서 다른 팀원에게 넘긴다. 기본 픽스처는 내가 담당자(21)다.
+const openMemberReassign = async () => {
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '담당자 바꾸기' }),
+  )
+  return screen.findByRole('combobox', { name: '새 담당자' })
+}
+
+it('팀원이 자기 작업의 담당자를 바꾸면 자기 자신은 고를 수 없고 고른 팀원과 잠금 번호로 요청한다', async () => {
+  const assign = vi.spyOn(tasksApi, 'assign').mockImplementation(async () => {
+    task = { ...task, assignee_member_id: '22', lock_version: 8 }
+    return task
+  })
+  const select = await openMemberReassign()
+  expect(
+    within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent),
+  ).toEqual(['담당자 고르기', '다른 팀원'])
+  await userEvent.click(screen.getByRole('button', { name: '저장' }))
+  expect(
+    await screen.findByText('새 담당자를 골라 주세요.'),
+  ).toBeInTheDocument()
+  expect(assign).not.toHaveBeenCalled()
+  await userEvent.selectOptions(select, '다른 팀원')
+  await userEvent.click(screen.getByRole('button', { name: '저장' }))
+  await waitFor(() =>
+    expect(assign).toHaveBeenCalledWith('101', '501', {
+      assignee_member_id: '22',
+      expected_lock_version: 7,
+    }),
+  )
+})
+
+it.each([
+  [
+    '다른 사람이 맡은',
+    () => ({ ...task, assignee_member_id: '22' }),
+    () => screen.findByText('보기만 · 담당자 다른 팀원'),
+  ],
+  [
+    '담당자 없는',
+    withoutAssignee,
+    () => screen.findByRole('button', { name: '내가 맡기' }),
+  ],
+])(
+  '팀원은 %s 작업에서 더 보기를 볼 수 없다',
+  async (_label, makeTask, loaded) => {
+    task = makeTask()
+    show(false)
+    expect(await loaded()).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '더 보기' })).toBeNull()
+  },
+)
+
+const forbidden = () => {
+  const config = { headers: new AxiosHeaders() }
+  return new AxiosError('forbidden', 'ERR_BAD_REQUEST', config, undefined, {
+    status: 403,
+    statusText: 'Forbidden',
+    headers: {},
+    config,
+    data: { error: { code: 'forbidden' } },
+  })
+}
+
+it.each([
+  [403, forbidden, '이 작업의 권한이 없습니다.'],
+  [409, revisionConflict, '작업 계획이 변경되었습니다. 다시 확인해 주세요.'],
+])(
+  '팀원이 담당자를 바꾸다 %i 오류가 나면 창에 안내를 보여 준다',
+  async (_status, error, message) => {
+    vi.spyOn(tasksApi, 'assign').mockRejectedValue(error())
+    const select = await openMemberReassign()
+    await userEvent.selectOptions(select, '다른 팀원')
+    await userEvent.click(screen.getByRole('button', { name: '저장' }))
+    expect(await screen.findByText(message)).toBeInTheDocument()
+  },
+)
 
 // S15P31A108-340: 백엔드가 stale_reason에 쓰는 값 전부(ValidationStatusLookup·TaskHandoverService·TaskPlanService·
 // TaskStateService·AnalysisResultApplier·PublicationImpactAdapter)와 모르는 값.

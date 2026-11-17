@@ -13,7 +13,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
-import AccountPasswordPage from './AccountPasswordPage'
+import { AccountDialog } from './AccountDialog'
 
 // 비밀번호 변경(ACC-A06)과 임시 비밀번호(ACC-A07)는 목 어댑터로 실제 경로를 탄다.
 let restore: () => void
@@ -34,10 +34,9 @@ function renderPage() {
   })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/account/password']}>
+      <MemoryRouter initialEntries={['/?account=password']}>
         <Routes>
-          <Route path="/account/password" element={<AccountPasswordPage />} />
-          <Route path="/account" element={<p>회원 설정 화면</p>} />
+          <Route path="/" element={<AccountDialog />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -78,7 +77,11 @@ it('임시 비밀번호로 로그인한 뒤 그 비밀번호를 현재 비밀번
   )
   await change(temporary)
 
-  expect(await screen.findByText('회원 설정 화면')).toBeInTheDocument()
+  // 회원 설정 창(D48) 안에서 첫 화면으로 돌아가 바꿨다고 알린다.
+  expect(
+    await screen.findByRole('button', { name: '프로필 저장' }),
+  ).toBeVisible()
+  expect(screen.getByText(/비밀번호를 바꿨어요/)).toBeInTheDocument()
   expect(
     client.getQueryData<MeResponse>(['account'])?.must_change_password,
   ).toBe(false)
