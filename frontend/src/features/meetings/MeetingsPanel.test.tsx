@@ -96,7 +96,7 @@ it('팀장은 메시지를 보내고 비비 정리를 받으면 정리 단계로
   await user.click(screen.getByRole('button', { name: '보내기' }))
   await within(log).findByText('기존 계약을 유지하고 설명을 보완해요.')
   await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
-  // 비비 정리 단계: 대화 대신 충돌 · 결정(정한 사람) · 바뀔 문서(문서 · 몇 행) · 할 일만 보인다.
+  // 비비 정리 단계: 대화 대신 충돌 · 결정(정한 사람) · 바뀔 문서(지금/바뀐 뒤) · 할 일만 보인다.
   const changes = await screen.findByRole('region', { name: '바뀔 문서' })
   expect(onStep['비비 정리']()).toBeInTheDocument()
   expect(onStep.대화()).not.toBeInTheDocument()
@@ -106,7 +106,9 @@ it('팀장은 메시지를 보내고 비비 정리를 받으면 정리 단계로
   expect(
     within(changes).getByText(/요구사항 명세서 · \d+행/),
   ).toBeInTheDocument()
-  expect(within(changes).queryByText('바뀐 뒤')).not.toBeInTheDocument()
+  // 바뀌는 문장은 정리 단계에서 누구나 본다(PR #328 회귀 검토, dev와 같게).
+  expect(within(changes).getByText('지금')).toBeInTheDocument()
+  expect(within(changes).getByText('바뀐 뒤')).toBeInTheDocument()
   expect(screen.getByRole('region', { name: '충돌' })).toHaveTextContent(
     '만료된 초대를 어떻게 안내할지 정해 주세요',
   )
@@ -243,6 +245,11 @@ it('변경 제안을 누르면 회의를 끝내고 만든 제안을 변경 제�
   // 단계 표시줄 대신 결과에서 비비 정리로 간다(사용자 확인 11-17). 끝난 회의라 정리 수정 칸은 없다.
   await user.click(screen.getByRole('button', { name: '비비 정리 보기' }))
   expect(onStep['비비 정리']()).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('region', { name: '바뀔 문서' })).getByText(
+      '바뀐 뒤',
+    ),
+  ).toBeInTheDocument()
   expect(
     screen.queryByRole('region', { name: '비비 정리 수정' }),
   ).not.toBeInTheDocument()
@@ -565,21 +572,31 @@ it('수정 요청이 성공하면 기록 목록을 다시 읽기 전에도 새 �
   vi.restoreAllMocks()
 })
 
-// 수정 초안 단계에서도 정리 뒤 새 대화가 생기면 오래된 정리로 끝내지 못하게 대화 단계로 돌린다.
-it('수정 초안을 보는 중에 새 대화가 생기면 대화 단계로 돌아가 다시 정리하게 한다', async () => {
+// PR #328 회귀 검토: 보고 있는 단계는 서버 상태가 바뀌어도 자동으로 옮기지 않는다. 낡은 정리로 끝내는 것만 막는다.
+it('수정 초안을 보는 중에 새 대화가 생겨도 화면을 옮기지 않아 저장 전 초안이 남고, 끝내기만 막는다', async () => {
   const user = userEvent.setup()
   renderPanel(true)
   await requestSummary(user)
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
+  await user.click(
+    screen.getByRole('button', { name: '직접 수정 초안 만들기' }),
+  )
+  const draft = await screen.findByRole('region', { name: '회의 수정 초안' })
+  const [first] = await within(draft).findAllByRole('checkbox')
+  await user.click(first)
+  expect(first).toBeChecked()
   await meetingsApi.addEntry('101', '901', { text: '정리 뒤의 새 말' })
   await client.invalidateQueries()
   expect(
-    await screen.findByText(/정리한 뒤에 새 대화가 있어요/),
+    await screen.findByText(/정리한 뒤에 새 대화가 있어요. 대화로 돌아가/),
   ).toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: '변경 제안' }),
-  ).not.toBeInTheDocument()
-  // 정리를 다시 요청하면 정리 단계로 넘어가고 다시 끝낼 수 있다
+  // 수정 초안 화면과 고르던 내용이 그대로 있고, 낡은 정리로는 끝낼 수 없다.
+  expect(screen.getByRole('region', { name: '회의 수정 초안' })).toBe(draft)
+  expect(first).toBeChecked()
+  expect(screen.getByRole('button', { name: '변경 제안' })).toBeDisabled()
+  // 대화로 돌아가 정리를 다시 요청하면 다시 끝낼 수 있다
+  await user.click(screen.getByRole('button', { name: '뒤로 가기' }))
+  await user.click(screen.getByRole('button', { name: '대화로 돌아가기' }))
   await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
   await screen.findByRole('region', { name: '비비 정리 수정' })
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
@@ -1133,4 +1150,85 @@ it('기준이 바뀌어 끝내기가 거절된 정리는 새 대화가 없어도
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
   expect(screen.getByRole('button', { name: '변경 제안' })).toBeEnabled()
   vi.restoreAllMocks()
+})
+
+// PR #328 회귀 검토: 대화를 쓰는 중에 팀장의 정리가 와도 화면이 정리로 넘어가지 않아 쓰던 글이 남는다. 새 정리는 제목 줄의
+// '비비 정리 보기'로 알린다. 직접 정리 화면에 갔다 와도 쓰던 글이 남는다.
+it('메시지를 쓰는 중에 정리가 와도 대화 화면과 쓰던 글이 남는다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  const box = await screen.findByRole('textbox', { name: '메시지' })
+  await screen.findByRole('button', { name: '비비에게 정리 요청' })
+  await user.type(box, '쓰는 중인 글')
+  const entries = await meetingsApi.entries('101', '901', {})
+  await meetingsApi.summarize('101', '901', {
+    through_entry_id: entries.items.at(-1)!.id,
+  })
+  await client.invalidateQueries()
+  expect(
+    await screen.findByRole('button', { name: '비비 정리 보기' }),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('log', { name: '회의 대화' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: '메시지' })).toHaveValue(
+    '쓰는 중인 글',
+  )
+  await user.click(screen.getByRole('button', { name: '비비 정리 보기' }))
+  await user.click(screen.getByRole('button', { name: '대화로 돌아가기' }))
+  expect(await screen.findByRole('textbox', { name: '메시지' })).toHaveValue(
+    '쓰는 중인 글',
+  )
+})
+
+// PR #328 회귀 검토: 보내는 중에 Enter를 한 번 더 눌러도 한 번만 보낸다(버튼이 꺼진 것과 같게).
+it('메시지와 정리 수정 요청은 보내는 중에 Enter를 다시 눌러도 한 번만 보낸다', async () => {
+  const user = userEvent.setup()
+  const realAdd = meetingsApi.addEntry.bind(meetingsApi)
+  const add = vi
+    .spyOn(meetingsApi, 'addEntry')
+    .mockImplementation(
+      (...args) =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(realAdd(...args)), 300),
+        ),
+    )
+  renderPanel(true)
+  const box = await screen.findByRole('textbox', { name: '메시지' })
+  await user.type(box, '한 번만 가야 하는 말')
+  await user.keyboard('{Enter}{Enter}')
+  await waitFor(() => expect(box).toHaveValue(''))
+  expect(add).toHaveBeenCalledTimes(1)
+  // 정리 수정 요청(MTG-A12)도 보내는 동안에는 Enter를 무시한다.
+  const real = meetingsApi.reviseSummary.bind(meetingsApi)
+  const revise = vi
+    .spyOn(meetingsApi, 'reviseSummary')
+    .mockImplementation(
+      (...args) =>
+        new Promise((resolve) => setTimeout(() => resolve(real(...args)), 300)),
+    )
+  add.mockRestore()
+  await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
+  const feedback = await screen.findByRole('textbox', {
+    name: '비비에게 고칠 점',
+  })
+  await user.type(feedback, '할 일을 둘로 나눠 주세요.')
+  await user.keyboard('{Enter}{Enter}')
+  expect(await screen.findByText('수정본')).toBeInTheDocument()
+  expect(revise).toHaveBeenCalledTimes(1)
+  vi.restoreAllMocks()
+})
+
+// PR #328 회귀 검토: 팀장이 아닌 참여자도 비비 정리에서 바뀌는 문장(지금/바뀐 뒤)을 본다.
+it('팀장이 아닌 참여자도 비비 정리에서 바뀌는 문장을 본다', async () => {
+  const entries = await meetingsApi.entries('101', '901', {})
+  await meetingsApi.summarize('101', '901', {
+    through_entry_id: entries.items.at(-1)!.id,
+  })
+  // 최신 정리가 있으면 비비 정리 화면부터 열린다.
+  renderPanel(false)
+  const changes = await screen.findByRole('region', { name: '바뀔 문서' })
+  expect(within(changes).getByText('지금')).toBeInTheDocument()
+  expect(within(changes).getByText('바뀐 뒤')).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '수정 초안 만들기' }),
+  ).not.toBeInTheDocument()
 })

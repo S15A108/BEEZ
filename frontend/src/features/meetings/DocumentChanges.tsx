@@ -4,15 +4,13 @@ import { cn } from '@/lib/utils'
 const line = 'border-[#e4e0d4]'
 
 // 비비 정리의 바뀔 문서(MTG-A11). 회의를 끝내면(MTG-A13) 이 변경이 그대로 변경 제안에 들어간다.
-// 비비 정리 단계에서는 '문서 · 몇 행'과 근거만 한 줄씩(compact), 수정 초안 단계에서는 지금 문장과 바뀐 뒤 문장을 나란히 보인다.
+// 정리가 정한 줄의 지금 문장과 바뀐 뒤 문장을 나란히 보이고, 근거 발언을 누르면 그 말로 간다.
 export function DocumentChanges({
   changes,
-  compact,
   documentTitleOf,
   onShowEvidence,
 }: {
   changes: MeetingDocumentChange[]
-  compact?: boolean
   documentTitleOf: (documentId: string) => string
   onShowEvidence?: (entryId: string) => void
 }) {
@@ -20,13 +18,7 @@ export function DocumentChanges({
     <section aria-label="바뀔 문서" className="grid gap-2">
       <h5 className="text-[13px] font-bold">바뀔 문서</h5>
       {changes.length ? (
-        <ul
-          className={
-            compact
-              ? cn('grid rounded-xl border bg-white', line)
-              : 'grid gap-2.5'
-          }
-        >
+        <ul className="grid gap-2.5">
           {changes.map((change, index) => {
             const { start_line: start, end_line: end } = change.locator
             const where = `${documentTitleOf(change.document_id)} · ${start === end ? `${start}행` : `${start}~${end}행`}`
@@ -45,21 +37,7 @@ export function DocumentChanges({
                 ))}
               </span>
             )
-            return compact ? (
-              <li
-                key={`${change.document_id}:${start}:${index}`}
-                className={cn(
-                  'flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t px-3.5 py-2.5 text-[13px] first:border-t-0',
-                  line,
-                )}
-              >
-                <span className="rounded-full bg-[#fdf0c8] px-2 py-0.5 text-xs font-semibold text-[#6e5200]">
-                  문서
-                </span>
-                <span className="mr-auto font-semibold">{where}</span>
-                {evidence}
-              </li>
-            ) : (
+            return (
               <li
                 key={`${change.document_id}:${start}:${index}`}
                 className={cn(

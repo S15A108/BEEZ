@@ -3,20 +3,17 @@ import type { MeetingSummary } from '@/api/contracts/common'
 import { DocumentChanges } from './DocumentChanges'
 
 // MTG-A11·A12 비비 회의 정리(충돌 · 결정 · 바뀔 문서 · 할 일). 문서와 설계는 직접 바뀌지 않고, 회의를 끝내면(MTG-A13)
-// 이 정리로 변경 제안이 만들어진다. 바뀔 문서는 정리가 정한 줄의 지금 문장과 제안에 들어갈 문장을 나란히 보이고,
-// compactChanges 면 '문서 · 몇 행'과 근거만 한 줄씩 보인다(회의실 비비 정리 단계, 문장 비교는 수정 초안 단계에서 본다).
+// 이 정리로 변경 제안이 만들어진다. 바뀔 문서는 정리가 정한 줄의 지금 문장과 제안에 들어갈 문장을 나란히 보인다.
 export function SummaryCard({
   summary,
   documentTitleOf,
   nameOfMember,
   onShowEvidence,
-  compactChanges,
 }: {
   summary: MeetingSummary
   documentTitleOf: (documentId: string) => string
   nameOfMember: (memberId: string) => string
   onShowEvidence?: (entryId: string) => void
-  compactChanges?: boolean
 }) {
   return (
     <div className="grid gap-3 text-sm">
@@ -55,7 +52,6 @@ export function SummaryCard({
       </Section>
       <DocumentChanges
         changes={summary.document_changes}
-        compact={compactChanges}
         documentTitleOf={documentTitleOf}
         onShowEvidence={onShowEvidence}
       />

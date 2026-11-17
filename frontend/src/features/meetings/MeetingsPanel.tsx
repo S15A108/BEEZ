@@ -229,6 +229,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     enabled: !!selectedId && isLeader && summaryReady && !closedMeeting,
     retry: false,
   })
+  // 단계를 옮겨도 쓰던 글이 남게 입력칸의 내용을 회의·칸별로 들고 있는다.
+  const drafts = useRef(new Map<string, string>())
   const progress = closedMeeting
     ? 3
     : summaryReady
@@ -243,10 +245,21 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       ? index === 3 || !!summary
       : (index === 1 && summaryReady) ||
         (index === 2 && summaryReady && isLeader))
+  // 보고 있는 단계는 서버 상태가 바뀌어도(새 정리, 정리 뒤 새 대화) 자동으로 옮기지 않는다. 쓰던 글이나 저장 전 수정 초안이
+  // 사라지지 않게 하려는 것이다(PR #328 회귀 검토). 회의를 처음 열 때만 서버 상태로 단계를 정하고 그 자리에 고정한다.
   const step =
-    stepView && stepView.meetingId === selectedId && canView(stepView.step)
-      ? stepView.step
-      : progress
+    stepView && stepView.meetingId === selectedId ? stepView.step : progress
+  const draftQueryOn =
+    !!selectedId && isLeader && summaryReady && !closedMeeting
+  const settled =
+    !!detail.data &&
+    !!entries.data &&
+    !hasNextPage &&
+    (!review || !summaryQuery.isPending) &&
+    (!draftQueryOn || !savedDraft.isPending)
+  // 렌더 중에 고정한다(이전 값에서 다음 상태를 정하는 React의 방식, MeetingRevisionDraft와 같다).
+  if (settled && selectedId && stepView?.meetingId !== selectedId)
+    setStepView({ meetingId: selectedId, step: progress })
   const goTo = (next: number) => {
     if (selectedId) setStepView({ meetingId: selectedId, step: next })
   }
@@ -781,6 +794,15 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               documentTitleOf={documentTitleOf}
                             />
                           )}
+                        {(step === 1 || step === 2) &&
+                          !closedMeeting &&
+                          (talkedAfterSummary || summaryRejected) && (
+                            <p className="rounded-xl border border-[#f3e2a6] bg-[#fff8e0] px-3.5 py-2.5 text-[13px] text-[#6e5200]">
+                              {talkedAfterSummary
+                                ? '정리한 뒤에 새 대화가 있어요. 대화로 돌아가 비비에게 정리를 다시 요청해 주세요.'
+                                : '정리한 뒤에 기준이 바뀌어 이 정리로는 끝낼 수 없어요. 대화로 돌아가 비비에게 정리를 다시 요청해 주세요.'}
+                            </p>
+                          )}
                         {step > 0 && (
                           <div className="flex flex-wrap items-center gap-2.5">
                             {step === 3 ? (
@@ -830,7 +852,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   isLeader ? (
                                     <Button
                                       size="lg"
-                                      disabled={!participant}
+                                      disabled={!participant || !summaryReady}
                                       onClick={() => goTo(2)}
                                     >
                                       수정 초안 만들기
@@ -855,7 +877,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                           action.busy ||
                                           !isLeader ||
                                           !participant ||
-                                          talkedAfterSummary
+                                          !summaryReady
                                         }
                                         onClick={() =>
                                           closeMeeting(meeting.id, summary.id)
@@ -878,7 +900,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                         <div
                           className={cn(
                             'flex flex-col rounded-2xl border bg-white lg:min-h-0 lg:flex-1',
-                            step === 0 && 'lg:min-h-64',
+                            step === 0 && 'lg:min-h-[13.25rem]',
                             step === 1 && 'lg:min-h-72',
                             line,
                           )}
@@ -964,6 +986,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                       )}
                                     <InlineMessage
                                       key={`message-${meeting.id}`}
+                                      drafts={drafts.current}
+                                      draftKey={`message-${meeting.id}`}
                                       label="메시지"
                                       placeholder="메시지 보내기"
                                       submitLabel="보내기"
@@ -1021,7 +1045,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                       documentTitleOf={documentTitleOf}
                                       nameOfMember={nameOfMember}
                                       onShowEvidence={showEvidence}
-                                      compactChanges
                                     />
                                   </div>
                                   {/* 정리 단계의 아래 입력칸은 메시지 대신 '비비 정리 수정'이다(S15P31A108-457). 새 합의는 대화로 돌아가 남긴다. */}
@@ -1037,6 +1060,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                       </p>
                                       <InlineMessage
                                         key={summary.id}
+                                        drafts={drafts.current}
+                                        draftKey={`feedback-${summary.id}`}
                                         label="비비에게 고칠 점"
                                         placeholder="정리에서 고칠 점을 비비에게 말해 주세요"
                                         submitLabel="수정 요청"
@@ -1466,8 +1491,13 @@ function InlineMessage({
   busy,
   max,
   onSubmit,
+  drafts,
+  draftKey,
   children,
 }: {
+  /** 쓰던 글을 들고 있는 곳(회의실). 단계를 옮겨 칸이 사라졌다 다시 생겨도 글이 남는다. */
+  drafts?: Map<string, string>
+  draftKey?: string
   label: string
   placeholder: string
   submitLabel: string
@@ -1484,21 +1514,37 @@ function InlineMessage({
     formState: { errors, isSubmitting },
   } = useForm<{ text: string }>({
     resolver: zodResolver(messageSchema(max)),
-    defaultValues: { text: '' },
+    defaultValues: { text: (draftKey && drafts?.get(draftKey)) || '' },
+  })
+  // 보내는 중에는 한 번 더 보내지 않는다. isSubmitting 은 다음 렌더에야 바뀌어 Enter 두 번을 막지 못한다(PR #328 회귀 검토).
+  const sending = useRef(false)
+  const submit = handleSubmit(async (values) => {
+    try {
+      await onSubmit(values.text)
+      reset({ text: '' })
+      if (draftKey) drafts?.delete(draftKey)
+    } catch {
+      // 오류 안내는 호출한 쪽이 이미 보였다.
+    }
+  })
+  const field = register('text', {
+    onChange: (event: { target: { value: string } }) => {
+      if (draftKey) drafts?.set(draftKey, event.target.value)
+    },
   })
   return (
     <form
       noValidate
       className="grid gap-1"
       // 보내기에 성공했을 때만 입력을 비운다. 실패하면 쓰던 글을 그대로 둔다(기록이 더 붙어도 폼을 다시 만들지 않는다).
-      onSubmit={handleSubmit(async (values) => {
-        try {
-          await onSubmit(values.text)
-          reset()
-        } catch {
-          // 오류 안내는 호출한 쪽이 이미 보였다.
-        }
-      })}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (sending.current || busy) return
+        sending.current = true
+        void submit(event).finally(() => {
+          sending.current = false
+        })
+      }}
     >
       <div className="flex items-end gap-2">
         <Textarea
@@ -1507,16 +1553,17 @@ function InlineMessage({
           aria-invalid={!!errors.text}
           rows={1}
           className="max-h-40 min-h-11 flex-1 resize-none bg-white py-2.5"
-          {...register('text')}
+          {...field}
           onKeyDown={(event) => {
-            // 한글 조합 중의 Enter는 글자 확정이라 보내지 않는다.
+            // 한글 조합 중의 Enter는 글자 확정이라 보내지 않는다. 보내는 중이거나 다른 요청 중이면 버튼처럼 Enter도 막는다.
             if (
               event.key === 'Enter' &&
               !event.shiftKey &&
               !event.nativeEvent.isComposing
             ) {
               event.preventDefault()
-              event.currentTarget.form?.requestSubmit()
+              if (!isSubmitting && !busy && !sending.current)
+                event.currentTarget.form?.requestSubmit()
             }
           }}
         />
