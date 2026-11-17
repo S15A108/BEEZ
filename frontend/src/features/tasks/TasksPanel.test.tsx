@@ -2125,6 +2125,33 @@ it('상태 필터를 누르면 그 상태의 작업만 보이고 첫 작업을 �
   expect(screen.getByText('끝난 작업')).toBeInTheDocument()
 })
 
+// #325 리뷰(P2): 필터 뒤 자동 선택도 목록처럼 검색어를 따른다. 목록에 없는 작업을 상세에 열지 않는다.
+it('검색한 뒤 상태 필터를 누르면 검색에 맞는 작업 가운데 첫 작업을 고른다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [
+      task,
+      listed('506', 'TASK-006', 'IN_PROGRESS', '결제 구현'),
+      listed('507', 'TASK-007', 'IN_PROGRESS', '검색 대상 구현'),
+    ],
+    has_more: false,
+  })
+  const get = vi.spyOn(tasksApi, 'get')
+  show(false)
+  await userEvent.type(
+    await screen.findByRole('searchbox', { name: '작업 검색' }),
+    '검색 대상',
+  )
+  const filters = screen.getByRole('list', { name: '상태별 작업 수' })
+  await userEvent.click(
+    within(filters).getByRole('button', { name: /진행 중/ }),
+  )
+  expect(screen.queryByText('결제 구현')).toBeNull()
+  await waitFor(() => expect(get).toHaveBeenLastCalledWith('101', '507'))
+  expect(
+    screen.getByRole('button', { name: /검색 대상 구현/ }),
+  ).toHaveAttribute('aria-current', 'true')
+})
+
 it('고른 상태의 작업이 없으면 다른 상태를 고르라고 안내한다', async () => {
   show(false)
   const filters = await screen.findByRole('list', { name: '상태별 작업 수' })

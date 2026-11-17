@@ -312,11 +312,12 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
     .flatMap((group) =>
       shown.filter((entry) => groupOf(entry.status) === group),
     )
-  const found = ordered.filter((entry) =>
+  // 목록과 상태 필터 뒤 자동 선택이 같은 검색 조건을 쓴다(#325 리뷰).
+  const matchesSearch = (entry: TaskDetail) =>
     `${entry.key} ${entry.current_plan_revision.plan.title}`
       .toLowerCase()
-      .includes(search),
-  )
+      .includes(search)
+  const found = ordered.filter(matchesSearch)
   const selectedId =
     selected?.focus === focusId ? selected.id : (focusId ?? ordered[0]?.id)
   const selectedGroup = groupOf(
@@ -671,12 +672,14 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             aria-pressed={on}
                             onClick={() => {
                               setStatusFilter(on ? undefined : group.label)
-                              // 고른 작업이 걸러져 목록에서 사라지면 남은 첫 작업을 고른다.
+                              // 고른 작업이 걸러져 목록에서 사라지면 남은 첫 작업을 고른다. 목록처럼 검색어도 따른다.
                               const visible = statusGroups
                                 .filter((next) => on || next === group)
                                 .flatMap((next) =>
                                   shown.filter(
-                                    (entry) => groupOf(entry.status) === next,
+                                    (entry) =>
+                                      groupOf(entry.status) === next &&
+                                      matchesSearch(entry),
                                   ),
                                 )
                               if (
