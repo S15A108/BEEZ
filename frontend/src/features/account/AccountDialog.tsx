@@ -113,11 +113,13 @@ function AccountDialogBody({
       </Button>
       <div
         className="overflow-y-auto px-8 pt-1 pb-8"
-        // 창 안 링크(토큰의 프로젝트, 탈퇴의 '팀장 위임'·'프로젝트 삭제')로 떠날 때도 고치던 프로필이면 X·Esc처럼 묻는다(PR #316 리뷰).
+        // 창 안 링크(토큰의 프로젝트, 탈퇴의 '팀장 위임'·'프로젝트 삭제')로 떠날 때도 X·Esc와 같다(PR #316 리뷰).
+        // 요청 중이면 떠나지 않고, 고치던 프로필이면 묻는다.
         onClickCapture={(event) => {
           const link = (event.target as HTMLElement).closest('a[href]')
-          if (!link || !dirty.current) return
+          if (!link || !(busy || dirty.current)) return
           event.preventDefault()
+          if (busy) return
           setConfirmClose(link.getAttribute('href') ?? true)
         }}
       >
