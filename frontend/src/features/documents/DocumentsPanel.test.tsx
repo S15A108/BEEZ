@@ -9,6 +9,7 @@ import { authApi, membersApi } from '@/api/services'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { DocumentVersion, Source } from '@/api/contracts/common'
 import { SourceLinks } from '@/components/SourceLinks'
+import { citationFocus } from '@/lib/citationTarget'
 import { DocumentsPanel } from './DocumentsPanel'
 
 vi.mock('@/api/services/documents', () => ({
@@ -1034,4 +1035,59 @@ it('반려 뒤 다시 받던 검토가 실패해도 시작 준비 카드는 반�
   expect(
     screen.getByText(/^반려 뒤 비비 검토를 마치지 못했어요\./),
   ).toBeInTheDocument()
+})
+
+// PR #321 리뷰: 문서함이 등록 화면과 근거 인용까지 기억해, 다시 열면 빈 등록 화면이나 인용 위치가 다시 떴다.
+it('등록 화면에서 닫았다 다시 열면 목록이 열린다', async () => {
+  useWorkspaceStore.setState({ focusId: 'upload:REQUIREMENTS' })
+  const first = mount()
+  expect(await screen.findByLabelText(/원본 파일/)).toBeInTheDocument()
+  first.unmount()
+  useWorkspaceStore.setState({ focusId: null })
+  mount()
+  expect(await screen.findByLabelText('검색어')).toBeInTheDocument()
+  expect(screen.queryByLabelText(/원본 파일/)).not.toBeInTheDocument()
+})
+
+it('근거 인용으로 연 문서를 다시 열면 인용 표시 없이 그 문서가 열린다', async () => {
+  const cited = {
+    ...version,
+    content: '첫 줄\n둘째 줄\n정확한 인용 문장\n마지막 줄',
+  }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: focusedDocument,
+    version: cited,
+  })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [cited],
+    has_more: false,
+  })
+  const original = HTMLElement.prototype.scrollIntoView
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+  try {
+    useWorkspaceStore.setState({
+      focusId: citationFocus({
+        document_id: '2',
+        document_version_id: '21',
+        start_line: 2,
+        end_line: 4,
+        quote: '정확한 인용 문장',
+      }),
+    })
+    const first = mount()
+    expect(
+      await screen.findByRole('region', { name: '확인된 인용 원문' }),
+    ).toBeInTheDocument()
+    first.unmount()
+    useWorkspaceStore.setState({ focusId: null })
+    mount()
+    expect(
+      (await screen.findAllByText(/정확한 인용 문장/)).length,
+    ).toBeGreaterThan(0)
+    expect(
+      screen.queryByRole('region', { name: '확인된 인용 원문' }),
+    ).not.toBeInTheDocument()
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original
+  }
 })

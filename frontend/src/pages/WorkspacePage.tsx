@@ -1,7 +1,29 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
-import { Footprints } from 'lucide-react'
+import type { ComponentType } from 'react'
+import {
+  Bell,
+  BookOpen,
+  ChartNoAxesCombined,
+  CheckCheck,
+  FileText,
+  Footprints,
+  GitBranch,
+  Lightbulb,
+  Network,
+  Users,
+  XIcon,
+} from 'lucide-react'
+import { BibiFace } from '@/components/BibiFace'
 import type { SceneAgent, SceneTask } from '@/three/types'
 import { idSchema } from '@/api/contracts/common'
 import { getApiErrorStatus, isMissingApi } from '@/api/error'
@@ -37,6 +59,7 @@ import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -49,18 +72,18 @@ import {
   useWorkspaceStore,
 } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
+import {
+  rememberedScrollTop,
+  restoreScrollWhenReady,
+} from '@/lib/restoreScroll'
+import { flashScrollbar } from '@/lib/flashScrollbar'
+import { cn } from '@/lib/utils'
 import NotFoundPage from './NotFoundPage'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
-// 단축 바 번호(창 머리 'N 또는 Esc로 닫기')
-const paneKeys: Partial<Record<WorkspacePane, number>> = {
-  documents: 1,
-  changes: 2,
-  meetings: 3,
-  tasks: 4,
-  relations: 5,
-  dashboard: 6,
-}
+// 업무 창에 들어갈 때 커서를 둘 글자 입력칸(체크박스·숨은 칸·막힌 칸 제외)
+const textField =
+  'input:not([type]):not([disabled]), input[type="text"]:not([disabled]), input[type="search"]:not([disabled]), textarea:not([disabled])'
 const paneTitles: Record<Exclude<WorkspacePane, 'settings'>, string> = {
   documents: '공용 문서함',
   planning: '기획 분석',
@@ -72,6 +95,21 @@ const paneTitles: Record<Exclude<WorkspacePane, 'settings'>, string> = {
   inbox: '알림함',
   chat: '비비',
   context: '작업 맥락',
+}
+// 업무 창 머리의 메뉴 그림. 1~6은 단축 바 칸과 같은 그림이라 단축 바가 숨어도 어느 메뉴인지 이어진다.
+const paneIcons: Partial<
+  Record<WorkspacePane, ComponentType<{ className?: string }>>
+> = {
+  documents: FileText,
+  planning: Lightbulb,
+  changes: GitBranch,
+  meetings: Users,
+  tasks: CheckCheck,
+  relations: Network,
+  dashboard: ChartNoAxesCombined,
+  inbox: Bell,
+  chat: BibiFace,
+  context: BookOpen,
 }
 
 function Workspace({ projectId }: { projectId: string }) {
@@ -88,6 +126,48 @@ function Workspace({ projectId }: { projectId: string }) {
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const pendingMutations = useIsMutating()
   const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
+  // 업무 창별 스크롤 위치. 다른 메뉴를 갔다 오거나 닫았다 열어도 보던 곳부터 보인다(S15P31A108-431).
+  // Workspace는 프로젝트 id로 다시 마운트되므로 프로젝트를 떠나면 비워진다.
+  const scrolls = useRef(new Map<WorkspacePane, number>())
+  const body = useRef<HTMLDivElement | null>(null)
+  // 창 본문이 붙을 때(창을 열거나 숫자 키로 메뉴를 바꿀 때마다) 스크롤을 되살리고, 그 창의 첫 글자 입력칸에 커서를 둔다.
+  // 공용 문서함·변경 제안·설계 관계·작업 현황은 검색칸, 회의실은 대화 입력칸이다. 문서·목록을 받은 뒤에 본문이 길어지거나
+  // 칸이 생기면 3초까지 지켜보다가 적용한다. 창 내용은 포털로 한 박자 늦게 붙어서 effect가 아니라 ref에서 시작한다.
+  const attachBody = useCallback(
+    (element: HTMLDivElement | null) => {
+      body.current = element
+      if (!element || !pane) return
+      const stopScroll = restoreScrollWhenReady(
+        element,
+        rememberedScrollTop(
+          scrolls.current.get(pane),
+          useWorkspaceStore.getState().focusId,
+        ),
+      )
+      const place = () => {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.matches(textField))
+          return true
+        const field = element.querySelector<HTMLElement>(textField)
+        field?.focus({ preventScroll: true })
+        return !!field
+      }
+      const observer = new MutationObserver(() => {
+        if (place()) observer.disconnect()
+      })
+      if (!place())
+        observer.observe(element, { childList: true, subtree: true })
+      const stop = setTimeout(() => observer.disconnect(), 3000)
+      return () => {
+        stopScroll()
+        observer.disconnect()
+        clearTimeout(stop)
+        body.current = null
+      }
+    },
+    [pane],
+  )
+  const PaneIcon = pane ? paneIcons[pane] : undefined
   useClearPaneOnLeave()
   const officeTime = useOfficeTime()
   // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
@@ -219,6 +299,12 @@ function Workspace({ projectId }: { projectId: string }) {
         const currentUser = data.members.items.find(
           (member) => member.account_id === session.data?.id,
         )
+        // 목록·상세 창은 1200px 기둥 대신 화면 폭을 다 써서 왼쪽 목록을 창 왼쪽에 붙이고 상세를 가운데에 넓힌다(S15P31A108-455).
+        const splitPane =
+          pane === 'tasks' ||
+          pane === 'changes' ||
+          pane === 'meetings' ||
+          pane === 'relations'
         const panelProps = { projectId, isLeader }
         return (
           <main
@@ -332,100 +418,146 @@ function Workspace({ projectId }: { projectId: string }) {
                 if (!open && !pendingMutations) openPane(null)
               }}
             >
-              {/* 보드처럼 위에서 40px에 두고, 아래 단축 바 자리(120px)를 비운다.
-                  비비 대화를 포함한 모든 업무 창은 내용이 적거나 비어 있어도 같은 폭·높이·바탕색으로 열고,
-                  넘치는 내용만 안에서 스크롤한다. */}
+              {/* 업무 창은 화면 전체로 연다(S15P31A108-431). 단축 바는 창 뒤로 숨고 메뉴는 숫자 키로 바꾼다.
+                  머리 줄은 위에 고정하고 본문만 스크롤한다(디자인 검수 F04). 비비 대화를 포함한 모든 업무 창이
+                  내용이 적거나 비어 있어도 같은 크기·바탕색으로 열린다. */}
               <DialogContent
-                className="top-10 h-[calc(100dvh-160px)] translate-y-0 grid-rows-[auto_1fr] overflow-y-auto bg-background p-5 sm:max-w-[min(1180px,94vw)] sm:p-8"
+                showCloseButton={false}
+                className="pane-scrollbars inset-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-none bg-background p-0 ring-0 sm:max-w-none"
+                // 스크롤바는 얇게, 스크롤하는 동안만 보인다(S15P31A108-455).
+                onScrollCapture={(event) => flashScrollbar(event.target)}
                 onEscapeKeyDown={(event) => {
                   if (pendingMutations) event.preventDefault()
                 }}
                 onInteractOutside={(event) => {
-                  // 창이 열려도 단축 바는 밝게 남아 다른 메뉴로 바로 옮겨 간다.
-                  const target = event.target as HTMLElement | null
-                  if (
-                    pendingMutations ||
-                    target?.closest('nav[aria-label="프로젝트 메뉴 단축 바"]')
-                  )
-                    event.preventDefault()
+                  if (pendingMutations) event.preventDefault()
+                }}
+                // 창을 열면 머리 줄의 닫기 버튼이 아니라 본문의 첫 입력칸·버튼(문서함 검색 등)에 포커스를 준다.
+                onOpenAutoFocus={(event) => {
+                  const field =
+                    body.current?.querySelector<HTMLElement>(textField)
+                  if (!field) return
+                  event.preventDefault()
+                  field.focus({ preventScroll: true })
                 }}
               >
-                <DialogHeader>
-                  <div className="flex items-start justify-between gap-3 pr-8">
-                    {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
-                    <DialogTitle className="text-lg font-semibold">
-                      {pane && pane !== 'settings' ? paneTitles[pane] : ''}
-                    </DialogTitle>
+                {/* 머리 줄은 흰 띠로 본문과 나누고, 안쪽은 본문과 같은 가운데 기둥에 맞춘다.
+                    메뉴 아이콘(단축 바와 같은 그림)·제목·부제목 두 줄, 오른쪽에 창별 버튼·Esc 안내·닫기. */}
+                <DialogHeader className="border-b bg-card">
+                  <div
+                    className={cn(
+                      'mx-auto flex min-h-16 w-full flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 sm:px-8',
+                      !splitPane && 'max-w-[1264px]',
+                    )}
+                  >
+                    {PaneIcon && (
+                      <span
+                        aria-hidden="true"
+                        className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-primary/20 text-foreground"
+                      >
+                        <PaneIcon className="size-[18px]" />
+                      </span>
+                    )}
+                    <div className="mr-auto min-w-0">
+                      {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
+                      <DialogTitle className="text-lg leading-6 font-semibold">
+                        {pane && pane !== 'settings' ? paneTitles[pane] : ''}
+                      </DialogTitle>
+                      {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). 회의실도 본문 자리를 넓히려고 숨긴다(사용자 요청 11-17). 화면 읽기 프로그램은 읽는다. */}
+                      <DialogDescription
+                        className={
+                          pane === 'documents' || pane === 'meetings'
+                            ? 'sr-only'
+                            : 'truncate text-xs leading-4'
+                        }
+                      >
+                        {data.project.name}
+                        {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
+                        {pane === 'meetings'
+                          ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
+                          : data.project.current_baseline &&
+                            ` · 설계 기준 v${data.project.current_baseline.version_no}`}
+                      </DialogDescription>
+                    </div>
                     {/* 창별 머리 버튼 자리(작업 현황의 '+ 작업 계획', 캔버스 PNL-05-v2-tasks) */}
                     <div
                       ref={setHeaderSlot}
-                      className="-mt-1 ml-auto flex shrink-0 items-center gap-2 empty:hidden"
+                      className="flex items-center gap-2 empty:hidden"
                     />
-                    {pane && paneKeys[pane] && (
-                      <span className="mt-0.5 shrink-0 text-xs whitespace-nowrap text-muted-foreground">
-                        <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
-                          {paneKeys[pane]}
-                        </kbd>{' '}
-                        또는{' '}
-                        <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
-                          Esc
-                        </kbd>
-                        로 닫기
-                      </span>
-                    )}
+                    {/* 단축 바 번호는 창 안에서 뜻이 안 보여 빼고 Esc만 안내한다(사용자 결정 11-16). 열린 창의 번호 키를
+                        다시 누르면 닫히는 동작은 단축 바 칸을 다시 누르는 것과 같아 그대로 둔다. */}
+                    <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground max-sm:hidden">
+                      <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
+                        Esc
+                      </kbd>
+                      로 닫기
+                    </span>
+                    <DialogClose asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="-mr-1.5 shrink-0"
+                      >
+                        <XIcon />
+                        <span className="sr-only">닫기</span>
+                      </Button>
+                    </DialogClose>
                   </div>
-                  {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). 회의실도 본문 자리를 넓히려고 숨긴다(사용자 요청 11-17). 화면 읽기 프로그램은 읽는다. */}
-                  <DialogDescription
-                    className={
-                      pane === 'documents' || pane === 'meetings'
-                        ? 'sr-only'
-                        : undefined
-                    }
-                  >
-                    {data.project.name}
-                    {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
-                    {pane === 'meetings'
-                      ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
-                      : data.project.current_baseline &&
-                        ` · 설계 기준 v${data.project.current_baseline.version_no}`}
-                  </DialogDescription>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>
-                  <PaneSheetHost
-                    key={`${projectId}:${pane}`}
-                    // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
-                    className="mt-4 flex min-w-0 flex-col"
+                  {/* 본문 스크롤. 안쪽 여백(p-5 sm:p-8)은 예전 창과 같다. 패널이 이 여백에 맞춰 밖으로 넓히거나
+                      (회의실 -mx-8) 아래 고정 줄을 붙인다(sticky -bottom-5 sm:-bottom-8). 세로 flex라서 본문 자리가
+                      정해진 높이를 받아, 회의실처럼 높이를 %로 채우는 패널도 창 아래까지 찬다. */}
+                  <div
+                    key={pane}
+                    ref={attachBody}
+                    onScroll={(event) => {
+                      if (pane)
+                        scrolls.current.set(pane, event.currentTarget.scrollTop)
+                    }}
+                    className="flex min-h-0 flex-col overflow-y-auto p-5 sm:p-8"
                   >
-                    {pane === 'documents' && <DocumentsPanel {...panelProps} />}
-                    {pane === 'planning' && <PlanningPanel {...panelProps} />}
-                    {pane === 'changes' && <ChangesPanel {...panelProps} />}
-                    {pane === 'tasks' && (
-                      <TasksPanel
-                        {...panelProps}
-                        baselineId={data.project.current_baseline?.id}
-                      />
-                    )}
-                    {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
-                    {pane === 'relations' && (
-                      <ActivityPanel
-                        projectId={projectId}
-                        view="relations"
-                        hasBaseline={!!data.project.current_baseline}
-                      />
-                    )}
-                    {pane === 'dashboard' && (
-                      <ActivityPanel
-                        {...panelProps}
-                        view="dashboard"
-                        hasBaseline={!!data.project.current_baseline}
-                      />
-                    )}
-                    {pane === 'inbox' && <InboxPanel projectId={projectId} />}
-                    {pane === 'chat' && <BibiPanel projectId={projectId} />}
-                    {pane === 'context' && (
-                      <ContextPanel projectId={projectId} />
-                    )}
-                  </PaneSheetHost>
+                    <PaneSheetHost
+                      // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
+                      // 넓은 화면에서 목록·카드가 끝에서 끝까지 늘어나지 않게 1200px 가운데 기둥으로 묶는다. 목록·상세 창은 화면 폭을 다 쓴다(S15P31A108-455).
+                      className={cn(
+                        'mx-auto flex w-full min-w-0 flex-1 flex-col',
+                        !splitPane && 'max-w-[1200px]',
+                      )}
+                    >
+                      {pane === 'documents' && (
+                        <DocumentsPanel {...panelProps} />
+                      )}
+                      {pane === 'planning' && <PlanningPanel {...panelProps} />}
+                      {pane === 'changes' && <ChangesPanel {...panelProps} />}
+                      {pane === 'tasks' && (
+                        <TasksPanel
+                          {...panelProps}
+                          baselineId={data.project.current_baseline?.id}
+                        />
+                      )}
+                      {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
+                      {pane === 'relations' && (
+                        <ActivityPanel
+                          projectId={projectId}
+                          view="relations"
+                          hasBaseline={!!data.project.current_baseline}
+                        />
+                      )}
+                      {pane === 'dashboard' && (
+                        <ActivityPanel
+                          {...panelProps}
+                          view="dashboard"
+                          hasBaseline={!!data.project.current_baseline}
+                        />
+                      )}
+                      {pane === 'inbox' && <InboxPanel projectId={projectId} />}
+                      {pane === 'chat' && <BibiPanel projectId={projectId} />}
+                      {pane === 'context' && (
+                        <ContextPanel projectId={projectId} />
+                      )}
+                    </PaneSheetHost>
+                  </div>
                 </PaneHeaderSlot>
               </DialogContent>
             </Dialog>

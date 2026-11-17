@@ -584,6 +584,50 @@ it('작업 A로 연 뒤 B를 고르고 B의 협의할 작업 A에서 작업 보�
   expect(useWorkspaceStore.getState().pane).toBe('tasks')
 })
 
+// PR #321 리뷰: 알림으로 501을 연 뒤 502를 고르면 {id: 502, focus: 501}이 기억돼, 대상 없이 다시 열면 첫 작업이 열렸다.
+it('알림으로 연 뒤 다른 작업을 고르고 창을 다시 열면 고른 작업이 열린다', async () => {
+  const second: TaskDetail = {
+    ...task,
+    id: '502',
+    key: 'TASK-002',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '512',
+      task_id: '502',
+      plan: { ...task.current_plan_revision.plan, title: '알림 설정 화면' },
+    },
+  }
+  const byId: Record<string, TaskDetail> = { '501': task, '502': second }
+  vi.mocked(tasksApi.list).mockImplementation(async () => ({
+    items: [task, second],
+    has_more: false,
+  }))
+  vi.mocked(tasksApi.get).mockImplementation(async (_project, id) => byId[id])
+  const first = show(false)
+  await userEvent.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /TASK-002/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
+  first.unmount()
+  // 창을 닫았다가 단축 바로 다시 연다(대상 없음).
+  useWorkspaceStore.getState().openPane(null)
+  useWorkspaceStore.getState().openPane('tasks')
+  show(false)
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /TASK-002/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
+  expect(screen.getByRole('button', { name: /TASK-001/ })).not.toHaveAttribute(
+    'aria-current',
+    'true',
+  )
+})
+
 it('검증 결과에 BEEZ를 거치지 않은 작업은 검증하지 않는다고 적는다(AC-12)', async () => {
   show(false)
   await openValidationTab()
@@ -2180,6 +2224,48 @@ it('직접 고른 작업이 필터에 걸러지면 상세를 비운다', async (
     ),
   ).toBeInTheDocument()
   expect(screen.queryByRole('list', { name: '작업 단계' })).toBeNull()
+})
+
+// PR #321 머지(#325와 합침): 창을 다시 열어 되살린 선택(useRememberedSelection)도 필터 자동 선택과 같은 규칙을 따른다.
+it('다시 열어 되살린 작업도 상태 필터에 걸러지면 목록의 첫 작업을 고르고, 필터를 풀면 되살린 작업으로 돌아온다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [
+      task,
+      listed('506', 'TASK-006', 'IN_PROGRESS', '진행 중인 작업'),
+      listed('509', 'TASK-009', 'COMPLETED', '끝난 작업'),
+    ],
+    has_more: false,
+  })
+  const first = show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: /끝난 작업/ }),
+  )
+  first.unmount()
+  // 창을 닫았다가 단축 바로 다시 연다(대상 없음).
+  useWorkspaceStore.getState().openPane(null)
+  useWorkspaceStore.getState().openPane('tasks')
+  show(false)
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /끝난 작업/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
+  const filters = screen.getByRole('list', { name: '상태별 작업 수' })
+  const progress = within(filters).getByRole('button', { name: /진행 중/ })
+  await userEvent.click(progress)
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: /진행 중인 작업/ }),
+    ).toHaveAttribute('aria-current', 'true'),
+  )
+  await userEvent.click(progress)
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /끝난 작업/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
 })
 
 it('할 것 필터에서 작업을 시작해 목록에서 빠지면 남은 할 것 작업을 고른다', async () => {

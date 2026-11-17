@@ -51,7 +51,11 @@ import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { SPLIT_COLUMNS, SPLIT_DETAIL } from '@/lib/display'
+import {
+  useRememberedSelection,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import {
   closedMeetingCode,
   meetingErrorMessage,
@@ -89,10 +93,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const action = useProjectAction(projectId)
   const focus = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selection, setSelection] = useState<{
-    id: string
-    focus: string | null
-  } | null>(null)
+  const [selection, setSelection] = useRememberedSelection('meetings.selection')
   // 사람이 고른 단계(회의마다). 서버 상태로 갈 수 없는 단계가 되면(정리 뒤 새 대화 등) 서버 상태의 단계를 보인다.
   const [stepView, setStepView] = useState<{
     meetingId: string
@@ -408,7 +409,12 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       <AsyncState query={list}>
         {() =>
           meetings.length ? (
-            <div className="grid flex-1 gap-5 lg:min-h-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+            <div
+              className={cn(
+                'grid flex-1 gap-5 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)]',
+                SPLIT_COLUMNS,
+              )}
+            >
               <div
                 className={cn(
                   'grid content-start gap-3 self-start rounded-2xl border bg-white p-3.5 lg:max-h-full lg:overflow-y-auto',
@@ -459,9 +465,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           type="button"
                           aria-current={meeting.id === selectedId}
                           className={cn(
-                            'grid w-full gap-1 rounded-xl border border-[#ece9e0] bg-[#f7f5ef] px-3.5 py-3 text-left hover:bg-[#fbfaf6]',
+                            'grid w-full gap-1 rounded-lg border border-[#ece9e0] bg-[#f7f5ef] px-3 py-2.5 text-left hover:bg-[#fbfaf6]',
                             meeting.id === selectedId &&
-                              'border-2 border-[#2c291f] bg-[#fff8e0] px-[13px] py-[11px] hover:bg-[#fff8e0]',
+                              'border-2 border-[#2c291f] bg-[#fff8e0] px-[11px] py-[9px] hover:bg-[#fff8e0]',
                           )}
                           onClick={() => select(meeting.id)}
                         >
@@ -569,7 +575,12 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                       </Button>
                     )
                     return (
-                      <div className="flex min-h-0 min-w-0 flex-col gap-3.5">
+                      <div
+                        className={cn(
+                          'flex min-h-0 min-w-0 flex-col gap-3.5',
+                          SPLIT_DETAIL,
+                        )}
+                      >
                         <div className="grid gap-1">
                           {/* 제목 줄: 제목 오른쪽 끝에 대화 단계의 다음 할 일 버튼을 둬 스크롤하지 않아도 보이게 한다(사용자 요청 11-17).
                               참여자·더보기와 회의 정보는 그 아래 줄이다. */}
@@ -1020,6 +1031,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                       submitLabel="보내기"
                                       max={ENTRY_MAX}
                                       onSubmit={async (text) => {
+                                        // 보낸 글은 대화 칸에 바로 보여서 '보냈어요' 알림을 띄우지 않는다(사용자 요청 11-17). 실패는 오류로 알린다.
                                         await runPlain(
                                           () =>
                                             meetingsApi.addEntry(
@@ -1027,7 +1039,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                               meeting.id,
                                               { text },
                                             ),
-                                          '메시지를 보냈어요.',
+                                          '',
                                         )
                                       }}
                                     />

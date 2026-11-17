@@ -20,5 +20,7 @@ export default defineConfig({
     command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
+    // E2E는 개수에 기대는 흐름이 있어 기본 예시로 돈다. 로컬 개발 서버는 우리 팀 협업 서비스 예시를 넉넉히 넣는다(mocks/state.ts).
+    env: { VITE_MOCK_SEED: 'basic' },
   },
 })

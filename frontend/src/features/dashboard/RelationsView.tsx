@@ -9,11 +9,18 @@ import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { edgeLabel, nodeKind } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
-import { LIST_SELECTED } from '@/lib/display'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  LIST_ROW,
+  LIST_SELECTED,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
+} from '@/lib/display'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
+import { statusGroupOf, statusGroups } from '@/features/tasks/statusGroups'
 import { RelationGraph } from './RelationGraph'
 
 // 작업·설계 관계 · 단축 바 5번 단독 창. 왼쪽에서 작업을 고르면 그 작업 기준으로 설계 항목·검증·변경 제안 관계를 그린다.
@@ -29,8 +36,15 @@ export function RelationsView({
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [search, setSearch] = useState('')
-  const [picked, setPicked] = useState<string | null>(null)
-  const [view, setView] = useState<'list' | 'graph'>('list')
+  const [picked, setPicked] = useRemembered<string | null>(
+    'relations.picked',
+    null,
+  )
+  // 목록 보기·그래프 보기(S15P31A108-449)도 메뉴를 갔다 와도 잇는다.
+  const [view, setView] = useRemembered<'list' | 'graph'>(
+    'relations.view',
+    'list',
+  )
   const tasks = useQuery({
     queryKey: ['projects', projectId, 'relation-tasks'],
     // 작업 목록 API에는 검색 조건이 없어 마지막 페이지까지 읽고 화면에서 찾는다. 100개만 읽으면 101번째 이후 작업의
@@ -46,7 +60,11 @@ export function RelationsView({
       search.trim(),
     ),
   )
-  const selected = picked ?? shown[0]?.id
+  // 왼쪽 목록은 작업 현황처럼 상태 묶음 순서로 보인다. 처음 고르는 작업도 맨 위 줄이다.
+  const ordered = statusGroups.flatMap((group) =>
+    shown.filter((task) => statusGroupOf(task.status) === group),
+  )
+  const selected = picked ?? ordered[0]?.id
   const selectedTask = all.find((task) => task.id === selected)
   const relations = useQuery({
     queryKey: ['projects', projectId, 'relations', selected],
@@ -113,53 +131,90 @@ export function RelationsView({
         : // 선행 작업 같은 작업 대상은 누른 작업을, 검증은 지금 고른 작업을 연다.
           openPane('tasks', type === 'TASK' ? id : selected)
   return (
-    <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
-      <div className="grid content-start gap-2">
-        <label className="relative">
-          <span className="sr-only">작업 찾기</span>
-          <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="작업 번호·제목"
-            disabled={!all.length}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <AsyncState query={tasks}>
-          {() =>
-            shown.length ? (
-              <ul className="grid gap-1.5">
-                {shown.map((task) => (
-                  <li key={task.id}>
-                    <button
-                      type="button"
-                      aria-current={task.id === selected}
-                      onClick={() => setPicked(task.id)}
-                      className={cn(
-                        'grid w-full gap-0.5 rounded-xl border bg-card px-3 py-2.5 text-left text-sm shadow-xs hover:bg-muted/40',
-                        task.id === selected && LIST_SELECTED,
-                      )}
+    <div
+      className={cn(
+        'grid gap-6 lg:h-0 lg:min-h-full lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+        SPLIT_COLUMNS,
+      )}
+    >
+      {/* 왼쪽 목록은 작업 현황과 같은 흰 카드: 검색칸, 상태 묶음 머리글, 번호·제목·상태 칩 카드 */}
+      <Card className="lg:max-h-full lg:overflow-y-auto">
+        <CardContent className="space-y-3">
+          <label className="relative block">
+            <span className="sr-only">작업 찾기</span>
+            <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="작업 번호·제목"
+              disabled={!all.length}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+          <AsyncState query={tasks}>
+            {() =>
+              shown.length ? (
+                statusGroups.map((group) => {
+                  const items = shown.filter(
+                    (task) => statusGroupOf(task.status) === group,
+                  )
+                  if (!items.length) return null
+                  return (
+                    <section
+                      key={group.label}
+                      aria-label={group.heading}
+                      className="space-y-1.5"
                     >
-                      <span className="text-xs text-muted-foreground">
-                        {task.key}
-                      </span>
-                      <strong className="font-semibold">
-                        {task.current_plan_revision.plan.title}
-                      </strong>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {all.length ? '찾는 작업이 없어요.' : '아직 작업이 없어요.'}
-              </p>
-            )
-          }
-        </AsyncState>
-      </div>
-      <div className="grid min-w-0 content-start gap-4">
+                      <div className="flex justify-between text-[11px] leading-4 font-bold text-muted-foreground">
+                        <h3 className="tracking-[0.04em]">{group.heading}</h3>
+                        <span className="font-semibold">{items.length}</span>
+                      </div>
+                      <ul className="space-y-2">
+                        {items.map((task) => (
+                          <li key={task.id}>
+                            <button
+                              type="button"
+                              aria-current={task.id === selected}
+                              onClick={() => setPicked(task.id)}
+                              className={cn(
+                                LIST_ROW,
+                                task.id === selected
+                                  ? LIST_SELECTED
+                                  : 'hover:bg-muted/50',
+                              )}
+                            >
+                              <span className="block text-xs text-muted-foreground">
+                                {task.key}
+                              </span>
+                              <strong className="my-1 block text-sm font-medium">
+                                {task.current_plan_revision.plan.title}
+                              </strong>
+                              <span className="flex flex-wrap gap-2">
+                                <StatusPill value={task.status} />
+                                <StatusPill value={task.validation_status} />
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )
+                })
+              ) : (
+                <p className="py-6 text-center text-sm break-keep text-muted-foreground">
+                  {all.length ? '찾는 작업이 없어요.' : '아직 작업이 없어요.'}
+                </p>
+              )
+            }
+          </AsyncState>
+        </CardContent>
+      </Card>
+      <div
+        className={cn(
+          'grid min-w-0 content-start gap-4 lg:max-h-full lg:overflow-y-auto lg:p-px',
+          SPLIT_DETAIL,
+        )}
+      >
         {/* 캔버스 PNL-09-v2-relations 오른쪽 위. 관계를 못 읽어도 작업 현황으로 갈 수 있게 관계 응답 밖에 둔다. */}
         {selectedTask && (
           <div className="flex items-start justify-between gap-4">

@@ -259,7 +259,8 @@ test('기획 분석에서 프로젝트 시작을 누르면 바로 기준 v1이 �
   await login(page)
   // 예시 프로젝트 102의 문서 4종을 팀장 승인 상태로 둔다(브라우저 예시 저장소).
   await page.evaluate(() => {
-    const key = 'beez.mock.api.v13'
+    // src/mocks/state.ts의 MOCK_STORAGE_KEY와 같아야 한다(PR #321에서 v14로 올림).
+    const key = 'beez.mock.api.v14'
     const database = JSON.parse(localStorage.getItem(key)!)
     const project = database.projects.find(
       (item: { project: { id: string } }) => item.project.id === '102',
@@ -376,11 +377,10 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
   await expect(
     page.getByText('회의 결과: 초대 안내 문구 검토').first(),
   ).toBeVisible()
-  // 회의실로 돌아오면 끝난 회의는 '끝남'에서 보이고, 기록은 읽기만 한다. 업무 창이 열린 동안 단축 바는 창 뒤에서
-  // 접근성 트리에서 숨지만 눌러서 메뉴를 바꿀 수 있다.
-  await page
-    .getByRole('button', { name: '회의실', exact: true, includeHidden: true })
-    .click()
+  // 회의실로 돌아오면 끝난 회의는 '끝남'에서 보이고, 기록은 읽기만 한다. 업무 창이 열린 동안 단축 바는 숨어 있어
+  // (S15P31A108-431, 사용자 결정 11-17) 마우스로는 창을 닫고 단축 바에서 다시 연다.
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '회의실', exact: true }).click()
   await page.getByRole('button', { name: /^끝남/ }).click()
   await page
     .getByRole('list', { name: '끝난 회의' })
