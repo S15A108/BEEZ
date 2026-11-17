@@ -1,31 +1,54 @@
 import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import { useState } from 'react'
-import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
-import { FileCheck2, RefreshCw } from 'lucide-react'
+import type { ReactNode } from 'react'
+import {
+  useInfiniteQuery,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import {
+  ChevronDown,
+  Circle,
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  FileCheck2,
+  ListChecks,
+  LoaderCircle,
+  RefreshCw,
+} from 'lucide-react'
 import { documentsApi, planningApi } from '@/api/services'
 import type { DesignItemVersion, DocumentVersion } from '@/api/contracts/common'
 import { structuredContentSchema } from '@/api/contracts/common'
 import { getApiErrorStatus, getValidationMessage } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
-import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
-import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
+import { cn } from '@/lib/utils'
+import { DesignItemList } from './DesignItemList'
 import { DocumentCandidates } from './DocumentCandidates'
-import { currentVersionJobs, publishNotice } from './draftJobs'
+import {
+  answerJobs,
+  candidateJobs,
+  currentVersionJobs,
+  documentJobs,
+  hasActiveJob,
+  isActiveJob,
+  latestJobs,
+  publishNotice,
+} from './draftJobs'
 import { DraftCandidates } from './DraftCandidates'
 import { TaskBreakdown } from './TaskBreakdown'
-import { hasActiveJob } from './draftJobs'
 import { sendInBatches } from './sendInBatches'
-import { useShowMore } from './useShowMore'
+import { PANEL_HEIGHT, TAB_AREA_WITH_BREAKDOWN } from './splitLayout'
+import { usePlanningQuestions } from './usePlanningQuestions'
 import {
   checkDesignContent,
   DESIGN_CONTENT_EXAMPLES,
@@ -42,7 +65,12 @@ import {
   isQuestionTarget,
   pollIntervalOf,
 } from './questionGeneration'
-import type { AnalysisResponse, BatchCandidatesResponse } from './schemas'
+import type {
+  AnalysisResponse,
+  AnswerQuestionInput,
+  BatchCandidatesResponse,
+  DraftJob,
+} from './schemas'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
@@ -54,6 +82,17 @@ const STALE_REVIEW_MESSAGE =
 
 const DRAFT_ACCEPTED =
   '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.'
+
+// 설계 초안을 만드는 흐름 순서의 탭. 기준 설계를 발행한 뒤에는 후보 탭이 없다.
+type PlanningTab = 'documents' | 'questions' | 'answers' | 'items'
+const TAB_LABEL: Record<PlanningTab, string> = {
+  documents: '문서 후보',
+  questions: '보완 질문',
+  answers: '답변 보완 후보',
+  items: '설계 항목 초안',
+}
+type TabState = 'fail' | 'run' | undefined
+const DOCUMENT_KINDS = ['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const
 
 interface Props {
   projectId: string
@@ -145,8 +184,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
   const versionIds = versions.map((version) => version.id)
-  // 설계 항목 초안은 10개씩 보인다. 발행 조건과 스냅샷 해시는 받아 둔 전체 초안을 기준으로 한다.
-  const itemList = useShowMore(items, 10)
+  // 발행 조건과 스냅샷 해시는 받아 둔 전체 초안을 기준으로 한다.
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
   const snapshotConsistent =
     !!snapshotHash &&
@@ -235,6 +273,61 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
   }
+  // 분석이 끝나지 않은 문서의 안내(실패 이유, 진행 상황)는 마우스를 올리지 않아도 읽히게 문서 줄 아래에 글자로 보인다.
+  // 완료된 문서의 안내(검색 준비 완료 등)는 문서 줄의 title 로만 둔다(PR #303 재검토).
+  const analysisNotes = (
+    items: NonNullable<typeof documents.data>['items'],
+  ) => {
+    const notes = DOCUMENT_KINDS.flatMap((kind) => {
+      const document = items.find((item) => item.kind === kind)
+      const version = document ? versionOf(document) : undefined
+      const analysis = version
+        ? analyses[versions.findIndex((item) => item.id === version.id)]?.data
+        : undefined
+      return analysis?.message && analysis.status !== 'COMPLETED'
+        ? [
+            {
+              kind,
+              message: analysis.message,
+              failed: analysis.status === 'FAILED',
+            },
+          ]
+        : []
+    })
+    if (!notes.length) return null
+    return (
+      <ul aria-label="문서 분석 안내" className="-mt-2 grid gap-1 px-1 text-xs">
+        {notes.map((note) => (
+          <li
+            key={note.kind}
+            className={
+              note.failed ? 'text-destructive' : 'text-muted-foreground'
+            }
+          >
+            {statusLabel(note.kind)}: {note.message}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  // 보완 질문 자동 저장(PLN-A04). 저장하면 질문 목록만 새로 읽는다. 409로 거절되면(질문이 바뀜 question_superseded,
+  // 이전 본문 기준 question_outdated, 다른 곳에서 기준 발행 design_already_published 등) 안내는 답변 칸이 하고,
+  // 다른 처리(action.run)처럼 프로젝트를 모두 새로 읽는다. 발행됐으면 기준 설계를 다시 읽어 답변 입력을 닫는다.
+  const queryClient = useQueryClient()
+  const saveAnswer = async (id: string, input: AnswerQuestionInput) => {
+    try {
+      await planningApi.answerQuestion(projectId, id, input)
+    } catch (cause) {
+      if (getApiErrorStatus(cause) === 409)
+        void queryClient.invalidateQueries({
+          queryKey: ['projects', projectId],
+        })
+      throw cause
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ['projects', projectId, 'planning-questions'],
+    })
+  }
   // 문서마다 따로 본다. 한 문서가 실패해도 다른 문서의 진행·완료는 계속 따라간다.
   const documentGenerations = versions.map((version, index) => ({
     version,
@@ -266,47 +359,266 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         : [],
   )
 
+  // 탭에 붙는 개수와 상태. 다른 탭에 있어도 만드는 중·실패를 알 수 있게 한다.
+  const [picked, setPicked] = useState<PlanningTab>()
+  const generating = generations.some((item) => item.status !== 'FAILED')
+  const questions = usePlanningQuestions(projectId, generating)
+  const questionEntries =
+    questions.data?.pages.flatMap((page) => page.items) ?? []
+  const answeredCount = questionEntries.filter(
+    (item) => !!item.answer && item.status !== 'DISMISSED',
+  ).length
+  const openCount = questionEntries.filter(
+    (item) => !item.answer && item.status !== 'DISMISSED',
+  ).length
+  const jobs = currentVersionJobs(draftJobs.data?.jobs ?? [], versionIds)
+  const documentWork = documentJobs(jobs)
+  const answerWork = answerJobs(jobs)
+  const pendingIn = (list: DraftJob[]) =>
+    list
+      .flatMap((job) => job.candidates)
+      .filter((candidate) => candidate.status === 'PENDING').length
+  const jobStateOf = (list: DraftJob[]): TabState =>
+    list.some((job) => job.status === 'FAILED')
+      ? 'fail'
+      : list.some(isActiveJob)
+        ? 'run'
+        : undefined
+  const tabInfo: Record<
+    PlanningTab,
+    { count: number | string; state: TabState }
+  > = {
+    documents: {
+      count: pendingIn(documentWork),
+      state: jobStateOf(documentWork),
+    },
+    questions: {
+      count: questions.data?.pages[0]?.total_count ?? questionEntries.length,
+      state: generations.some((item) => item.status === 'FAILED')
+        ? 'fail'
+        : generating
+          ? 'run'
+          : undefined,
+    },
+    answers: {
+      count: pendingIn(candidateJobs(answerWork)),
+      state: jobStateOf(latestJobs(answerWork)),
+    },
+    // 초안은 100개씩 받는다. 더 있으면 받아 둔 수에 +를 붙인다.
+    items: {
+      count: drafts.hasNextPage ? `${items.length}+` : items.length,
+      state: undefined,
+    },
+  }
+  const tabs: PlanningTab[] = baseline.data
+    ? ['questions', 'items']
+    : ['documents', 'questions', 'answers', 'items']
+  // 처음 데이터가 들어왔을 때 한 번만 정한다: 문서 후보에 할 일(고를 후보·만드는 중·실패)이 있으면 문서 후보, 아니면 보완 질문.
+  // 그 뒤에는 새 문서 후보 작업이 생기거나 마지막 후보를 채택해도 탭을 저절로 옮기지 않는다(답하던 중에 탭이 바뀌지 않게).
+  // 문서 후보에 할 일이 있는지는 문서 목록(versionIds)으로 거른 작업으로 세므로 문서 목록도 기다린다.
+  const loaded =
+    !documents.isPending &&
+    !baseline.isPending &&
+    (!!baseline.data || !draftJobs.isPending)
+  if (!picked && loaded)
+    setPicked(
+      tabs.includes('documents') &&
+        (pendingIn(documentWork) > 0 || tabInfo.documents.state)
+        ? 'documents'
+        : 'questions',
+    )
+  const tab = picked && tabs.includes(picked) ? picked : 'questions'
+  const documentsReady =
+    allKinds.size === 4 &&
+    !checkingApproval &&
+    !unapproved.length &&
+    !documents.data?.has_more
+  const checks: [boolean, string][] = [
+    [documentsReady, '문서 4종 승인'],
+    [analysesReady, '문서 분석 완료'],
+    [
+      items.length > 0,
+      items.length
+        ? `설계 항목 초안 ${items.length}개`
+        : '설계 항목 초안 1개 이상',
+    ],
+  ]
+  const doneChecks = checks.filter(([ok]) => ok).length
+  const publishHint = canPublish
+    ? publishNotice(jobs).trim()
+    : doneChecks === checks.length
+      ? '설계 항목 초안을 모두 불러오고 최신인지 확인한 뒤 발행할 수 있어요.'
+      : ''
+  const drafting = !baseline.isPending && !baseline.data
+  // 발행 뒤 팀장 화면은 탭 위에 작업 만들기가 들어와 패널 높이를 고정하지 않는다.
+  const breakdown = isLeader && !!baseline.data
+  const panels: Record<PlanningTab, ReactNode> = {
+    documents: drafting && (
+      <AsyncState query={draftJobs}>
+        {(data) => (
+          <DocumentCandidates
+            jobs={currentVersionJobs(data.jobs, versionIds)}
+            labelOfVersion={labelOfVersion}
+            isLeader={isLeader}
+            busy={action.busy}
+            onRetry={retryDocumentDrafts}
+            creatableVersionIds={
+              analysesReady
+                ? versions
+                    .filter(
+                      (version) =>
+                        !data.jobs.some(
+                          (job) =>
+                            job.mode === 'DOCUMENT_ONLY' &&
+                            job.document_version_id === version.id,
+                        ),
+                    )
+                    .map((version) => version.id)
+                : []
+            }
+            onCreate={createDocumentDrafts}
+            onAdopt={async (input) =>
+              (await action.run(
+                // 서버는 한 번에 50개까지 받는다. 더 많이 고르면 나눠 보낸다.
+                () =>
+                  sendInBatches(input, (part) =>
+                    planningApi.adoptCandidates(projectId, part),
+                  ),
+                '고른 후보를 처리했어요.',
+              )) as BatchCandidatesResponse
+            }
+            onDiscard={async (input) =>
+              (await action.run(
+                () =>
+                  sendInBatches(input, (part) =>
+                    planningApi.discardCandidates(projectId, part),
+                  ),
+                '고른 후보를 폐기 처리했어요.',
+              )) as BatchCandidatesResponse
+            }
+          />
+        )}
+      </AsyncState>
+    ),
+    questions: (
+      <PlanningQuestions
+        projectId={projectId}
+        isLeader={isLeader}
+        busy={action.busy}
+        generations={generations}
+        answerable={!baseline.isPending && !baseline.data}
+        published={!!baseline.data}
+        // 답변 입력이 실패 이유를 바로 아래에 알려 주므로 위쪽 일반 오류 띠는 띄우지 않는다.
+        // 답은 자동 저장이라 저장할 때마다 위쪽 안내를 띄우거나 창 전체를 다시 읽지 않고 질문 목록만 새로 읽는다.
+        onAnswer={(id, input) =>
+          input.status === 'DISMISSED'
+            ? inForm(() =>
+                action.run(
+                  () => planningApi.answerQuestion(projectId, id, input),
+                  '질문을 답변 없이 닫았어요.',
+                ),
+              )
+            : saveAnswer(id, input)
+        }
+      />
+    ),
+    answers: drafting && (
+      <AsyncState query={draftJobs}>
+        {(data) => (
+          <DraftCandidates
+            jobs={currentVersionJobs(data.jobs, versionIds)}
+            labelOfVersion={labelOfVersion}
+            titleOf={documentTitle}
+            isLeader={isLeader}
+            busy={action.busy}
+            canGenerate={analysesReady}
+            // 질문을 다 받았을 때만 센다. 덜 받은 수를 사실처럼 보이지 않는다.
+            answerSummary={
+              questionEntries.length && !questions.hasNextPage
+                ? `지금 만들면 답한 질문 ${answeredCount}개를 반영해요. 남은 질문 ${openCount}개는 반영하지 않아요.`
+                : undefined
+            }
+            onGenerate={generate}
+            // 후보 상세가 실패 이유를 알려 주므로 위쪽 일반 오류 띠는 띄우지 않는다.
+            onAdopt={(candidate, input) =>
+              inForm(() =>
+                action.run(
+                  () =>
+                    planningApi.adoptCandidate(projectId, candidate.id, input),
+                  '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
+                ),
+              )
+            }
+            onDiscard={(candidate) =>
+              inForm(() =>
+                action.run(
+                  () => planningApi.discardCandidate(projectId, candidate.id),
+                  '후보를 폐기했어요.',
+                ),
+              )
+            }
+          />
+        )}
+      </AsyncState>
+    ),
+    items: (
+      <AsyncState query={drafts}>
+        {() => (
+          <DesignItemList
+            items={items}
+            hasNextPage={drafts.hasNextPage}
+            loadingNext={drafts.isFetchingNextPage}
+            loadNext={() => void drafts.fetchNextPage()}
+            isLeader={isLeader}
+            busy={action.busy}
+            onAdd={() => setAdding(true)}
+            onEdit={setEditing}
+            onRemove={(item) =>
+              perform(
+                () =>
+                  planningApi.removeItem(item.design_item_id, {
+                    project_id: projectId,
+                    expected_version_id: item.id,
+                    expected_content_hash: item.content_hash!,
+                  }),
+                '발행 대상에서 제외했어요. 기록은 유지해요.',
+              )
+            }
+          />
+        )}
+      </AsyncState>
+    ),
+  }
+
   return (
-    <section className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="mb-2 text-xs font-semibold tracking-[.18em] text-primary">
-            FROM IDEA TO DESIGN
-          </p>
-          <h2 className="text-2xl font-semibold tracking-tight">
-            아이디어를 팀의 설계로
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            문서에서 나온 요구사항과 비비의 질문을 검토하세요. 인간 팀장이
-            확인한 문서와 항목을 팀의 첫 기준으로 발행해요.
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => openPane('documents')}>
-          <FileCheck2 />
-          공용 문서함
-        </Button>
-      </header>
-      {isLeader && baseline.data && (
+    // 창 높이를 채우고, 탭 안의 목록·상세가 남은 높이를 차지한다.
+    <section className={cn('flex flex-col gap-4', !breakdown && PANEL_HEIGHT)}>
+      {breakdown && baseline.data && (
         <TaskBreakdown key={baseline.data.id} projectId={projectId} />
       )}
       {action.message && (
-        <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
+        <p
+          role="status"
+          className="rounded-lg bg-primary/10 px-3.5 py-2 text-sm"
+        >
           {action.message}
         </p>
       )}
       {action.error && (
         <p
           role="alert"
-          className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+          className="rounded-lg bg-destructive/5 px-3.5 py-2 text-sm text-destructive"
         >
           {action.error}
         </p>
       )}
       <AsyncState query={documents}>
         {(data) => (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {(['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const).map(
-              (kind) => {
+          <>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border bg-card/70 px-4 py-2 text-[13px]">
+              <span className="font-semibold">문서 4종</span>
+              <span aria-hidden className="h-4 w-px bg-border" />
+              {DOCUMENT_KINDS.map((kind) => {
                 const document = data.items.find((item) => item.kind === kind)
                 const version = document ? versionOf(document) : undefined
                 const analysis = version
@@ -314,332 +626,293 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                       versions.findIndex((item) => item.id === version.id)
                     ]
                   : undefined
+                const status =
+                  analysis?.data?.status ??
+                  (document?.approved_version ? 'APPROVED' : 'NOT_RUN')
+                const running = status === 'PENDING' || status === 'RUNNING'
+                const Icon = !document
+                  ? CircleDashed
+                  : status === 'COMPLETED'
+                    ? CircleCheck
+                    : status === 'FAILED'
+                      ? CircleAlert
+                      : running
+                        ? LoaderCircle
+                        : Circle
                 return (
-                  <Card key={kind}>
-                    <CardHeader>
-                      <CardTitle className="text-sm">
-                        {statusLabel(kind)}
-                      </CardTitle>
-                      <CardDescription>
-                        {document?.title ?? '문서를 등록해 주세요'}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <StatusPill
-                        value={
-                          analysis?.data?.status ??
-                          (document?.approved_version ? 'APPROVED' : 'NOT_RUN')
-                        }
-                      />
-                      {version && (
-                        <p className="text-xs text-muted-foreground">
-                          원본 v{version.version_no}
-                        </p>
+                  <span
+                    key={kind}
+                    title={
+                      [
+                        document?.title,
+                        status === 'COMPLETED' && analysis?.data?.message,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || undefined
+                    }
+                    className="flex items-center gap-1.5"
+                  >
+                    <Icon
+                      aria-hidden
+                      className={cn(
+                        'size-4',
+                        !document ||
+                          status === 'APPROVED' ||
+                          status === 'NOT_RUN'
+                          ? 'text-muted-foreground/70'
+                          : status === 'COMPLETED'
+                            ? 'text-[#00753a]'
+                            : status === 'FAILED'
+                              ? 'text-destructive'
+                              : 'animate-spin text-amber-600 motion-reduce:animate-none',
                       )}
-                      {analysis?.error && (
-                        <p role="alert" className="text-xs text-destructive">
-                          분석 상태를 불러오지 못했어요.
-                        </p>
-                      )}
-                      {analysis?.data?.message && (
-                        <p className="text-xs text-muted-foreground">
-                          {analysis.data.message}
-                        </p>
-                      )}
-                      {analysis?.data?.status === 'FAILED' &&
-                        isLeader &&
-                        version && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={action.busy}
-                            onClick={() =>
-                              perform(
-                                () =>
-                                  planningApi.retryAnalysis(
-                                    projectId,
-                                    document!.id,
-                                    { document_version_id: version.id },
-                                  ),
-                                '분석 재시도를 접수했어요.',
-                              )
-                            }
-                          >
-                            <RefreshCw />
-                            분석 재시도
-                          </Button>
-                        )}
-                    </CardContent>
-                  </Card>
-                )
-              },
-            )}
-          </div>
-        )}
-      </AsyncState>
-      <div className="grid gap-6 lg:grid-cols-[.85fr_1.15fr]">
-        <PlanningQuestions
-          projectId={projectId}
-          isLeader={isLeader}
-          busy={action.busy}
-          generations={generations}
-          answerable={!baseline.isPending && !baseline.data}
-          published={!!baseline.data}
-          onAnswer={(id, input) =>
-            action.run(
-              () => planningApi.answerQuestion(projectId, id, input),
-              input.status === 'DISMISSED'
-                ? '질문을 답변 없이 닫았어요.'
-                : '답변을 저장했어요.',
-            )
-          }
-        />
-        <div className="space-y-6">
-          {!baseline.isPending && !baseline.data && (
-            <AsyncState query={draftJobs}>
-              {(data) => (
-                <>
-                  <DocumentCandidates
-                    jobs={currentVersionJobs(data.jobs, versionIds)}
-                    labelOfVersion={labelOfVersion}
-                    isLeader={isLeader}
-                    busy={action.busy}
-                    onRetry={retryDocumentDrafts}
-                    creatableVersionIds={
-                      analysesReady
-                        ? versions
-                            .filter(
-                              (version) =>
-                                !data.jobs.some(
-                                  (job) =>
-                                    job.mode === 'DOCUMENT_ONLY' &&
-                                    job.document_version_id === version.id,
-                                ),
-                            )
-                            .map((version) => version.id)
-                        : []
-                    }
-                    onCreate={createDocumentDrafts}
-                    onAdopt={async (input) =>
-                      (await action.run(
-                        // 서버는 한 번에 50개까지 받는다. 더 많이 고르면 나눠 보낸다.
-                        () =>
-                          sendInBatches(input, (part) =>
-                            planningApi.adoptCandidates(projectId, part),
-                          ),
-                        '고른 후보를 처리했어요.',
-                      )) as BatchCandidatesResponse
-                    }
-                    onDiscard={async (input) =>
-                      (await action.run(
-                        () =>
-                          sendInBatches(input, (part) =>
-                            planningApi.discardCandidates(projectId, part),
-                          ),
-                        '고른 후보를 폐기 처리했어요.',
-                      )) as BatchCandidatesResponse
-                    }
-                  />
-                  <DraftCandidates
-                    jobs={currentVersionJobs(data.jobs, versionIds)}
-                    labelOfVersion={labelOfVersion}
-                    titleOf={documentTitle}
-                    isLeader={isLeader}
-                    busy={action.busy}
-                    canGenerate={analysesReady}
-                    onGenerate={generate}
-                    onAdopt={(candidate, input) =>
-                      action.run(
-                        () =>
-                          planningApi.adoptCandidate(
-                            projectId,
-                            candidate.id,
-                            input,
-                          ),
-                        '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
-                      )
-                    }
-                    onDiscard={(candidate) =>
-                      action.run(
-                        () =>
-                          planningApi.discardCandidate(projectId, candidate.id),
-                        '후보를 폐기했어요.',
-                      )
-                    }
-                  />
-                </>
-              )}
-            </AsyncState>
-          )}
-          <Card>
-            <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle>검토할 설계 항목</CardTitle>
-                {isLeader && (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setAdding(true)}
-                    >
-                      항목 추가
-                    </Button>
-                  </div>
-                )}
-              </div>
-              <CardDescription>
-                초안은 승인 전까지 프로젝트 정책으로 사용하지 않아요.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <AsyncState query={drafts}>
-                {() => (
-                  <div className="space-y-3">
-                    {items.length ? (
-                      itemList.shown.map((item) => (
-                        <article
-                          key={item.id}
-                          className="rounded-lg border p-4"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <strong className="text-sm">{item.key}</strong>
-                            <StatusPill value={item.status} />
-                          </div>
-                          <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
-                            {typeof item.content.description === 'string'
-                              ? item.content.description
-                              : JSON.stringify(item.content, null, 2)}
-                          </p>
-                          {item.source && (
-                            <p className="mt-2 text-xs text-muted-foreground">
-                              문서 v{item.source.version_no} ·{' '}
-                              {item.source.location}
-                            </p>
-                          )}
-                          {isLeader && (
-                            <div className="mt-3 flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={action.busy || !item.content_hash}
-                                onClick={() => setEditing(item)}
-                              >
-                                내용 수정
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={action.busy || !item.content_hash}
-                                onClick={() =>
-                                  perform(
-                                    () =>
-                                      planningApi.removeItem(
-                                        item.design_item_id,
-                                        {
-                                          project_id: projectId,
-                                          expected_version_id: item.id,
-                                          expected_content_hash:
-                                            item.content_hash!,
-                                        },
-                                      ),
-                                    '발행 대상에서 제외했어요. 기록은 유지해요.',
-                                  )
-                                }
-                              >
-                                발행 대상에서 제외
-                              </Button>
-                            </div>
-                          )}
-                        </article>
-                      ))
-                    ) : (
-                      <EmptyState>
-                        문서 분석을 완료하면 설계 항목 초안을 만들 수 있어요.
-                      </EmptyState>
+                    />
+                    {statusLabel(kind)}
+                    {version && (
+                      <span className="text-muted-foreground">
+                        v{version.version_no}
+                      </span>
                     )}
-                    {(itemList.hidden > 0 || drafts.hasNextPage) && (
+                    {!document ? (
+                      <span className="text-muted-foreground">등록 전</span>
+                    ) : analysis?.error ? (
+                      <span role="alert" className="text-destructive">
+                        분석 상태를 불러오지 못했어요.
+                      </span>
+                    ) : (
+                      status !== 'COMPLETED' && (
+                        <span
+                          className={
+                            status === 'FAILED'
+                              ? 'text-destructive'
+                              : 'text-muted-foreground'
+                          }
+                        >
+                          {statusLabel(status)}
+                        </span>
+                      )
+                    )}
+                    {status === 'FAILED' && isLeader && version && document && (
                       <Button
+                        size="xs"
                         variant="outline"
-                        disabled={drafts.isFetchingNextPage}
-                        onClick={() => {
-                          itemList.more()
-                          if (itemList.hidden === 0 && drafts.hasNextPage)
-                            void drafts.fetchNextPage()
-                        }}
+                        disabled={action.busy}
+                        onClick={() =>
+                          perform(
+                            () =>
+                              planningApi.retryAnalysis(
+                                projectId,
+                                document.id,
+                                {
+                                  document_version_id: version.id,
+                                },
+                              ),
+                            '분석 재시도를 접수했어요.',
+                          )
+                        }
                       >
-                        다음 항목 검토
-                        {itemList.hidden > 0
-                          ? ` (${itemList.hidden}개 남음)`
-                          : ''}
+                        <RefreshCw />
+                        분석 재시도
                       </Button>
                     )}
-                  </div>
+                  </span>
+                )
+              })}
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                onClick={() => openPane('documents')}
+              >
+                <FileCheck2 />
+                공용 문서함
+              </Button>
+            </div>
+            {analysisNotes(data.items)}
+          </>
+        )}
+      </AsyncState>
+      {!baseline.data && isLeader && unapproved.length > 0 && (
+        <p
+          role="status"
+          className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+        >
+          문서 4종이 모두 팀장 승인을 받아야 발행할 수 있어요. 승인 전:{' '}
+          {unapproved.map((document) => document.title).join(', ')}
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => openPane('documents')}
+          >
+            공용 문서함에서 승인하기
+          </Button>
+        </p>
+      )}
+      <div className="flex flex-wrap items-end gap-x-7 gap-y-2 border-b">
+        <div
+          role="tablist"
+          aria-label="설계 초안 만들기 단계"
+          className="flex items-end gap-7"
+          // 탭 사이는 좌우 화살표·Home·End 로 옮긴다. Tab 키는 고른 탭 하나에만 들른다.
+          onKeyDown={(event) => {
+            const index = tabs.indexOf(tab)
+            const target =
+              event.key === 'ArrowRight'
+                ? tabs[(index + 1) % tabs.length]
+                : event.key === 'ArrowLeft'
+                  ? tabs[(index - 1 + tabs.length) % tabs.length]
+                  : event.key === 'Home'
+                    ? tabs[0]
+                    : event.key === 'End'
+                      ? tabs[tabs.length - 1]
+                      : undefined
+            if (!target) return
+            event.preventDefault()
+            setPicked(target)
+            document.getElementById(`planning-tab-${target}`)?.focus()
+          }}
+        >
+          {tabs.map((key) => {
+            const info = tabInfo[key]
+            const on = key === tab
+            return (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                id={`planning-tab-${key}`}
+                aria-controls={`planning-panel-${key}`}
+                aria-selected={on}
+                tabIndex={on ? 0 : -1}
+                onClick={() => setPicked(key)}
+                className={cn(
+                  '-mb-px flex items-center gap-1.5 border-b-[3px] pt-1 pb-2.5 text-[15px] transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
+                  on
+                    ? 'border-primary font-semibold text-foreground'
+                    : 'border-transparent font-medium text-muted-foreground hover:text-foreground',
                 )}
-              </AsyncState>
-            </CardContent>
-          </Card>
+              >
+                {TAB_LABEL[key]}
+                <span
+                  className={cn(
+                    'text-[13px] tabular-nums',
+                    on ? 'text-foreground/60' : 'text-muted-foreground/80',
+                  )}
+                >
+                  {info.count}
+                </span>
+                {info.state && (
+                  <>
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'size-1.5 rounded-full',
+                        info.state === 'fail'
+                          ? 'bg-destructive'
+                          : 'bg-amber-500',
+                      )}
+                    />
+                    <span className="sr-only">
+                      {info.state === 'fail' ? '실패 있음' : '만드는 중'}
+                    </span>
+                  </>
+                )}
+              </button>
+            )
+          })}
         </div>
-      </div>
-      <Card className="border-primary/20 bg-primary/5">
-        <CardHeader>
-          <CardTitle>팀의 첫 기준으로 발행</CardTitle>
-          <CardDescription>
-            {baseline.data
-              ? `이미 기준 설계 v${baseline.data.version_no}이 발행되어 있어요. 이후 변경은 변경 제안에서 검토해 주세요.`
-              : '필수 문서 4종의 분석을 완료하고 초안을 모두 검토한 뒤 승인할 수 있어요.'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-3">
+        <div className="ml-auto flex flex-wrap items-center gap-2 pb-2">
           {baseline.error && (
             <p role="alert" className="text-sm text-destructive">
               현재 기준 설계를 확인하지 못했어요.
             </p>
           )}
           {baseline.data ? (
-            <Button variant="outline" onClick={() => openPane('changes')}>
-              변경 제안으로 이동
-            </Button>
-          ) : isLeader ? (
-            <Button
-              disabled={!canPublish || action.busy}
-              onClick={() =>
-                setPublishing({
-                  hash: snapshotHash!,
-                  documents: versions.map((version) => version.id),
-                  items: items.map((item) => item.id),
-                })
-              }
-            >
-              검토한 설계 승인·발행
-            </Button>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              인간 팀장의 검토와 승인을 기다려 주세요.
-            </p>
-          )}
-          {!baseline.data && isLeader && unapproved.length > 0 && (
-            <p
-              role="status"
-              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-            >
-              문서 4종이 모두 팀장 승인을 받아야 발행할 수 있어요. 승인 전:{' '}
-              {unapproved.map((document) => document.title).join(', ')}
+            <>
+              <span className="text-sm text-muted-foreground">
+                기준 설계 v{baseline.data.version_no}이 발행되어 있어요. 이후
+                변경은 변경 제안에서 검토해 주세요.
+              </span>
               <Button
-                size="xs"
+                size="sm"
                 variant="outline"
-                onClick={() => openPane('documents')}
+                onClick={() => openPane('changes')}
               >
-                공용 문서함에서 승인하기
+                변경 제안으로 이동
               </Button>
-            </p>
+            </>
+          ) : isLeader ? (
+            <>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button size="sm" variant="ghost">
+                    <ListChecks />
+                    발행 조건 {doneChecks}/{checks.length}
+                    <ChevronDown />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-80 text-sm">
+                  <p className="font-semibold">팀의 첫 기준으로 발행하려면</p>
+                  <ul className="mt-2 grid gap-1.5">
+                    {checks.map(([ok, label]) => (
+                      <li
+                        key={label}
+                        className={cn(
+                          'flex items-center gap-2',
+                          !ok && 'text-muted-foreground',
+                        )}
+                      >
+                        {ok ? (
+                          <CircleCheck className="size-4 text-[#00753a]" />
+                        ) : (
+                          <Circle className="size-4 text-muted-foreground/60" />
+                        )}
+                        {label}
+                      </li>
+                    ))}
+                  </ul>
+                  {publishHint && (
+                    <p className="mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground">
+                      {publishHint}
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
+              <Button
+                disabled={!canPublish || action.busy}
+                onClick={() =>
+                  setPublishing({
+                    hash: snapshotHash!,
+                    documents: versions.map((version) => version.id),
+                    items: items.map((item) => item.id),
+                  })
+                }
+              >
+                검토한 설계 승인·발행
+              </Button>
+            </>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              인간 팀장의 검토와 승인을 기다려 주세요.
+            </span>
           )}
-          {!baseline.data && !canPublish && isLeader && !unapproved.length && (
-            <p className="text-xs text-muted-foreground">
-              문서 4종·분석 완료·전체 항목 검토·최신 초안을 확인해 주세요.
-            </p>
+        </div>
+      </div>
+      {tabs.map((key) => (
+        <div
+          key={key}
+          role="tabpanel"
+          id={`planning-panel-${key}`}
+          aria-labelledby={`planning-tab-${key}`}
+          hidden={key !== tab}
+          className={cn(
+            'flex min-h-0 flex-col',
+            breakdown ? TAB_AREA_WITH_BREAKDOWN : 'flex-1',
           )}
-        </CardContent>
-      </Card>
+        >
+          {panels[key]}
+        </div>
+      ))}
       {editing && (
         <FormDialog
           title={`${editing.key} 초안 수정`}

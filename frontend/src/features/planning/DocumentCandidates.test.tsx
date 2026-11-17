@@ -77,9 +77,9 @@ it('문서별 상태를 따로 보인다: 만드는 중, 완료, 실패', () => 
   expect(
     screen.getByText('문서 11', { selector: 'strong' }).closest('p'),
   ).toHaveTextContent('5/9번째 부분')
-  expect(
-    screen.getByText('문서 12', { selector: 'strong' }).closest('p'),
-  ).toHaveTextContent('후보 1개를 만들었어요')
+  // 다 만든 문서는 안내 줄 없이 목록의 문서 머리가 개수를 보인다.
+  expect(screen.getByText('문서 12 · 1개')).toBeInTheDocument()
+  expect(screen.queryByText(/후보 1개를 만들었어요/)).toBeNull()
   const failed = screen.getByRole('alert')
   expect(failed).toHaveTextContent('문서 13')
   expect(failed).toHaveTextContent('출력 길이 상한')

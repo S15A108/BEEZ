@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router'
+import { Navigate, createBrowserRouter } from 'react-router'
 import DesktopGate from '@/features/desktop/DesktopGate'
 
 export const router = createBrowserRouter([
@@ -35,23 +35,18 @@ export const router = createBrowserRouter([
           Component: (await import('@/pages/WorkspacePage')).default,
         }),
       },
+      // 회원 설정은 페이지가 아니라 어디서나 여는 창이다(D48). 메일·북마크의 옛 주소는 나의 도시 위에 그 창을 연다.
       {
         path: 'account',
-        lazy: async () => ({
-          Component: (await import('@/pages/AccountPage')).default,
-        }),
+        element: <Navigate to="/?account=profile" replace />,
       },
       {
         path: 'account/password',
-        lazy: async () => ({
-          Component: (await import('@/pages/AccountPasswordPage')).default,
-        }),
+        element: <Navigate to="/?account=password" replace />,
       },
       {
         path: 'account/withdraw',
-        lazy: async () => ({
-          Component: (await import('@/pages/AccountWithdrawPage')).default,
-        }),
+        element: <Navigate to="/?account=withdraw" replace />,
       },
       {
         path: 'invite',

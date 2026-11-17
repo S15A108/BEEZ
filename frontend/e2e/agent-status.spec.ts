@@ -21,6 +21,8 @@ test('끊긴 에이전트는 HUD·설정 메뉴·에이전트 화면·팀 목록
   ).toBeVisible()
   await page.goto('/projects/101')
 
+  // S15P31A108-430: 팀 목록은 요약 한 줄로 접혀 있어 먼저 펼친다.
+  await page.getByRole('button', { name: /^팀원 \d+명/ }).click()
   const hud = page.getByRole('list', { name: '팀 목록' })
   const row = (name: string) =>
     hud.getByRole('listitem').filter({ hasText: name })

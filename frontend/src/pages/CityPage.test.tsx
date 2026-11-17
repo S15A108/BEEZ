@@ -5,7 +5,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { authApi } from '@/api/services'
+import { authApi, projectsApi } from '@/api/services'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -77,6 +77,46 @@ it('프로젝트 만들기 창에 쓴 내용이 있으면 Esc로 바로 닫지 �
     ).getByRole('button', { name: '버리고 닫기' }),
   )
   expect(createDialog()).not.toBeInTheDocument()
+})
+
+function renderCity() {
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<CityPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+// PR #318 리뷰: 점선 만들기 카드를 지운 뒤 목록이 비면 그 자리가 안내 없이 비었다.
+it('검색에 맞는 프로젝트가 없으면 목록 자리에 안내를 보인다', async () => {
+  renderCity()
+  const user = userEvent.setup()
+  await screen.findByRole('link', { name: /우리 팀 협업 서비스/ })
+  await user.type(screen.getByLabelText('프로젝트 검색'), '없는 이름')
+  expect(
+    await screen.findByText('‘없는 이름’에 맞는 프로젝트가 없어요.'),
+  ).toHaveAttribute('role', 'status')
+})
+
+it('프로젝트가 하나도 없으면 만들기로 시작하라고 안내한다', async () => {
+  vi.spyOn(projectsApi, 'list').mockResolvedValue({
+    items: [],
+    has_more: false,
+  })
+  renderCity()
+  expect(
+    await screen.findByText(
+      '아직 프로젝트가 없어요. 프로젝트 만들기로 시작해 보세요.',
+    ),
+  ).toHaveAttribute('role', 'status')
 })
 
 it('프로젝트 만들기 창에 아무것도 쓰지 않았으면 Esc로 바로 닫는다', async () => {
