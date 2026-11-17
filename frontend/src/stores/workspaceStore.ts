@@ -135,10 +135,15 @@ export function useRemembered<T>(
   key: string,
   initial: T | (() => T),
   fresh = false,
+  /** 기억한 값을 되살릴 때 고친다. 되살릴 때는 늘 대상(focusId) 없이 연 때다. */
+  restore?: (value: T) => T,
 ) {
   const [value, setValue] = useState<T>(() => {
     const { paneMemory, focusId } = useWorkspaceStore.getState()
-    if (!fresh && !focusId && key in paneMemory) return paneMemory[key] as T
+    if (!fresh && !focusId && key in paneMemory) {
+      const remembered = paneMemory[key] as T
+      return restore ? restore(remembered) : remembered
+    }
     return initial instanceof Function ? initial() : initial
   })
   useEffect(() => {
@@ -147,6 +152,19 @@ export function useRemembered<T>(
     }))
   }, [key, value])
   return [value, setValue] as const
+}
+
+/**
+ * 목록에서 고른 항목 {id, focus}. focus는 고를 때 열려 있던 알림·근거 대상이고, 패널은 지금 대상과 같을 때만 고른 항목을 쓴다.
+ * 다시 열 때는 대상 없이 열리므로 focus를 비워 되살린다. 알림으로 501을 연 뒤 502를 골랐다가 다시 열면 502가 열린다(PR #321 리뷰).
+ */
+export function useRememberedSelection(key: string) {
+  return useRemembered<{ id: string; focus: string | null } | null>(
+    key,
+    null,
+    false,
+    (value) => value && { ...value, focus: null },
+  )
 }
 
 const everyMinute = (onChange: () => void) => {

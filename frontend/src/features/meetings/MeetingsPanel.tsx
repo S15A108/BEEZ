@@ -31,7 +31,10 @@ import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
-import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  useRememberedSelection,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import {
   closedMeetingCode,
   meetingErrorMessage,
@@ -68,10 +71,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const action = useProjectAction(projectId)
   const focus = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selection, setSelection] = useRemembered<{
-    id: string
-    focus: string | null
-  } | null>('meetings.selection', null)
+  const [selection, setSelection] = useRememberedSelection('meetings.selection')
   // 끝내기 확인 화면을 연 회의. 알림 등으로 다른 회의가 열리면 그 회의에서는 확인 화면이 뜨지 않는다.
   const [endingId, setEndingId] = useState<string | null>(null)
   const [showRevision, setShowRevision] = useState(false)

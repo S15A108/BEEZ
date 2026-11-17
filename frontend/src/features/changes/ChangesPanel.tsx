@@ -36,7 +36,11 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
 import { describeContent, LIST_SELECTED } from '@/lib/display'
 import { cn } from '@/lib/utils'
-import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  useRemembered,
+  useRememberedSelection,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalCommentForm } from './ProposalCommentForm'
 import { ProposalForm } from './ProposalForm'
@@ -186,10 +190,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const focus = useWorkspaceStore((state) => state.focusId)
   const focusId = focus?.startsWith('doc:') ? null : focus
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selected, setSelected] = useRemembered<{
-    id: string
-    focus: string | null
-  } | null>('changes.selected', null)
+  const [selected, setSelected] = useRememberedSelection('changes.selected')
   const [filter, setFilter] = useRemembered<ChangeStatus | ''>(
     'changes.filter',
     '',

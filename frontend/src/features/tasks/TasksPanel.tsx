@@ -79,7 +79,11 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
-import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  useRemembered,
+  useRememberedSelection,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import {
   describeContent,
   LIST_SELECTED,
@@ -231,10 +235,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   const session = useSession()
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selected, setSelected] = useRemembered<{
-    id: string
-    focus: string | null
-  } | null>('tasks.selected', null)
+  const [selected, setSelected] = useRememberedSelection('tasks.selected')
   const [editing, setEditing] = useState<'new' | 'edit' | null>(null)
   const [formTask, setFormTask] = useState<TaskDetail | undefined>()
   const [reporting, setReporting] = useState<'WAIT' | 'COMPLETED' | null>(null)
