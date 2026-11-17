@@ -93,6 +93,7 @@ backend를 따로 빌드할 때만 PC에 JDK 21이 필요합니다.
 | `GMS_KEY` | | 비밀 | SSAFY GMS API 키. 비우면 AI 기능을 쓸 수 없습니다 |
 | `PLANNING_QUESTIONS_ENABLED`, `DESIGN_DRAFTS_ENABLED`, `BEE_CHAT_ENABLED` | | | `true`. 보완 질문, 설계 초안, 비비 질문을 켭니다. 적지 않으면 꺼져 있습니다 |
 | `IMPACT_LLM_MODEL` | | | `gpt-6-luna`. 변경 영향 분석을 켭니다. 비우면 꺼져 있습니다 |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | `true`. 기준을 발행한 뒤의 영향 분석을 처리합니다. 적지 않으면 분석이 "처리 대기 중"에서 넘어가지 않습니다. DB를 2초마다 확인해 처리하므로 Kafka가 없어도 됩니다. Kafka용 `BEEZ_CDC_INTAKE_CONSUMER_ENABLED`는 적지 않습니다 |
 | `CONTEXT_SELECTION_ENABLED`, `CONTEXT_SELECTION_MIN_SIMILARITY`, `CONTEXT_SELECTION_MAX_ITEMS`, `CONTEXT_SELECTION_MAX_EVIDENCE`, `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` | | | 차례로 `true`, `0.3`, `10`, `8`, `30`. 에이전트가 승인된 설계를 읽어 가는 기능이고, 다섯 줄이 모두 있어야 켜집니다. 팀 기본값은 꺼짐이고 값은 AI 담당 확정 전의 제안값입니다. 꺼 두면 에이전트가 설계를 읽지 못합니다 |
 
 난수는 `openssl rand -hex 24`로 만듭니다. 16진수만 쓰세요. 따옴표나 역슬래시가 들어가면 파일 저장소 설정이 깨집니다.
@@ -151,6 +152,7 @@ D=내도메인.com
     'DESIGN_DRAFTS_ENABLED=true' \
     'BEE_CHAT_ENABLED=true' \
     'IMPACT_LLM_MODEL=gpt-6-luna' \
+    'BEEZ_CDC_INTAKE_ENABLED=true' \
     'CONTEXT_SELECTION_ENABLED=true' \
     'CONTEXT_SELECTION_MIN_SIMILARITY=0.3' \
     'CONTEXT_SELECTION_MAX_ITEMS=10' \

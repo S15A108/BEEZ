@@ -120,15 +120,16 @@ read -rs GMS_KEY && export GMS_KEY
 그다음 나머지 명령을 실행합니다.
 
 ```bash
-export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna
+export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna \
+       BEEZ_CDC_INTAKE_ENABLED=true
 export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTEXT_SELECTION_MAX_ITEMS=10 \
        CONTEXT_SELECTION_MAX_EVIDENCE=8 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
 ```
 
-- 첫 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 둘째 줄은 에이전트가
-  승인된 설계를 읽어 가는 기능을 켭니다. 이 기능들은 기본으로 꺼져 있습니다.
-- 둘째 줄의 기능은 팀 문서([docs/infra/env.md](docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 팀이 아직
+- 첫 `export`는 보완 질문, 설계 초안, 비비 질문, 영향 분석을 켜고, 기준을 발행한 뒤의 영향 분석을 처리하게 합니다.
+  둘째 `export`는 에이전트가 승인된 설계를 읽어 가는 기능을 켭니다. 이 기능들은 기본으로 꺼져 있습니다.
+- 둘째 `export`의 기능은 팀 문서([docs/infra/env.md](docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 팀이 아직
   확정하지 않은 값입니다. 이 기능이 꺼져 있으면 에이전트가 설계를 읽지 못하므로 함께 켭니다.
 - `export`한 값은 지금 열린 터미널에만 남습니다. 터미널을 새로 열었다면 위 명령을 처음부터 다시 실행한 뒤 서비스를 띄우세요.
 
