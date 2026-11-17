@@ -1,4 +1,6 @@
 import { canRetryEvidenceCollection } from '@/features/validations/evidenceCollectionFailure'
+import { Button } from '@/components/ui/button'
+import type { SourceFixTarget } from './SourceLocationDialog'
 
 // 검증 실행 오류 코드(00-common '검증 실행 오류·상태 매핑')를 사람 말로. 모르는 코드는 보이지 않는다.
 const reasons: Record<string, string> = {
@@ -44,6 +46,7 @@ export function ValidationFailure({
   errorCode,
   needsHumanReview,
   collectionFailure,
+  onFixSource,
 }: {
   errorCode?: string
   needsHumanReview: boolean
@@ -51,8 +54,12 @@ export function ValidationFailure({
     message: string
     retryable: boolean
     reason_codes?: string[]
+    design_items?: SourceFixTarget[]
   }
+  // 팀장에게만 준다. 없으면 원인 항목을 보여 주기만 한다(S15P31A108-422).
+  onFixSource?: (item: SourceFixTarget) => void
 }) {
+  const sourceItems = collectionFailure?.design_items ?? []
   const reason = errorCode && reasons[errorCode]
   const collectionRetryable =
     collectionFailure?.retryable &&
@@ -87,6 +94,36 @@ export function ValidationFailure({
         >
           {causes.map((cause) => (
             <li key={cause}>{cause}</li>
+          ))}
+        </ul>
+      )}
+      {sourceItems.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          아래 설계 항목의 출처 위치를 지정하거나 인용 없음으로 확정해 주세요.
+        </p>
+      )}
+      {sourceItems.length > 0 && (
+        <ul className="space-y-1 text-xs" aria-label="출처를 확인할 설계 항목">
+          {sourceItems.map((item) => (
+            <li
+              key={item.design_item_version_id}
+              className="flex flex-wrap items-center gap-2"
+            >
+              <strong>{item.key}</strong>
+              {onFixSource ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onFixSource(item)}
+                >
+                  {item.key} 출처 위치 지정
+                </Button>
+              ) : (
+                <span className="text-muted-foreground">
+                  팀장이 출처 위치를 지정해야 해요.
+                </span>
+              )}
+            </li>
           ))}
         </ul>
       )}

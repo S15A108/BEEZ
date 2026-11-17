@@ -13,6 +13,7 @@ import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.designitem.repository.DesignItemRepository;
 import com.beez.backend.document.DocumentKindMapper;
 import com.beez.backend.designitem.service.DesignCommandService;
+import com.beez.backend.designitem.support.SourceLocators;
 import com.beez.backend.designitem.validation.DesignContentValidator;
 import com.beez.backend.planning.dto.DraftDtos.AdoptRequest;
 import com.beez.backend.planning.dto.DraftDtos.CreateRequest;
@@ -484,14 +485,24 @@ public class DesignDraftService {
         }
     }
 
+    /**
+     * 채택한 항목의 출처 위치. 원문 인용이 없는 후보(답변만 근거이거나 근거 없음을 확인하고 채택)는 출처 문서는 남기되 인용 없음
+     * 표시를 적는다 — 위치를 비워 두면 근거 수집이 "근거를 찾지 못함"으로 보아 그 항목을 참조하는 작업 검증이 막힌다(S15P31A108-422).
+     * 인용이 있으면 위치가 있는 첫 인용을 대표 위치로 쓴다. 어느 인용에도 위치가 없으면 인용은 있으니 "인용 없음"이라 할 수 없어
+     * 위치를 비워 두고, 시작 뒤 팀장이 PLN-A11 로 지정한다.
+     */
     @SuppressWarnings("unchecked")
-    private static String locator(Map<String, Object> c) {
+    static String locator(Map<String, Object> c) {
         List<Object> sources = JSON.readValue(c.get("sources").toString(), List.class);
-        if (sources.isEmpty() || !(sources.get(0) instanceof Map<?, ?> first)) return null;
-        var locator = new LinkedHashMap<String, Object>();
-        if (first.get("locator") instanceof Map<?, ?> m) m.forEach((k, v) -> locator.put(k.toString(), v));
-        if (first.get("location") instanceof String s && !s.isBlank()) locator.put("location", s);
-        return locator.isEmpty() ? null : canonical(locator);
+        if (sources.isEmpty()) return SourceLocators.NO_QUOTE;
+        for (Object source : sources) {
+            if (!(source instanceof Map<?, ?> quoted)) continue;
+            var locator = new LinkedHashMap<String, Object>();
+            if (quoted.get("locator") instanceof Map<?, ?> m) m.forEach((k, v) -> locator.put(k.toString(), v));
+            if (quoted.get("location") instanceof String s && !s.isBlank()) locator.put("location", s);
+            if (!locator.isEmpty()) return canonical(locator);
+        }
+        return null;
     }
 
     private static String prefix(String kind) {

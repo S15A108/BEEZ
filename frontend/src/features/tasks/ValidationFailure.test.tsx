@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { expect, it, vi } from 'vitest'
 import { ValidationFailure } from './ValidationFailure'
 
 it('서버가 멈춘 실행을 회수한 오류면 이유와 함께 결과를 반영하지 않았다고 알린다', () => {
@@ -91,6 +92,39 @@ it('입력 한계가 섞이면 과거 재시도 표시 대신 원인과 수동 �
   expect(screen.queryByText(/근거 수집을 다시 시도해 주세요/)).toBeNull()
   expect(screen.queryByText(/잠시 후 다시 확인/)).toBeNull()
   expect(screen.queryByText(/unknown_code/)).toBeNull()
+})
+
+// S15P31A108-422: 원인 항목이 없으면 80개 항목을 REST로 뒤져야 했다. 팀장만 고칠 수 있다.
+it('출처 때문에 막힌 설계 항목을 보이고 팀장이면 출처 위치 지정을 연다', async () => {
+  const item = {
+    design_item_id: '884',
+    design_item_version_id: '888',
+    key: 'REQ-015',
+  }
+  const onFixSource = vi.fn()
+  const failure = {
+    message: '근거를 확인하지 못했어요.',
+    retryable: false,
+    reason_codes: ['source_evidence_unavailable'],
+    design_items: [item],
+  }
+  const { rerender } = render(
+    <ValidationFailure
+      needsHumanReview
+      collectionFailure={failure}
+      onFixSource={onFixSource}
+    />,
+  )
+  await userEvent.click(
+    screen.getByRole('button', { name: 'REQ-015 출처 위치 지정' }),
+  )
+  expect(onFixSource).toHaveBeenCalledWith(item)
+
+  rerender(<ValidationFailure needsHumanReview collectionFailure={failure} />)
+  expect(
+    screen.getByRole('list', { name: '출처를 확인할 설계 항목' }),
+  ).toHaveTextContent('REQ-015팀장이 출처 위치를 지정해야 해요.')
+  expect(screen.queryByRole('button')).toBeNull()
 })
 
 it('문서가 바뀌어 출처 확인이 필요한 사유를 사람 말로 안내한다', () => {

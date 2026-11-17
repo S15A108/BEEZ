@@ -67,6 +67,14 @@ const messages: Record<string, string> = {
     '이메일 인증이 만료됐거나 이미 사용됐어요. 이메일을 다시 인증해 주세요.',
   validation_failed: '입력 내용을 확인해 주세요.',
   version_conflict: '설계가 변경되었습니다. 최신 내용을 확인해 주세요.',
+  // PLN-A11 출처 위치 확정(S15P31A108-422)
+  source_document_changed:
+    '출처 문서가 새 버전으로 바뀌었어요. 새 원문을 보고 위치를 다시 지정해 주세요.',
+  design_source_missing: '원문 출처가 없는 항목이라 확정할 출처 위치가 없어요.',
+  source_document_not_in_baseline:
+    '출처 문서가 현재 기준 설계에 들어 있지 않아요. 문서 상태를 확인해 주세요.',
+  source_text_unavailable:
+    '출처 문서의 원문을 확인하지 못했어요. 문서 처리 상태를 확인해 주세요.',
   summary_outdated:
     '회의 정리 또는 기준 문서가 바뀌었어요. 최신 내용을 확인한 뒤 다시 시도해 주세요.',
   revision_conflict: '작업 계획이 변경되었습니다. 다시 확인해 주세요.',

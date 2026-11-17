@@ -1,6 +1,7 @@
 package com.beez.backend.designitem.api;
 
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.designitem.dto.ConfirmDesignItemSourceRequest;
 import com.beez.backend.designitem.dto.CreateDesignItemRequest;
 import com.beez.backend.designitem.dto.DesignItemPageResponse;
 import com.beez.backend.designitem.dto.DesignItemResponse;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -65,6 +67,14 @@ public class DesignItemController {
                                       @Valid @RequestBody UpdateDesignItemRequest input) {
         origins.requireTrustedOrigin(request);
         return commands.update(caller, id, input);
+    }
+
+    @PutMapping("/api/human/design-items/{id}/source")
+    @Operation(summary = "PLN-A11 기준 설계 항목 출처 위치 확정")
+    public DesignItemResponse confirmSource(CallerContext caller, HttpServletRequest request, @PathVariable long id,
+                                            @Valid @RequestBody ConfirmDesignItemSourceRequest input) {
+        origins.requireTrustedOrigin(request);
+        return commands.confirmSource(caller, id, input);
     }
 
     @DeleteMapping("/api/human/design-items/{id}")

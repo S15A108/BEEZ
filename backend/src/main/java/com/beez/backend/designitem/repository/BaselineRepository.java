@@ -2,6 +2,7 @@ package com.beez.backend.designitem.repository;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -67,13 +68,58 @@ public class BaselineRepository {
      */
     public void insertItemSource(long baseline, long project, long item, long documentVersion, String locatorJson,
                                  String status, long remappedFrom) {
+        insertItemSource(baseline, project, item, documentVersion, locatorJson, status, remappedFrom, null, null);
+    }
+
+    /** 사람이 확정한 행(CONFIRMED)을 다음 기준으로 이어받을 때는 확정한 사람·때도 그대로 옮긴다(S15P31A108-422). */
+    public void insertItemSource(long baseline, long project, long item, long documentVersion, String locatorJson,
+                                 String status, long remappedFrom, Long confirmedBy, Object confirmedAt) {
+        var params = new java.util.HashMap<String, Object>();
+        params.put("baseline", baseline); params.put("project", project); params.put("item", item);
+        params.put("version", documentVersion); params.put("locator", locatorJson); params.put("status", status);
+        params.put("from", remappedFrom); params.put("by", confirmedBy); params.put("at", confirmedAt);
         jdbc.sql("""
                 INSERT INTO baseline_item_source(baseline_id,project_id,design_item_id,source_document_version_id,
-                  source_locator,source_status,remapped_from_document_version_id)
-                VALUES(:baseline,:project,:item,:version,cast(:locator AS jsonb),:status,:from)
+                  source_locator,source_status,remapped_from_document_version_id,confirmed_by,confirmed_at)
+                VALUES(:baseline,:project,:item,:version,cast(:locator AS jsonb),:status,:from,:by,cast(:at AS timestamptz))
+                """).params(params).update();
+    }
+
+    /**
+     * 현재 기준에서 항목의 유효 출처와 그 문서 원문(S15P31A108-422). 항목이 현재 기준에 없으면 빈 값이다.
+     * 행: baseline_id, design_item_version_id, source_document_version_id(출처 없으면 null), document_version_id(현재 기준 문서에
+     * 든 그 버전, 아니면 null), content_text, text_hash.
+     */
+    public Optional<Map<String, Object>> currentItemSource(long project, long item) {
+        return jdbc.sql("""
+                SELECT bi.baseline_id,bi.design_item_version_id,es.source_document_version_id,
+                       bd.document_version_id,dv.content_text,dp.text_hash
+                  FROM project p
+                  JOIN baseline_item bi ON bi.baseline_id=p.current_baseline_id AND bi.project_id=p.id
+                  JOIN baseline_item_effective_source es ON es.baseline_id=bi.baseline_id AND es.design_item_id=bi.design_item_id
+                  LEFT JOIN baseline_document bd ON bd.baseline_id=bi.baseline_id AND bd.project_id=p.id
+                       AND bd.document_version_id=es.source_document_version_id
+                  LEFT JOIN document_version dv ON dv.id=bd.document_version_id
+                  LEFT JOIN document_processing dp ON dp.document_version_id=dv.id
+                 WHERE p.id=:project AND bi.design_item_id=:item
+                """).param("project", project).param("item", item).query().listOfRows().stream().findFirst();
+    }
+
+    /**
+     * 사람이 확정한 출처 위치를 이 기준의 유효 출처로 기록한다(S15P31A108-422). 이미 행이 있으면 같은 문서 버전에서 위치만 바꾼다
+     * (V53 트리거가 CONFIRMED 로의 갱신만 허용).
+     */
+    public void confirmItemSource(long baseline, long project, long item, long documentVersion, String locatorJson, long actor) {
+        jdbc.sql("""
+                INSERT INTO baseline_item_source(baseline_id,project_id,design_item_id,source_document_version_id,
+                  source_locator,source_status,remapped_from_document_version_id,confirmed_by,confirmed_at)
+                VALUES(:baseline,:project,:item,:version,cast(:locator AS jsonb),'CONFIRMED',:version,:actor,now())
+                ON CONFLICT (baseline_id,design_item_id) DO UPDATE
+                   SET source_locator=EXCLUDED.source_locator,source_status='CONFIRMED',
+                       remapped_from_document_version_id=EXCLUDED.remapped_from_document_version_id,
+                       confirmed_by=EXCLUDED.confirmed_by,confirmed_at=EXCLUDED.confirmed_at
                 """).param("baseline", baseline).param("project", project).param("item", item)
-                .param("version", documentVersion).param("locator", locatorJson).param("status", status)
-                .param("from", remappedFrom).update();
+                .param("version", documentVersion).param("locator", locatorJson).param("actor", actor).update();
     }
 
     /** A version's index is ready when its current attempt published every chunk with an embedding for the profile. */

@@ -133,7 +133,8 @@ public class ValidationWorker {
                 // An unrelated publication need not invalidate the accepted plan. The assembler
                 // uses the current baseline; result application rechecks that exact search snapshot.
                 if (!searchInput.searchComplete()) {
-                    applier.applyInputIncomplete(lease, searchInput.searchIncompleteReasons(), System.currentTimeMillis() - started);
+                    applier.applyInputIncomplete(lease, searchInput.searchIncompleteReasons(), unavailableItems(searchInput),
+                            System.currentTimeMillis() - started);
                     return true;
                 }
                 request = searchInput.request();
@@ -195,6 +196,18 @@ public class ValidationWorker {
                     System.currentTimeMillis() - started, AnalysisResultApplier.usageIn(response));
         }
         return true;
+    }
+
+    /** 근거를 쓸 수 없던 승인 항목의 키·ID. 팀장이 그 항목의 출처 위치를 고칠 수 있게 실패 안내에 싣는다(S15P31A108-422). */
+    static List<Map<String, Object>> unavailableItems(ValidationInputAssembler.Result input) {
+        var unavailable = java.util.Set.copyOf(input.unavailableEvidenceVersionIds());
+        if (unavailable.isEmpty() || !(input.request().get("approved_items") instanceof List<?> items)) return List.of();
+        return items.stream()
+                .filter(value -> value instanceof Map<?, ?> item && unavailable.contains(String.valueOf(item.get("id"))))
+                .map(value -> (Map<?, ?>) value)
+                .map(item -> Map.<String, Object>of("design_item_id", String.valueOf(item.get("design_item_id")),
+                        "design_item_version_id", String.valueOf(item.get("id")), "key", String.valueOf(item.get("key"))))
+                .toList();
     }
 
     private Map<String, Object> fakeRequest(ValidationRow row, JobLease lease) {

@@ -2,6 +2,7 @@ package com.beez.backend.validation.service;
 
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.designitem.support.SourceLocators;
 import com.beez.backend.document.service.HybridDocumentCandidateSearch;
 import com.beez.backend.task.dto.TaskPlanRevisionResponse;
 import com.beez.backend.task.service.RelatedTaskCandidateFinder;
@@ -335,7 +336,8 @@ public class ValidationInputAssembler {
             if (row.get("source_document_id") != null && row.get("source_locator") != null) {
                 var locator = parseObject(row.get("source_locator").toString());
                 String location = Objects.toString(locator.get("location"), "");
-                if (!location.isBlank()) item.put("source", Map.of(
+                // 인용 없음으로 확인된 항목은 수동 항목처럼 원문 출처 없이 보낸다 — 근거 수집도 건너뛴다(S15P31A108-422).
+                if (!location.isBlank() && !SourceLocators.isNoQuote(locator)) item.put("source", Map.of(
                         "document_id", row.get("source_document_id").toString(),
                         "document_version_id", row.get("source_version_id").toString(),
                         "version_no", row.get("source_version_no"), "location", location));

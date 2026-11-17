@@ -1,5 +1,6 @@
 package com.beez.backend.impactanalysis;
 
+import com.beez.backend.designitem.support.SourceLocators;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -160,6 +161,8 @@ public final class ImpactRequestAssembler {
         }
         Object parsed = JSON.readValue(item.sourceLocator(), Object.class);
         if (!(parsed instanceof Map<?, ?> locator)) return Optional.empty();
+        // 인용 없음으로 확인된 항목은 원문 위치가 없다 — 출처 없는 수동 항목처럼 보낸다(S15P31A108-422).
+        if (SourceLocators.isNoQuote(item.sourceLocator())) return Optional.empty();
         Object rawLocation = locator.get("location");
         String location = rawLocation instanceof String text ? stripAiWhitespace(text) : "";
         if (location.isEmpty()) {

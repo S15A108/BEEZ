@@ -174,6 +174,11 @@ public class TaskApiSupport {
         return as(accountId).patch(path, json);
     }
 
+    /** 사람 화면에서 보낸 변경 요청(Origin 검사를 거치는 /api/human/**). */
+    public HttpResponse<String> putFromScreen(String path, String json, Long accountId) {
+        return as(accountId).put(path, json, "Origin", "http://localhost:5173");
+    }
+
     public HttpResponse<String> get(String path, Long accountId) {
         return as(accountId).get(path);
     }

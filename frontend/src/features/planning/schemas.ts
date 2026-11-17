@@ -332,6 +332,29 @@ export const updateItemResponseSchema = z.object({
 })
 export type UpdateItemResponse = z.infer<typeof updateItemResponseSchema>
 
+// PLN-A11: 시작된 프로젝트에서 팀장이 기준 설계 항목의 출처 위치를 확정한다(S15P31A108-422).
+// 줄 범위(start_line·end_line)와 인용 없음(no_quote) 중 하나만 보낸다.
+export const confirmItemSourceInputSchema = z.union([
+  z.object({
+    project_id: common.idSchema,
+    expected_version_id: common.idSchema,
+    // 화면이 읽은 출처 문서 버전. 그 사이 새 버전이 발행됐으면 409 source_document_changed.
+    expected_document_version_id: common.idSchema,
+    start_line: z.number().int().min(1),
+    end_line: z.number().int().min(1),
+  }),
+  z.object({
+    project_id: common.idSchema,
+    expected_version_id: common.idSchema,
+    expected_document_version_id: common.idSchema,
+    no_quote: z.literal(true),
+  }),
+])
+export type ConfirmItemSourceInput = z.infer<
+  typeof confirmItemSourceInputSchema
+>
+export const confirmItemSourceResponseSchema = updateItemResponseSchema
+
 export const removeItemQuerySchema = z.object({
   project_id: common.idSchema,
   expected_version_id: common.idSchema,
