@@ -26,6 +26,9 @@ test('설계 관계에서 고른 작업과 이름 붙은 선을 보고 작업 �
     dialog.getByRole('heading', { name: /초대 화면 정보 바꾸기/ }),
   ).toBeVisible()
 
+  // 목록이 기본 보기이고 그래프는 보기 전환으로 연다(S15P31A108-449).
+  await expect(dialog.getByRole('region', { name: '관계 목록' })).toBeVisible()
+  await dialog.getByRole('button', { name: '그래프', exact: true }).click()
   const graph = dialog.getByRole('img', { name: /관계 그래프/ })
   await expect(graph.getByText('구현', { exact: true })).toBeVisible()
   await expect(graph.getByText('후보', { exact: true })).toBeVisible()

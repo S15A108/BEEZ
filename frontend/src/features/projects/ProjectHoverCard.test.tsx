@@ -83,7 +83,9 @@ beforeEach(() => {
 
 it('진행 중 프로젝트의 팀장은 숫자 세 칸과 인원·에이전트를 본다', async () => {
   show(project, { text: '3', label: '안 읽은 알림 3건' })
-  expect(screen.getByRole('tooltip')).toHaveTextContent('진행 중 · 기준 v2')
+  expect(screen.getByRole('tooltip')).toHaveTextContent(
+    '진행 중 · 설계 기준 v2',
+  )
   expect(screen.getByText('팀장')).toBeInTheDocument()
   expect(await screen.findByText('7')).toBeInTheDocument()
   expect(screen.getByText('검토할 변경')).toBeInTheDocument()

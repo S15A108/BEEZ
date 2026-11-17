@@ -463,10 +463,10 @@ function Workspace({ projectId }: { projectId: string }) {
                       <DialogTitle className="text-lg leading-6 font-semibold">
                         {pane && pane !== 'settings' ? paneTitles[pane] : ''}
                       </DialogTitle>
-                      {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). */}
+                      {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). 회의실도 본문 자리를 넓히려고 숨긴다(사용자 요청 11-17). 화면 읽기 프로그램은 읽는다. */}
                       <DialogDescription
                         className={
-                          pane === 'documents'
+                          pane === 'documents' || pane === 'meetings'
                             ? 'sr-only'
                             : 'truncate text-xs leading-4'
                         }
@@ -476,7 +476,7 @@ function Workspace({ projectId }: { projectId: string }) {
                         {pane === 'meetings'
                           ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
                           : data.project.current_baseline &&
-                            ` · 기준 v${data.project.current_baseline.version_no}`}
+                            ` · 설계 기준 v${data.project.current_baseline.version_no}`}
                       </DialogDescription>
                     </div>
                     {/* 창별 머리 버튼 자리(작업 현황의 '+ 작업 계획', 캔버스 PNL-05-v2-tasks) */}

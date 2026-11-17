@@ -10,7 +10,6 @@ import {
   lineLabel,
   nodeKind,
   nodeX,
-  relationLabel,
 } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
 import type { RelationsResponse } from './schemas'
@@ -29,12 +28,13 @@ export function RelationGraph({
   onOpen: (type: string, id: string) => void
 }) {
   const markerId = useId()
-  const columnCount = Math.max(
-    NODE_TYPES.length,
-    ...data.nodes.map((node) => columnOf(node.type) + 1),
-  )
-  const columns = Array.from({ length: columnCount }, (_, col) =>
-    data.nodes.filter((node) => columnOf(node.type) === col).slice(0, 8),
+  // 항목이 없는 종류는 열을 비워 두지 않고 뺀다(S15P31A108-449: 늘 비어 있던 '검증' 열).
+  const kinds = [
+    ...new Set(data.nodes.map((node) => columnOf(node.type))),
+  ].sort((a, b) => a - b)
+  const columnCount = Math.max(1, kinds.length)
+  const columns = kinds.map((kind) =>
+    data.nodes.filter((node) => columnOf(node.type) === kind).slice(0, 8),
   )
   const visible = columns.flatMap((nodes, col) =>
     nodes.map((node, row) => ({ ...node, col, row })),
@@ -48,14 +48,6 @@ export function RelationGraph({
     return from && to ? [{ ...edge, from, to, text: lineLabel(edge) }] : []
   })
   const rows = Math.max(1, ...columns.map((nodes) => nodes.length))
-  // 관계 목록은 그래프에 못 그린 항목도 읽으므로 전체 항목에서 이름을 찾는다. DB 번호는 보이지 않는다.
-  const labels = new Map(
-    data.nodes.map((node) => [`${node.type}:${node.id}`, node.label]),
-  )
-  const nameOf = (type: string, id: string) =>
-    [nodeKind(type).label, labels.get(`${type}:${id}`)]
-      .filter(Boolean)
-      .join(' ')
   const { routes, rowTops, height } = layoutEdges(drawn, rows, columnCount - 1)
   const edges = drawn.map((edge, index) => ({ ...edge, route: routes[index] }))
   const width = nodeX(columnCount) - COLUMN_GAP
@@ -82,7 +74,9 @@ export function RelationGraph({
           aria-label={graphLabel(edges)}
           // 상자 테두리 두께만큼 양옆을 넓혀 맨 끝 열의 테두리가 잘리지 않게 한다.
           viewBox={`-2 0 ${width + 4} ${height}`}
-          className="w-full min-w-[740px]"
+          // 열이 적어도 상자와 글자를 키우지 않고 제 크기로 그린다. 좁으면 줄이지 않고 옆으로 넘긴다.
+          style={{ minWidth: Math.min(width + 4, 740), maxWidth: width + 4 }}
+          className="w-full"
         >
           <defs>
             <marker
@@ -96,18 +90,18 @@ export function RelationGraph({
               <path d="M0,0 L0,6 L6,3 z" fill="context-stroke" />
             </marker>
           </defs>
-          {columns.map((_, col) => (
+          {kinds.map((kind, col) => (
             <text
-              key={col}
+              key={kind}
               x={nodeX(col) + NODE_W / 2}
               y="20"
               textAnchor="middle"
-              className="fill-muted-foreground text-[12px]"
+              className="fill-muted-foreground text-[13px]"
             >
-              {nodeKind(NODE_TYPES[col]).label}
+              {nodeKind(NODE_TYPES[kind]).label}
             </text>
           ))}
-          {/* 키보드로는 아래 '전체 항목과 관계 읽기' 목록의 버튼으로 같은 화면에 간다. */}
+          {/* 키보드로는 '목록' 보기의 버튼으로 같은 화면에 간다. */}
           {visible.map((node) => {
             const kind = nodeKind(node.type)
             const x = nodeX(node.col)
@@ -135,19 +129,19 @@ export function RelationGraph({
                 />
                 <text
                   x={x + 12}
-                  y={y + 17}
+                  y={y + 19}
                   fill={kind.color}
-                  className="text-[11px] font-bold"
+                  className="text-xs font-bold"
                 >
                   {kind.label}
                 </text>
                 <foreignObject
                   x={x + 12}
-                  y={y + 22}
+                  y={y + 25}
                   width={NODE_W - 24}
-                  height={NODE_H - 26}
+                  height={NODE_H - 29}
                 >
-                  <div className="line-clamp-2 text-xs/[15px] break-keep text-foreground">
+                  <div className="line-clamp-2 text-[13px]/[16px] break-keep text-foreground">
                     {node.label}
                   </div>
                 </foreignObject>
@@ -181,7 +175,7 @@ export function RelationGraph({
               textAnchor="middle"
               dominantBaseline="central"
               className={cn(
-                'stroke-card stroke-[6px] text-[11px] font-medium [paint-order:stroke]',
+                'stroke-card stroke-[6px] text-xs font-medium [paint-order:stroke]',
                 edge.confirmed ? 'fill-[#57534e]' : 'fill-muted-foreground',
               )}
             >
@@ -194,46 +188,9 @@ export function RelationGraph({
         <p className="text-xs text-muted-foreground">
           그래프는 종류별 최대 8개 항목을 표시해요. 전체 {data.nodes.length}개
           중 {visible.length}개와 그 사이의 관계 {edges.length}개를 보여요.
+          나머지는 목록에서 볼 수 있어요.
         </p>
       )}
-      <details className="rounded-xl border bg-card p-4 shadow-xs">
-        <summary className="cursor-pointer text-sm font-medium">
-          전체 항목과 관계 읽기
-        </summary>
-        <ul className="mt-4 grid gap-2 text-sm">
-          {data.nodes.map((node) => (
-            <li
-              key={`${node.type}:${node.id}`}
-              className="flex flex-wrap items-center gap-2"
-            >
-              <span className="text-xs text-muted-foreground">
-                {nodeKind(node.type).label}
-              </span>
-              {nodeKind(node.type).link ? (
-                <button
-                  type="button"
-                  className="text-primary hover:underline"
-                  onClick={() => onOpen(node.type, node.id)}
-                >
-                  {node.label}
-                </button>
-              ) : (
-                <span>{node.label}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-        <ul className="mt-4 grid gap-2 border-t pt-4 text-xs text-muted-foreground">
-          {data.edges.map((edge, index) => (
-            <li key={index}>
-              {nameOf(edge.from_type, edge.from_id)} →{' '}
-              {nameOf(edge.to_type, edge.to_id)} ·{' '}
-              {relationLabel(edge.relation)} ·{' '}
-              {edge.confirmed ? '확인됨' : '후보'}
-            </li>
-          ))}
-        </ul>
-      </details>
     </div>
   )
 }

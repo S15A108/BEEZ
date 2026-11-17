@@ -777,7 +777,7 @@ export class OfficeWorkSurface {
     this.rect(0, 0, this.canvas.width, this.canvas.height, SCREEN)
     this.text(
       screens?.version
-        ? `프로젝트 진행 · 기준 v${screens.version}`
+        ? `프로젝트 진행 · 설계 기준 v${screens.version}`
         : '프로젝트 진행',
       60,
       92,

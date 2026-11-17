@@ -9,8 +9,8 @@ import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
+  Ban,
   Check,
-  ChevronDown,
   ChevronRight,
   ClipboardCheck,
   Ellipsis,
@@ -60,7 +60,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { PaneSheet, SheetSubmit } from '@/components/PaneSheet'
 import { DocumentDraftButton, DocumentDraftPanel } from './PlanFromDocuments'
 import { useDocumentDraft } from './useDocumentDraft'
@@ -77,6 +76,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
+import { Tabs } from 'radix-ui'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import {
@@ -86,9 +86,8 @@ import {
 } from '@/stores/workspaceStore'
 import {
   describeContent,
-  LIST_ROW,
-  LIST_SELECTED,
   lines,
+  LIST_ROW,
   SPLIT_COLUMNS,
   SPLIT_DETAIL,
   statusLabel,
@@ -97,7 +96,7 @@ import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
 import { useDocumentTitle } from '@/features/documents/useDocumentTitle'
-import { AgentTaskHandoff } from './AgentTaskHandoff'
+import { agentTaskInstructions } from './agentTaskInstructions'
 import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
   toValidationView,
@@ -129,6 +128,26 @@ const planInputCollectionReasons = new Set([
 ])
 // 지난 단계 아래 상태 글(캔버스 PNL-05-v2-tasks: 계획 작성 완료 · 계획 검증 통과 · 작업 시작 지금)
 const stepDoneText = ['완료', '통과', '완료', '완료']
+// 작업·검증 상태 알약 색(S15P31A108-416). 시작 준비·진행 중·통과·완료·대기·보완을 색으로 가르고, 초안·검증 전·취소는 회색이다.
+// 글자는 같은 색 800, 바탕은 50이라 대비가 4.5:1을 넘는다. 완료만 채운 초록(흰 글자 5.5:1)으로 계획 통과와 구분한다.
+const statusTone: Partial<Record<string, string>> = {
+  READY: 'border-indigo-200 bg-indigo-50 text-indigo-800',
+  IN_PROGRESS: 'border-sky-200 bg-sky-50 text-sky-800',
+  RUNNING: 'border-sky-200 bg-sky-50 text-sky-800',
+  WAITING: 'border-orange-200 bg-orange-50 text-orange-800',
+  PASS: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  COMPLETED: 'border-emerald-700 bg-emerald-700 text-white',
+  NEEDS_INPUT: 'border-rose-200 bg-rose-50 text-rose-800',
+  NEEDS_REVIEW: 'border-rose-200 bg-rose-50 text-rose-800',
+  STALE: 'border-rose-200 bg-rose-50 text-rose-800',
+  ERROR: 'border-rose-200 bg-rose-50 text-rose-800',
+}
+const tonePill = (value: string) => (
+  <StatusPill value={value} className={statusTone[value]} />
+)
+// 노란 선택(S15P31A108-416): 고른 탭은 노란 바탕, 표시한 상태 상자는 노란 테두리, 호버는 조금 짙은 회색이다.
+const focusRing =
+  'outline-none focus-visible:ring-3 focus-visible:ring-ring/60 focus-visible:ring-offset-1'
 // 창 안 화면 아래 버튼 줄(SheetSubmit과 같은 모양)
 const sheetFooter =
   'sticky -bottom-5 z-10 -mx-6 mt-auto -mb-5 flex justify-end gap-2 rounded-b-2xl border-t bg-card px-6 pt-3.5 pb-5'
@@ -287,22 +306,36 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   const [query, setQuery] = useState('')
   const search = query.trim().toLowerCase()
   const groupOf = statusGroupOf
+  // 상태 필터(S15P31A108-416). 고른 묶음의 작업만 목록에 남고, 같은 필터를 다시 누르면 전체로 돌아간다.
+  const [statusFilter, setStatusFilter] = useState<string>()
   // 목록은 상태 묶음 순서로 보인다. 처음 고르는 작업도 맨 위 줄이다.
-  const ordered = statusGroups.flatMap((group) =>
-    shown.filter((entry) => groupOf(entry.status) === group),
-  )
+  const ordered = statusGroups
+    .filter((group) => !statusFilter || group.label === statusFilter)
+    .flatMap((group) =>
+      shown.filter((entry) => groupOf(entry.status) === group),
+    )
   const found = ordered.filter((entry) =>
     `${entry.key} ${entry.current_plan_revision.plan.title}`
       .toLowerCase()
       .includes(search),
   )
-  const selectedId =
+  const picked =
     selected?.focus === focusId ? selected.id : (focusId ?? ordered[0]?.id)
+  // 상태 필터나 검색으로 거른 동안에는 목록에 없는 작업을 상세에 두지 않고 목록의 첫 작업을, 없으면 선택 없음(#325 리뷰).
+  // 거르지 않을 때는 알림·근거로 연 작업(지금 탭 목록 밖일 수 있음)을 그대로 둔다.
+  const selectedId =
+    (statusFilter || search) && !found.some((entry) => entry.id === picked)
+      ? found[0]?.id
+      : picked
   const selectedGroup = groupOf(
     entries.find((entry) => entry.id === selectedId)?.status,
   )
-  // 계획 이력·작업 기록 카드가 여는 창 안 화면
-  const [sheet, setSheet] = useState<'history' | 'records' | null>(null)
+  // 계획 이력·작업 기록 카드와 '더 보기'의 담당 후보 추천이 여는 창 안 화면
+  const [sheet, setSheet] = useState<
+    'history' | 'records' | 'recommend' | null
+  >(null)
+  // '더 보기'의 에이전트용 작업 지시 복사 결과. 메뉴가 닫힌 뒤 버튼 줄 아래에 보인다.
+  const [handoff, setHandoff] = useState<{ taskId: string; copied: boolean }>()
   // 다른 작업으로 전환한 뒤에는 이전 작업의 처리 결과를 새 화면에 표시하지 않는다.
   const selectionScope = JSON.stringify([projectId, selectedId])
   const [feedbackScope, setFeedbackScope] = useState(selectionScope)
@@ -372,6 +405,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   })
   const isOwner = mine(task)
   const active = !!task && !['COMPLETED', 'CANCELLED'].includes(task.status)
+  // 취소된 작업은 단계 진행 대신 끝난 상태를 먼저 보이고, 계획·검증은 취소 전 기록으로 남긴다(S15P31A108-433).
+  const cancelled = task?.status === 'CANCELLED'
   // 조회 응답과 상세의 요약이 현재 선택된 검증에 속할 때만 사용한다.
   const result =
     validationId && validation.data?.id === validationId
@@ -443,6 +478,15 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
     !pendingDeltaId &&
     !attemptLimitReached &&
     !task?.waiting_reason
+  // 상세는 계획과 검증 결과를 탭으로 나눈다(S15P31A108-416). 고르기 전에는 위 11-05 결정대로 알릴 것이 있으면 검증 결과를 먼저 연다.
+  // 취소된 작업의 검증은 기록이라 계획부터 연다(S15P31A108-433).
+  const [pickedTab, setPickedTab] = useState<{ taskId: string; tab: string }>()
+  const detailTab =
+    pickedTab && pickedTab.taskId === task?.id
+      ? pickedTab.tab
+      : !validationPassed && !cancelled
+        ? 'validation'
+        : 'plan'
   const startBlocked = validation.error
     ? '검증 결과를 다시 불러와야 시작할 수 있어요.'
     : result?.status === 'RUNNING'
@@ -522,19 +566,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
 
   return (
     <section className="space-y-6 lg:flex lg:h-0 lg:min-h-full lg:flex-col">
-      {/* 창 머리에 이미 '작업 현황'이 있어 안쪽 제목을 두지 않고, 설명 문구도 캔버스 PNL-05-v2-tasks(v461 이후)처럼 뺀다.
-          노란 '+ 작업 계획' 하나는 캔버스처럼 창 머리 줄에 둔다(PNL-05 수정안 10-29). */}
-      <PaneHeaderAction>
-        <Button
-          onClick={() => {
-            setFormTask(undefined)
-            setEditing('new')
-          }}
-        >
-          <Plus />
-          작업 계획
-        </Button>
-      </PaneHeaderAction>
+      {/* 창 머리에 이미 '작업 현황'이 있어 안쪽 제목을 두지 않고, 설명 문구도 캔버스 PNL-05-v2-tasks(v461 이후)처럼 뺀다. */}
       {showActionFeedback && action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
@@ -555,7 +587,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
         )}
       >
         <Card className="lg:max-h-full lg:overflow-y-auto">
-          <CardHeader>
+          {/* '+ 작업 계획'은 목록을 고르는 줄의 오른쪽 끝에 둔다(S15P31A108-416). */}
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="flex gap-1" role="tablist">
               {(
                 [
@@ -573,12 +606,28 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                     setAssignee('')
                     setSelected(null)
                   }}
-                  className={`rounded-full px-3 py-1 text-sm ${tab === value ? 'bg-foreground text-background' : 'bg-muted'}`}
+                  className={cn(
+                    'rounded-full px-3 py-1 text-sm transition-colors',
+                    focusRing,
+                    tab === value
+                      ? 'bg-primary font-semibold text-primary-foreground'
+                      : 'bg-muted hover:bg-foreground/10',
+                  )}
                 >
                   {label}
                 </button>
               ))}
             </CardTitle>
+            <Button
+              size="sm"
+              onClick={() => {
+                setFormTask(undefined)
+                setEditing('new')
+              }}
+            >
+              <Plus />
+              작업 계획
+            </Button>
           </CardHeader>
           <CardContent>
             <AsyncState query={tasks}>
@@ -619,32 +668,46 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                       </NativeSelect>
                     )}
                   </div>
+                  {/* 상태별 작업 수를 겸하는 필터 버튼(S15P31A108-416). 개수는 거르기 전 목록(탭·담당자 기준)으로 센다.
+                      모양은 원래 타일 그대로 두고, 표시한 상자의 테두리만 검정에서 노랑으로 바꾼다(11-17 #325 리뷰 반영).
+                      표시는 원래처럼 고른 작업의 상태이고, 필터를 고르면 그 상태다(필터를 고르면 고른 작업도 그 상태로 옮겨 둘이 같다). */}
                   <ul
                     aria-label="상태별 작업 수"
                     className="grid grid-cols-4 gap-1.5"
                   >
-                    {statusGroups.map((group) => (
-                      <li
-                        key={group.label}
-                        className={cn(
-                          'grid gap-px rounded-[10px] border px-1 py-[7px] text-center whitespace-nowrap',
-                          group === selectedGroup
-                            ? 'border-foreground bg-card'
-                            : 'bg-muted text-muted-foreground',
-                        )}
-                      >
-                        <strong className="text-[15px] leading-5 font-bold">
-                          {
-                            shown.filter(
-                              (entry) => groupOf(entry.status) === group,
-                            ).length
-                          }
-                        </strong>
-                        <span className="text-[11px] leading-[14px] text-muted-foreground">
-                          {group.label}
-                        </span>
-                      </li>
-                    ))}
+                    {statusGroups.map((group) => {
+                      const on = statusFilter === group.label
+                      const marked = statusFilter ? on : group === selectedGroup
+                      return (
+                        <li key={group.label} className="grid">
+                          <button
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() =>
+                              setStatusFilter(on ? undefined : group.label)
+                            }
+                            className={cn(
+                              'grid gap-px rounded-[10px] border px-1 py-[7px] text-center whitespace-nowrap',
+                              focusRing,
+                              marked
+                                ? 'border-primary bg-card'
+                                : 'bg-muted text-muted-foreground',
+                            )}
+                          >
+                            <strong className="text-[15px] leading-5 font-bold">
+                              {
+                                shown.filter(
+                                  (entry) => groupOf(entry.status) === group,
+                                ).length
+                              }
+                            </strong>
+                            <span className="text-[11px] leading-[14px] text-muted-foreground">
+                              {group.label}
+                            </span>
+                          </button>
+                        </li>
+                      )
+                    })}
                   </ul>
                   {statusGroups.map((group) => {
                     const items = found.filter(
@@ -667,9 +730,13 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                               <button
                                 type="button"
                                 aria-current={entry.id === selectedId}
+                                // 고른 작업은 밝은 노랑으로 두고 호버해도 회색으로 바꾸지 않는다(S15P31A108-416).
                                 className={cn(
                                   LIST_ROW,
-                                  entry.id === selectedId && LIST_SELECTED,
+                                  focusRing,
+                                  entry.id === selectedId
+                                    ? 'border-primary bg-primary/25'
+                                    : 'hover:bg-foreground/6',
                                 )}
                                 onClick={() =>
                                   setSelected({ id: entry.id, focus: focusId })
@@ -694,8 +761,13 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                   {entry.current_plan_revision.plan.title}
                                 </strong>
                                 <span className="flex flex-wrap gap-2">
-                                  <StatusPill value={entry.status} />
-                                  <StatusPill value={entry.validation_status} />
+                                  {/* 상태는 한 단어로(S15P31A108-441). 시작 전 작업은 검증 결과가 곧 상태라 통과했을 때만 '시작 준비'로 보인다. */}
+                                  {tonePill(
+                                    ['DRAFT', 'READY'].includes(entry.status) &&
+                                      entry.validation_status !== 'PASS'
+                                      ? entry.validation_status
+                                      : entry.status,
+                                  )}
                                   {!entry.assignee_member_id && (
                                     <UnassignedChip />
                                   )}
@@ -720,7 +792,9 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                   ) : (
                     !found.length && (
                       <p className="py-6 text-center text-sm break-keep text-muted-foreground">
-                        찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.
+                        {statusFilter && !ordered.length
+                          ? `${statusFilter} 작업이 없어요. 다른 상태를 고르거나 같은 버튼을 다시 눌러 전체를 보세요.`
+                          : '찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'}
                       </p>
                     )
                   )}
@@ -744,22 +818,12 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
             <AsyncState query={detail}>
               {(current) => (
                 <div className="space-y-5">
-                  {!['COMPLETED', 'CANCELLED'].includes(current.status) && (
-                    <AssignmentRecommendations
-                      key={`${current.id}-${current.lock_version}`}
-                      projectId={projectId}
-                      taskId={current.id}
-                      members={members.data?.items ?? []}
-                    />
-                  )}
                   <Card>
                     <CardHeader>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <CardTitle>
-                          {current.current_plan_revision.plan.title}
-                        </CardTitle>
-                        <StatusPill value={current.status} />
-                      </div>
+                      {/* 상태는 아래 단계 표시(취소면 취소 안내) 한 곳에서만 말한다(S15P31A108-441). */}
+                      <CardTitle>
+                        {current.current_plan_revision.plan.title}
+                      </CardTitle>
                       <CardDescription>
                         {current.key} · 담당자{' '}
                         {current.assignee_member_id
@@ -772,87 +836,89 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      {active && mine(current) && (
-                        <AgentTaskHandoff
-                          key={current.id}
-                          taskId={current.id}
-                        />
-                      )}
-                      <ol
-                        aria-label="작업 단계"
-                        className="flex rounded-xl border px-2 py-3.5 text-[13px]"
-                      >
-                        {taskSteps.map((label, index) => (
-                          <li
-                            key={label}
-                            aria-current={index === step ? 'step' : undefined}
-                            className={cn(
-                              'relative flex flex-1 flex-col items-center gap-1 text-center font-semibold',
-                              index > step &&
-                                'font-medium text-muted-foreground',
-                            )}
-                          >
-                            {index > 0 && (
+                      {cancelled ? (
+                        // 취소 시점의 단계는 응답에 없어 단계 표시를 두지 않는다. 남은 단계에 '지금'을 붙이면 진행 중처럼 읽힌다.
+                        <div className="flex gap-2.5 rounded-xl border bg-muted/40 p-4 text-sm">
+                          <Ban className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                          <div className="grid gap-1">
+                            <strong className="font-semibold">
+                              취소된 작업이에요
+                            </strong>
+                            <p className="text-muted-foreground">
+                              끝난 작업이라 더 진행하지 않아요. 아래 계획과 검증
+                              결과는 취소 전 기록이에요.
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <ol
+                          aria-label="작업 단계"
+                          className="flex rounded-xl border px-2 py-3.5 text-[13px]"
+                        >
+                          {taskSteps.map((label, index) => (
+                            <li
+                              key={label}
+                              aria-current={index === step ? 'step' : undefined}
+                              className={cn(
+                                'relative flex flex-1 flex-col items-center gap-1 text-center font-semibold',
+                                index > step &&
+                                  'font-medium text-muted-foreground',
+                              )}
+                            >
+                              {index > 0 && (
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    'absolute top-3 right-1/2 h-0.5 w-full',
+                                    index <= step
+                                      ? 'bg-emerald-700'
+                                      : 'bg-border',
+                                  )}
+                                />
+                              )}
                               <span
                                 aria-hidden="true"
                                 className={cn(
-                                  'absolute top-3 right-1/2 h-0.5 w-full',
-                                  index <= step
-                                    ? 'bg-emerald-700'
-                                    : 'bg-border',
+                                  // 다음 단계의 연결선이 원을 가로지르지 않게 위에 둔다.
+                                  'relative z-10 grid size-6 place-items-center rounded-full text-xs font-bold',
+                                  index < step && 'bg-emerald-700 text-white',
+                                  index === step &&
+                                    'bg-primary ring-4 ring-primary/30',
+                                  index > step &&
+                                    'border-2 bg-card text-muted-foreground',
                                 )}
-                              />
-                            )}
-                            <span
-                              aria-hidden="true"
-                              className={cn(
-                                // 다음 단계의 연결선이 원을 가로지르지 않게 위에 둔다.
-                                'relative z-10 grid size-6 place-items-center rounded-full text-xs font-bold',
-                                index < step && 'bg-emerald-700 text-white',
-                                index === step &&
-                                  'bg-primary ring-4 ring-primary/30',
-                                index > step &&
-                                  'border-2 bg-card text-muted-foreground',
-                              )}
-                            >
-                              {index < step ? (
-                                <Check className="size-3.5" strokeWidth={3} />
-                              ) : (
-                                index + 1
-                              )}
-                            </span>
-                            {label}
-                            <span
-                              className={cn(
-                                'min-h-4 text-xs font-medium',
-                                index < step
-                                  ? 'text-emerald-700'
-                                  : 'text-muted-foreground',
-                              )}
-                            >
-                              {index < step
-                                ? stepDoneText[index]
-                                : index === step
-                                  ? '지금'
-                                  : ''}
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                      {/* 주 버튼은 상태마다 하나(M5): 진행 중이면 완료 보고, 시작할 수 있으면 시작, 막혔으면 계획 수정, 그 밖에는 계획 검증. */}
-                      <div
-                        className={cn(
-                          'flex flex-wrap items-start gap-2',
-                          isOwner &&
-                            active &&
-                            'rounded-xl border border-primary/40 bg-primary/5 p-4',
-                        )}
-                      >
-                        {isOwner && active && (
-                          <p className="w-full text-xs font-semibold">
-                            다음 할 일
-                          </p>
-                        )}
+                              >
+                                {index < step ? (
+                                  <Check className="size-3.5" strokeWidth={3} />
+                                ) : (
+                                  index + 1
+                                )}
+                              </span>
+                              {label}
+                              <span
+                                className={cn(
+                                  'min-h-4 text-xs font-medium',
+                                  index < step
+                                    ? 'text-emerald-700'
+                                    : 'text-muted-foreground',
+                                )}
+                              >
+                                {index < step
+                                  ? stepDoneText[index]
+                                  : index === step
+                                    ? // 상태 배지를 따로 두지 않아 대기는 지금 단계에서 알린다.
+                                      current.status === 'WAITING'
+                                      ? '대기'
+                                      : '지금'
+                                    : ''}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                      {/* 주 버튼은 상태마다 하나(M5): 진행 중이면 완료 보고, 시작할 수 있으면 시작, 막혔으면 계획 수정, 그 밖에는 계획 검증.
+                        단계 표시가 이미 지금 할 일을 말해 '다음 할 일' 상자 없이 바로 아래에 둔다(S15P31A108-441). */}
+                      <div className="flex flex-wrap items-start gap-2">
                         {isOwner && active && primary === 'revise' && (
                           <Button
                             disabled={action.busy}
@@ -976,7 +1042,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             </Button>
                           </>
                         )}
-                        {/* 새 리비전·담당자 변경·작업 취소는 '더 보기'로 묶는다. */}
+                        {/* 새 리비전·담당자 변경·작업 취소와 보조 기능(담당 후보 추천, 에이전트용 작업 지시 복사)은 '더 보기'로 묶는다(S15P31A108-441).
+                          이 메뉴는 팀장과 담당자에게만 보인다(S15P31A108-419). */}
                         {active && (isOwner || isLeader) && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -1000,7 +1067,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                   계획 수정
                                 </DropdownMenuItem>
                               )}
-                              {/* 이 메뉴는 팀장과 담당자에게만 보인다. 팀원은 자기가 맡은 작업을 다른 팀원에게 넘긴다(S15P31A108-419). */}
+                              {/* 팀원은 자기가 맡은 작업을 다른 팀원에게 넘긴다(S15P31A108-419). */}
                               <DropdownMenuItem
                                 onSelect={() => {
                                   setFormTask(current)
@@ -1011,6 +1078,29 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                   ? '담당자 바꾸기'
                                   : '담당자 정하기'}
                               </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => setSheet('recommend')}
+                              >
+                                담당 후보 추천
+                              </DropdownMenuItem>
+                              {isOwner && (
+                                <DropdownMenuItem
+                                  onSelect={async () => {
+                                    // http처럼 보안 컨텍스트가 아니면 navigator.clipboard가 없어 바로 던진다. 그때도 실패 안내를 보인다(#325 리뷰).
+                                    let copied = true
+                                    try {
+                                      await navigator.clipboard.writeText(
+                                        agentTaskInstructions(current.id),
+                                      )
+                                    } catch {
+                                      copied = false
+                                    }
+                                    setHandoff({ taskId: current.id, copied })
+                                  }}
+                                >
+                                  에이전트용 작업 지시 복사
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 variant="destructive"
@@ -1022,6 +1112,21 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                           </DropdownMenu>
                         )}
                       </div>
+                      {handoff?.taskId === current.id &&
+                        (handoff.copied ? (
+                          <p
+                            role="status"
+                            className="text-sm text-muted-foreground"
+                          >
+                            에이전트용 작업 지시를 복사했어요. 연결한 에이전트에
+                            붙여 넣으세요.
+                          </p>
+                        ) : (
+                          <p role="alert" className="text-sm text-destructive">
+                            복사할 수 없어요. 에이전트에게 작업 ID {current.id}
+                            를 전달하세요.
+                          </p>
+                        ))}
                       {!current.assignee_member_id ? (
                         // 담당자가 없으면 아무도 계획 수정·시작·재개하지 못한다. 팀장은 정하고 팀원은 스스로 맡는다(TSK-A06, 11-04).
                         // API 없음: 누가 나가서 비었는지(캔버스 '김동료 나감')는 작업 응답에 없어 쓰지 않는다.
@@ -1076,154 +1181,194 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                           </p>
                         )
                       )}
-                      {/* 계획 요약(캔버스 PNL-05-v2-tasks): 목표 한 줄과 범위·근거·완료 기준 상자. 접근 방법은 서버 필수값이라 함께 둔다. */}
-                      <p className="text-sm leading-6 whitespace-pre-wrap">
-                        <strong className="mr-1.5 font-semibold">
-                          계획 r{current.current_plan_revision.revision_no}
-                        </strong>
-                        {current.current_plan_revision.plan.goal}
-                      </p>
-                      <dl className="grid gap-4 rounded-xl bg-muted/40 p-4 text-sm sm:grid-cols-2">
-                        {(
-                          [
-                            [
-                              '포함 범위',
-                              current.current_plan_revision.plan.included_scope,
-                            ],
-                            [
-                              '이번에 빼는 범위',
-                              current.current_plan_revision.plan.excluded_scope,
-                            ],
-                            [
-                              '근거 설계',
-                              current.current_plan_revision.plan.design_refs.map(
-                                refLabel,
-                              ),
-                            ],
-                            [
-                              '완료 기준',
-                              current.current_plan_revision.plan
-                                .completion_criteria,
-                            ],
-                          ] as const
-                        ).map(([label, values]) => (
-                          <div key={label}>
-                            <dt className="mb-1 text-xs text-muted-foreground">
-                              {label}
-                            </dt>
-                            {values.length ? (
-                              values.map((value, index) => (
-                                <dd key={index}>{value}</dd>
-                              ))
-                            ) : (
-                              <dd className="text-muted-foreground">없음</dd>
-                            )}
-                          </div>
-                        ))}
-                        <div className="sm:col-span-2">
-                          <dt className="mb-1 text-xs text-muted-foreground">
-                            접근 방법
-                          </dt>
-                          <dd className="leading-6 whitespace-pre-wrap">
-                            {current.current_plan_revision.plan.approach}
-                          </dd>
-                        </div>
-                      </dl>
-                      {current.status === 'IN_PROGRESS' && (
-                        <p className="rounded-lg bg-muted/40 p-3 text-sm">
-                          시작 직전에 참조 설계와 선행 작업을 다시 확인했어요.
-                        </p>
-                      )}
-                      {current.status === 'COMPLETED' && (
-                        <div className="grid gap-2 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
-                          <p className="font-semibold">완료 보고를 마쳤어요</p>
-                          <ul className="grid gap-1">
-                            {current.current_plan_revision.plan.completion_criteria.map(
-                              (value, index) => (
-                                <li key={index}>✓ {value}</li>
-                              ),
-                            )}
-                          </ul>
-                          {/* API 없음: 완료 보고의 요약과 계획과 달라진 점이 작업 상세 응답에 없어 완료 기준만 다시 보여 준다. */}
-                          {isOwner && (
-                            <Button
-                              className="justify-self-start"
-                              onClick={() => {
-                                setFormTask(undefined)
-                                setEditing('new')
-                              }}
-                            >
-                              다음 작업 계획 등록
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                      {/* 계획 이력·당시 개발 맥락·작업 기록은 한 줄 카드로 두고 창 안 화면으로 연다. 개발 맥락은 이력 화면에 있다(캔버스 링크). */}
-                      <div className="grid divide-y overflow-hidden rounded-xl border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                        {(
-                          [
-                            [
-                              'history',
-                              '계획 이력',
-                              revisions.data &&
-                                `r${current.current_plan_revision.revision_no} · ${revisions.data.items.length}개`,
-                            ],
-                            [
-                              'history',
-                              '당시 개발 맥락',
-                              !current.current_plan_revision.plan
-                                .context_packet_id && '연결 안 됨',
-                            ],
-                            [
-                              'records',
-                              '작업 기록',
-                              records.data && `${records.data.items.length}개`,
-                            ],
-                          ] as const
-                        ).map(([target, label, detail]) => (
-                          <button
-                            key={label}
-                            type="button"
-                            onClick={() => setSheet(target)}
-                            className="flex items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/50"
-                          >
-                            <span className="grid gap-0.5">
-                              <span className="text-sm font-semibold">
-                                {label}
-                              </span>{' '}
-                              {detail && (
-                                <span className="text-xs text-muted-foreground">
-                                  {detail}
-                                </span>
-                              )}
-                            </span>
-                            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                          </button>
-                        ))}
-                      </div>
                     </CardContent>
                   </Card>
-                  {/* 검증 결과는 통과가 아닐 때만 펼친다(11-05 결정, 캔버스 PNL-05-v2-blocked). */}
-                  {/* Card 테두리는 ring이라 막힘 표시도 ring 색으로 준다(캔버스 빨간 테두리). */}
-                  <Card className={blocked ? 'ring-destructive/60' : ''}>
-                    <details
-                      key={current.id}
-                      open={!validationPassed}
-                      className="group/validation"
+                  {/* 상태와 버튼은 위 카드에 두고, 계획과 검증 결과는 한 페이지에 잇지 않고 탭으로 나눈다(S15P31A108-416). */}
+                  <Tabs.Root
+                    value={detailTab}
+                    onValueChange={(tab) =>
+                      setPickedTab({ taskId: current.id, tab })
+                    }
+                    className="space-y-3"
+                  >
+                    <Tabs.List
+                      aria-label="작업 상세"
+                      className="flex gap-1 border-b"
                     >
-                      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                        <CardHeader>
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <CardTitle>설계와 계획의 검증 결과</CardTitle>
-                            <span className="flex items-center gap-2">
-                              <StatusPill
-                                value={
-                                  result?.status ?? current.validation_status
-                                }
-                              />
-                              <ChevronDown className="size-4 text-muted-foreground transition-transform group-open/validation:rotate-180" />
-                            </span>
+                      {(
+                        [
+                          ['plan', '계획'],
+                          ['validation', cancelled ? '검증 기록' : '검증 결과'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <Tabs.Trigger
+                          key={value}
+                          value={value}
+                          className={cn(
+                            '-mb-px inline-flex items-center gap-2 rounded-t-lg border-b-2 border-transparent px-3 pt-1.5 pb-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-foreground/6 hover:text-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-foreground',
+                            focusRing,
+                          )}
+                        >
+                          {label}
+                          {/* 취소된 작업의 검증은 '재검증 필요'로 읽히지 않게 상태를 붙이지 않는다(S15P31A108-433). */}
+                          {value === 'validation' &&
+                            !cancelled &&
+                            tonePill(
+                              result?.status ?? current.validation_status,
+                            )}
+                        </Tabs.Trigger>
+                      ))}
+                    </Tabs.List>
+                    <Tabs.Content value="plan" className={focusRing}>
+                      <Card>
+                        <CardContent className="space-y-4">
+                          {/* 계획 요약(캔버스 PNL-05-v2-tasks): 목표 한 줄과 범위·근거·완료 기준 상자. 접근 방법은 서버 필수값이라 함께 둔다. */}
+                          <p className="text-sm leading-6 whitespace-pre-wrap">
+                            <strong className="mr-1.5 font-semibold">
+                              {cancelled && '취소 전 '}계획 r
+                              {current.current_plan_revision.revision_no}
+                            </strong>
+                            {current.current_plan_revision.plan.goal}
+                          </p>
+                          <dl className="grid gap-4 rounded-xl bg-muted/40 p-4 text-sm sm:grid-cols-2">
+                            {(
+                              [
+                                [
+                                  '포함 범위',
+                                  current.current_plan_revision.plan
+                                    .included_scope,
+                                ],
+                                [
+                                  '이번에 빼는 범위',
+                                  current.current_plan_revision.plan
+                                    .excluded_scope,
+                                ],
+                                [
+                                  '근거 설계',
+                                  current.current_plan_revision.plan.design_refs.map(
+                                    refLabel,
+                                  ),
+                                ],
+                                [
+                                  '완료 기준',
+                                  current.current_plan_revision.plan
+                                    .completion_criteria,
+                                ],
+                              ] as const
+                            ).map(([label, values]) => (
+                              <div key={label}>
+                                <dt className="mb-1 text-xs text-muted-foreground">
+                                  {label}
+                                </dt>
+                                {values.length ? (
+                                  values.map((value, index) => (
+                                    <dd key={index}>{value}</dd>
+                                  ))
+                                ) : (
+                                  <dd className="text-muted-foreground">
+                                    없음
+                                  </dd>
+                                )}
+                              </div>
+                            ))}
+                            <div className="sm:col-span-2">
+                              <dt className="mb-1 text-xs text-muted-foreground">
+                                접근 방법
+                              </dt>
+                              <dd className="leading-6 whitespace-pre-wrap">
+                                {current.current_plan_revision.plan.approach}
+                              </dd>
+                            </div>
+                          </dl>
+                          {current.status === 'IN_PROGRESS' && (
+                            <p className="rounded-lg bg-muted/40 p-3 text-sm">
+                              시작 직전에 참조 설계와 선행 작업을 다시
+                              확인했어요.
+                            </p>
+                          )}
+                          {current.status === 'COMPLETED' && (
+                            <div className="grid gap-2 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
+                              <p className="font-semibold">
+                                완료 보고를 마쳤어요
+                              </p>
+                              <ul className="grid gap-1">
+                                {current.current_plan_revision.plan.completion_criteria.map(
+                                  (value, index) => (
+                                    <li key={index}>✓ {value}</li>
+                                  ),
+                                )}
+                              </ul>
+                              {/* API 없음: 완료 보고의 요약과 계획과 달라진 점이 작업 상세 응답에 없어 완료 기준만 다시 보여 준다. */}
+                              {isOwner && (
+                                <Button
+                                  className="justify-self-start"
+                                  onClick={() => {
+                                    setFormTask(undefined)
+                                    setEditing('new')
+                                  }}
+                                >
+                                  다음 작업 계획 등록
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          {/* 계획 이력·당시 개발 맥락·작업 기록은 한 줄 카드로 두고 창 안 화면으로 연다. 개발 맥락은 이력 화면에 있다(캔버스 링크). */}
+                          <div className="grid divide-y overflow-hidden rounded-xl border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                            {(
+                              [
+                                [
+                                  'history',
+                                  '계획 이력',
+                                  revisions.data &&
+                                    `r${current.current_plan_revision.revision_no} · ${revisions.data.items.length}개`,
+                                ],
+                                [
+                                  'history',
+                                  '당시 개발 맥락',
+                                  !current.current_plan_revision.plan
+                                    .context_packet_id && '연결 안 됨',
+                                ],
+                                [
+                                  'records',
+                                  '작업 기록',
+                                  records.data &&
+                                    `${records.data.items.length}개`,
+                                ],
+                              ] as const
+                            ).map(([target, label, detail]) => (
+                              <button
+                                key={label}
+                                type="button"
+                                onClick={() => setSheet(target)}
+                                className="flex items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/50"
+                              >
+                                <span className="grid gap-0.5">
+                                  <span className="text-sm font-semibold">
+                                    {label}
+                                  </span>{' '}
+                                  {detail && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {detail}
+                                    </span>
+                                  )}
+                                </span>
+                                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                              </button>
+                            ))}
                           </div>
+                        </CardContent>
+                      </Card>
+                    </Tabs.Content>
+                    {/* 검증 탭은 알릴 것이 있을 때 먼저 열린다(11-05 결정, 캔버스 PNL-05-v2-blocked). 상태는 탭의 알약이 말한다. */}
+                    {/* Card 테두리는 ring이라 막힘 표시도 ring 색으로 준다(캔버스 빨간 테두리). */}
+                    <Tabs.Content value="validation" className={focusRing}>
+                      <Card className={blocked ? 'ring-destructive/60' : ''}>
+                        <CardHeader>
+                          <CardTitle>
+                            {cancelled
+                              ? '취소 전 검증 기록'
+                              : '설계와 계획의 검증 결과'}
+                          </CardTitle>
                           <CardDescription>
                             {result &&
                               `r${
@@ -1238,148 +1383,104 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                             않아요. BEEZ를 거치지 않은 작업은 검증하지 않아요.
                           </CardDescription>
                         </CardHeader>
-                      </summary>
-                      <CardContent className="mt-4 space-y-3">
-                        {validation.error && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            {isMissingApi(validation.error) ? (
-                              <p
-                                role="status"
-                                className="text-sm text-muted-foreground"
+                        <CardContent className="space-y-3">
+                          {validation.error && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isMissingApi(validation.error) ? (
+                                <p
+                                  role="status"
+                                  className="text-sm text-muted-foreground"
+                                >
+                                  검증 결과는 서버에서 아직 준비 중이에요.
+                                </p>
+                              ) : (
+                                <p
+                                  role="alert"
+                                  className="text-sm text-destructive"
+                                >
+                                  검증 결과를 불러오지 못했어요.
+                                </p>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={validation.isFetching}
+                                onClick={() => void validation.refetch()}
                               >
-                                검증 결과는 서버에서 아직 준비 중이에요.
-                              </p>
-                            ) : (
+                                검증 결과 다시 불러오기
+                              </Button>
+                            </div>
+                          )}
+                          {pendingDeltaId && pendingDelta.error && (
+                            <div className="flex flex-wrap items-center gap-2">
                               <p
                                 role="alert"
                                 className="text-sm text-destructive"
                               >
-                                검증 결과를 불러오지 못했어요.
+                                완료 보고 재검증 결과를 불러오지 못했어요.
                               </p>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={validation.isFetching}
-                              onClick={() => void validation.refetch()}
-                            >
-                              검증 결과 다시 불러오기
-                            </Button>
-                          </div>
-                        )}
-                        {pendingDeltaId && pendingDelta.error && (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p
-                              role="alert"
-                              className="text-sm text-destructive"
-                            >
-                              완료 보고 재검증 결과를 불러오지 못했어요.
-                            </p>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={pendingDelta.isFetching}
-                              onClick={() => void pendingDelta.refetch()}
-                            >
-                              완료 보고 재검증 결과 다시 불러오기
-                            </Button>
-                          </div>
-                        )}
-                        {current.waiting_reason && (
-                          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                            대기 이유:{' '}
-                            <StatusPill value={current.waiting_reason} />
-                          </p>
-                        )}
-                        {result?.stale_reason && (
-                          <p className="text-sm text-amber-800">
-                            {staleReasonText(result.stale_reason)}
-                          </p>
-                        )}
-                        {result?.status === 'RUNNING' && (
-                          <p
-                            role="status"
-                            className="text-sm text-muted-foreground"
-                          >
-                            같은 검증의 분석 결과를 확인하고 있어요.
-                          </p>
-                        )}
-                        {result?.status === 'ERROR' && (
-                          <div className="flex flex-wrap items-center gap-3">
-                            <ValidationFailure
-                              errorCode={result.error_code}
-                              needsHumanReview={!!needsHumanReview}
-                              collectionFailure={view?.collectionFailure}
-                            />
-                            {view?.collectionFailure &&
-                              !view.collectionFailure.retryable && (
-                                <div className="flex flex-wrap gap-2">
-                                  {isOwner && active && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={action.busy}
-                                      onClick={() => {
-                                        setFormTask(current)
-                                        setEditing('edit')
-                                      }}
-                                    >
-                                      계획·참조 범위 검토
-                                    </Button>
-                                  )}
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => openPane('documents')}
-                                  >
-                                    근거 문서 확인
-                                  </Button>
-                                </div>
-                              )}
-                            {isOwner && view?.retryable && !retryLimited && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                disabled={action.busy || validationActions.busy}
-                                onClick={() =>
-                                  requestValidation(
-                                    result.id,
-                                    () =>
-                                      validationActions.retry(result.id, {
-                                        expected_attempt:
-                                          result.current_attempt,
-                                      }),
-                                    '검증 재시도를 접수했어요.',
-                                  )
-                                }
+                                disabled={pendingDelta.isFetching}
+                                onClick={() => void pendingDelta.refetch()}
                               >
-                                <RefreshCw />
-                                {view.collectionFailure
-                                  ? '근거 수집 재시도'
-                                  : '실행 재시도'}
+                                완료 보고 재검증 결과 다시 불러오기
                               </Button>
-                            )}
-                          </div>
-                        )}
-                        {attemptLimitReached && (
-                          <p role="alert" className="text-sm text-destructive">
-                            {view?.collectionFailure
-                              ? '이 입력으로 AI 검증할 수 있는 횟수를 모두 썼어요.'
-                              : getErrorCodeMessage('validation_attempt_limit')}
-                          </p>
-                        )}
-                        {delta && (
-                          <div
-                            className="flex flex-wrap items-center gap-3 rounded-lg border p-3"
-                            aria-label="완료 보고 재검증"
-                          >
-                            <p className="text-sm">
-                              완료 보고 재검증:{' '}
-                              <StatusPill value={delta.status} />
+                            </div>
+                          )}
+                          {current.waiting_reason && (
+                            <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                              대기 이유:{' '}
+                              <StatusPill value={current.waiting_reason} />
                             </p>
-                            {isOwner &&
-                              deltaRetryable &&
-                              !deltaRetryLimited && (
+                          )}
+                          {result?.stale_reason && (
+                            <p className="text-sm text-amber-800">
+                              {staleReasonText(result.stale_reason)}
+                            </p>
+                          )}
+                          {result?.status === 'RUNNING' && (
+                            <p
+                              role="status"
+                              className="text-sm text-muted-foreground"
+                            >
+                              같은 검증의 분석 결과를 확인하고 있어요.
+                            </p>
+                          )}
+                          {result?.status === 'ERROR' && (
+                            <div className="flex flex-wrap items-center gap-3">
+                              <ValidationFailure
+                                errorCode={result.error_code}
+                                needsHumanReview={!!needsHumanReview}
+                                collectionFailure={view?.collectionFailure}
+                              />
+                              {view?.collectionFailure &&
+                                !view.collectionFailure.retryable && (
+                                  <div className="flex flex-wrap gap-2">
+                                    {isOwner && active && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={action.busy}
+                                        onClick={() => {
+                                          setFormTask(current)
+                                          setEditing('edit')
+                                        }}
+                                      >
+                                        계획·참조 범위 검토
+                                      </Button>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => openPane('documents')}
+                                    >
+                                      근거 문서 확인
+                                    </Button>
+                                  </div>
+                                )}
+                              {isOwner && view?.retryable && !retryLimited && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1388,214 +1489,269 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                   }
                                   onClick={() =>
                                     requestValidation(
-                                      delta.id,
+                                      result.id,
                                       () =>
-                                        validationActions.retry(delta.id, {
+                                        validationActions.retry(result.id, {
                                           expected_attempt:
-                                            delta.current_attempt,
+                                            result.current_attempt,
                                         }),
-                                      '완료 보고 재검증 재시도를 접수했어요.',
+                                      '검증 재시도를 접수했어요.',
                                     )
                                   }
                                 >
                                   <RefreshCw />
-                                  완료 보고 재검증 재시도
+                                  {view.collectionFailure
+                                    ? '근거 수집 재시도'
+                                    : '실행 재시도'}
                                 </Button>
                               )}
-                          </div>
-                        )}
-                        {policyAnalysis && (
-                          <section
-                            className="space-y-3 rounded-lg border p-4"
-                            aria-label="정책 분석"
-                          >
-                            <div>
-                              <h3 className="text-sm font-semibold">
-                                정책 분석
-                              </h3>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                계획과 승인 근거를 비교한 분석 후보예요. 내용을
-                                검토해 주세요.
-                              </p>
                             </div>
-                            {policyAnalysis.no_policy_requirements_reason && (
-                              <p className="text-sm">
-                                {policyAnalysis.no_policy_requirements_reason}
-                              </p>
-                            )}
-                            {policyAnalysis.no_policy_requirements_evidence && (
-                              <p className="text-xs text-muted-foreground">
-                                계획 근거: “
-                                {
-                                  policyAnalysis.no_policy_requirements_evidence
-                                    .quote
-                                }
-                                ”
-                              </p>
-                            )}
-                            {policyAnalysis.policy_assessments_truncated && (
-                              <p className="text-sm text-destructive">
-                                분석할 정책이 많아 일부만 확인했어요.
-                              </p>
-                            )}
-                            {policyAnalysis.policy_assessments.map((policy) => (
-                              <article
-                                key={policy.need_id}
-                                className="space-y-1 border-t pt-3 text-sm"
-                              >
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <strong>{policy.topic}</strong>
-                                  <span
-                                    className={cn(
-                                      'text-xs',
-                                      [
-                                        'EXPLICITLY_UNDECIDED',
-                                        'CONTRADICTORY',
-                                      ].includes(policy.state)
-                                        ? 'font-medium text-destructive'
-                                        : 'text-muted-foreground',
-                                    )}
-                                  >
-                                    {policyStateLabel[policy.state]}
-                                  </span>
-                                </div>
-                                <p>{policy.explanation}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  계획 근거: “{policy.plan_evidence.quote}”
-                                </p>
-                                {policy.approved_content_refs.map(
-                                  (ref, index) => (
-                                    <p
-                                      key={index}
-                                      className="text-xs text-muted-foreground"
-                                    >
-                                      {approvedLabel(
-                                        ref.design_item_version_id,
-                                      )}
-                                      : “{ref.quote}”
-                                    </p>
-                                  ),
-                                )}
-                              </article>
-                            ))}
-                          </section>
-                        )}
-                        {view?.findings.map((finding) => (
-                          <article
-                            key={finding.id}
-                            className="rounded-lg border p-4"
-                          >
-                            <div className="mb-2 flex flex-wrap gap-2">
-                              <StatusPill value={finding.severity} />
-                              <span className="text-xs text-muted-foreground">
-                                {finding.source === 'RULE'
-                                  ? '규칙 검사'
-                                  : '분석 후보'}
-                              </span>
-                            </div>
-                            <p className="text-sm leading-6">
-                              {finding.message}
+                          )}
+                          {attemptLimitReached && (
+                            <p
+                              role="alert"
+                              className="text-sm text-destructive"
+                            >
+                              {view?.collectionFailure
+                                ? '이 입력으로 AI 검증할 수 있는 횟수를 모두 썼어요.'
+                                : getErrorCodeMessage(
+                                    'validation_attempt_limit',
+                                  )}
                             </p>
-                            {finding.next_action && (
-                              <p className="mt-2 text-sm text-muted-foreground">
-                                {finding.next_action}
+                          )}
+                          {delta && (
+                            <div
+                              className="flex flex-wrap items-center gap-3 rounded-lg border p-3"
+                              aria-label="완료 보고 재검증"
+                            >
+                              <p className="text-sm">
+                                완료 보고 재검증:{' '}
+                                <StatusPill value={delta.status} />
                               </p>
-                            )}
-                            {finding.ai_suggested_action && (
-                              <section
-                                aria-label="AI 후속 행동 제안"
-                                className="mt-3 space-y-1 rounded-md bg-muted p-3 text-sm"
-                              >
-                                <h4 className="font-medium">
-                                  AI 후속 행동 제안
-                                </h4>
-                                <p className="break-words whitespace-pre-wrap">
-                                  {finding.ai_suggested_action}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  참고용 제안이에요. 담당자와 승인 여부를 확인해
-                                  주세요.
-                                </p>
-                              </section>
-                            )}
-                            {finding.sources.map((source, index) => (
-                              <p
-                                key={index}
-                                className="mt-2 text-xs text-muted-foreground"
-                              >
-                                {documentTitle(source.document_id)} v
-                                {source.version_no} · {source.location}
-                              </p>
-                            ))}
-                            {finding.conflicting_design_refs?.map((ref) => (
-                              <p
-                                key={ref.design_item_version_id}
-                                className="mt-2 text-xs text-muted-foreground"
-                              >
-                                충돌하는 승인 항목:{' '}
-                                {approvedLabel(
-                                  ref.design_item_version_id,
-                                  ref.design_item_id,
+                              {isOwner &&
+                                deltaRetryable &&
+                                !deltaRetryLimited && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={
+                                      action.busy || validationActions.busy
+                                    }
+                                    onClick={() =>
+                                      requestValidation(
+                                        delta.id,
+                                        () =>
+                                          validationActions.retry(delta.id, {
+                                            expected_attempt:
+                                              delta.current_attempt,
+                                          }),
+                                        '완료 보고 재검증 재시도를 접수했어요.',
+                                      )
+                                    }
+                                  >
+                                    <RefreshCw />
+                                    완료 보고 재검증 재시도
+                                  </Button>
                                 )}
-                              </p>
-                            ))}
-                            {finding.related_task_id && (
-                              <FindingRelatedTask
-                                projectId={projectId}
-                                taskId={finding.related_task_id}
-                                onOpen={(id) =>
-                                  setSelected({ id, focus: focusId })
-                                }
-                              />
-                            )}
-                            <div className="mt-3">
-                              {finding.resolution === 'FIX_PLAN' && isOwner ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setFormTask(current)
-                                    setEditing('edit')
-                                  }}
-                                >
-                                  계획 보완
-                                </Button>
-                              ) : finding.resolution === 'PROPOSE_CHANGE' ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openPane('changes')}
-                                >
-                                  설계 변경 제안
-                                </Button>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">
-                                  {finding.resolution === 'HUMAN_REVIEW'
-                                    ? '관련 담당자와 인간 팀장의 확인이 필요해요.'
-                                    : finding.resolution === 'RETRY'
-                                      ? '입력과 참조를 확인한 뒤 다시 검증해 주세요.'
-                                      : ''}
+                            </div>
+                          )}
+                          {policyAnalysis && (
+                            <section
+                              className="space-y-3 rounded-lg border p-4"
+                              aria-label="정책 분석"
+                            >
+                              <div>
+                                <h3 className="text-sm font-semibold">
+                                  정책 분석
+                                </h3>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  계획과 승인 근거를 비교한 분석 후보예요.
+                                  내용을 검토해 주세요.
+                                </p>
+                              </div>
+                              {policyAnalysis.no_policy_requirements_reason && (
+                                <p className="text-sm">
+                                  {policyAnalysis.no_policy_requirements_reason}
                                 </p>
                               )}
-                            </div>
-                          </article>
-                        ))}
-                        {!view?.findings.length && !view?.collectionFailure && (
-                          <p className="text-sm text-muted-foreground">
-                            {result?.status === 'PASS'
-                              ? '현재 계획과 입력에서 시작을 막는 항목을 찾지 못했어요. 시작 직전에 서버가 참조와 선행 작업을 다시 확인해요.'
-                              : '계획 검증 후 근거와 보완 항목이 이곳에 표시돼요.'}
-                          </p>
-                        )}
-                        {!!view?.relatedTaskRefs.length && (
-                          <RelatedTaskRefs
-                            projectId={projectId}
-                            refs={view.relatedTaskRefs}
-                          />
-                        )}
-                      </CardContent>
-                    </details>
-                  </Card>
+                              {policyAnalysis.no_policy_requirements_evidence && (
+                                <p className="text-xs text-muted-foreground">
+                                  계획 근거: “
+                                  {
+                                    policyAnalysis
+                                      .no_policy_requirements_evidence.quote
+                                  }
+                                  ”
+                                </p>
+                              )}
+                              {policyAnalysis.policy_assessments_truncated && (
+                                <p className="text-sm text-destructive">
+                                  분석할 정책이 많아 일부만 확인했어요.
+                                </p>
+                              )}
+                              {policyAnalysis.policy_assessments.map(
+                                (policy) => (
+                                  <article
+                                    key={policy.need_id}
+                                    className="space-y-1 border-t pt-3 text-sm"
+                                  >
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <strong>{policy.topic}</strong>
+                                      <span
+                                        className={cn(
+                                          'text-xs',
+                                          [
+                                            'EXPLICITLY_UNDECIDED',
+                                            'CONTRADICTORY',
+                                          ].includes(policy.state)
+                                            ? 'font-medium text-destructive'
+                                            : 'text-muted-foreground',
+                                        )}
+                                      >
+                                        {policyStateLabel[policy.state]}
+                                      </span>
+                                    </div>
+                                    <p>{policy.explanation}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      계획 근거: “{policy.plan_evidence.quote}”
+                                    </p>
+                                    {policy.approved_content_refs.map(
+                                      (ref, index) => (
+                                        <p
+                                          key={index}
+                                          className="text-xs text-muted-foreground"
+                                        >
+                                          {approvedLabel(
+                                            ref.design_item_version_id,
+                                          )}
+                                          : “{ref.quote}”
+                                        </p>
+                                      ),
+                                    )}
+                                  </article>
+                                ),
+                              )}
+                            </section>
+                          )}
+                          {view?.findings.map((finding) => (
+                            <article
+                              key={finding.id}
+                              className="rounded-lg border p-4"
+                            >
+                              <div className="mb-2 flex flex-wrap gap-2">
+                                <StatusPill value={finding.severity} />
+                                <span className="text-xs text-muted-foreground">
+                                  {finding.source === 'RULE'
+                                    ? '규칙 검사'
+                                    : '분석 후보'}
+                                </span>
+                              </div>
+                              <p className="text-sm leading-6">
+                                {finding.message}
+                              </p>
+                              {finding.next_action && (
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                  {finding.next_action}
+                                </p>
+                              )}
+                              {finding.ai_suggested_action && (
+                                <section
+                                  aria-label="AI 후속 행동 제안"
+                                  className="mt-3 space-y-1 rounded-md bg-muted p-3 text-sm"
+                                >
+                                  <h4 className="font-medium">
+                                    AI 후속 행동 제안
+                                  </h4>
+                                  <p className="break-words whitespace-pre-wrap">
+                                    {finding.ai_suggested_action}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    참고용 제안이에요. 담당자와 승인 여부를
+                                    확인해 주세요.
+                                  </p>
+                                </section>
+                              )}
+                              {finding.sources.map((source, index) => (
+                                <p
+                                  key={index}
+                                  className="mt-2 text-xs text-muted-foreground"
+                                >
+                                  {documentTitle(source.document_id)} v
+                                  {source.version_no} · {source.location}
+                                </p>
+                              ))}
+                              {finding.conflicting_design_refs?.map((ref) => (
+                                <p
+                                  key={ref.design_item_version_id}
+                                  className="mt-2 text-xs text-muted-foreground"
+                                >
+                                  충돌하는 승인 항목:{' '}
+                                  {approvedLabel(
+                                    ref.design_item_version_id,
+                                    ref.design_item_id,
+                                  )}
+                                </p>
+                              ))}
+                              {finding.related_task_id && (
+                                <FindingRelatedTask
+                                  projectId={projectId}
+                                  taskId={finding.related_task_id}
+                                  onOpen={(id) =>
+                                    setSelected({ id, focus: focusId })
+                                  }
+                                />
+                              )}
+                              <div className="mt-3">
+                                {finding.resolution === 'FIX_PLAN' &&
+                                isOwner ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setFormTask(current)
+                                      setEditing('edit')
+                                    }}
+                                  >
+                                    계획 보완
+                                  </Button>
+                                ) : finding.resolution === 'PROPOSE_CHANGE' ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openPane('changes')}
+                                  >
+                                    설계 변경 제안
+                                  </Button>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    {finding.resolution === 'HUMAN_REVIEW'
+                                      ? '관련 담당자와 인간 팀장의 확인이 필요해요.'
+                                      : finding.resolution === 'RETRY'
+                                        ? '입력과 참조를 확인한 뒤 다시 검증해 주세요.'
+                                        : ''}
+                                  </p>
+                                )}
+                              </div>
+                            </article>
+                          ))}
+                          {!view?.findings.length &&
+                            !view?.collectionFailure && (
+                              <p className="text-sm text-muted-foreground">
+                                {result?.status === 'PASS'
+                                  ? '현재 계획과 입력에서 시작을 막는 항목을 찾지 못했어요. 시작 직전에 서버가 참조와 선행 작업을 다시 확인해요.'
+                                  : '계획 검증 후 근거와 보완 항목이 이곳에 표시돼요.'}
+                              </p>
+                            )}
+                          {!!view?.relatedTaskRefs.length && (
+                            <RelatedTaskRefs
+                              projectId={projectId}
+                              refs={view.relatedTaskRefs}
+                            />
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Tabs.Content>
+                  </Tabs.Root>
                   {sheet === 'history' && (
                     <PaneSheet
                       back={current.key}
@@ -1716,6 +1872,21 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                           </Button>
                         </div>
                       )}
+                    </PaneSheet>
+                  )}
+                  {sheet === 'recommend' && (
+                    <PaneSheet
+                      back={current.key}
+                      title="비비의 담당 후보 추천"
+                      description="담당 도메인, 현재 업무량과 선행 작업을 참고해요. 추천만 표시하며 담당자를 자동으로 바꾸지 않아요."
+                      onClose={() => setSheet(null)}
+                    >
+                      <AssignmentRecommendations
+                        key={`${current.id}-${current.lock_version}`}
+                        projectId={projectId}
+                        taskId={current.id}
+                        members={members.data?.items ?? []}
+                      />
                     </PaneSheet>
                   )}
                   {sheet === 'records' && (

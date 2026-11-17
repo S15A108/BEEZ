@@ -549,7 +549,7 @@ it('서버가 거절하면 원인별로 알리고 입력값을 남긴다', async
   ).toBeInTheDocument()
 })
 
-// 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다(사용자 결정 11-16).
+// 기준 v1 발행(PLN-A10)은 기획 분석의 '프로젝트 시작' 한 곳에서 한다(사용자 결정 11-16, 버튼 이름 11-17).
 // 그래서 4종이 승인되면 배너의 '설계 초안 만들기'가 켜져 있고, 누르면 발행하지 않고 기획 분석 창을 연다.
 it('4종이 승인되면 설계 초안 만들기가 켜져 있고 누르면 발행하지 않고 기획 분석을 연다', async () => {
   const user = userEvent.setup()
@@ -573,7 +573,9 @@ it('4종이 승인되면 설계 초안 만들기가 켜져 있고 누르면 발�
     ),
   ).toBeInTheDocument()
   expect(
-    screen.getByText(/기획 분석에서 설계 항목을 검토하고 발행하면/),
+    screen.getByText(
+      /기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면/,
+    ),
   ).toBeInTheDocument()
   const start = screen.getByRole('button', { name: '설계 초안 만들기' })
   expect(start).toBeEnabled()

@@ -54,11 +54,11 @@ export function publishNotice(jobs: DraftJob[]): string {
   const notes = []
   if (pending > 0)
     notes.push(
-      `아직 채택하지 않은 후보 ${pending}개는 기준에 들어가지 않아요. 필요하면 창을 닫고 후보를 채택해 주세요.`,
+      `아직 채택하지 않은 후보 ${pending}개는 기준에 들어가지 않아요. 필요하면 먼저 후보를 채택해 주세요.`,
     )
   if (failedDocuments > 0)
     notes.push(
-      `후보를 모두 만들지 못한 문서가 ${failedDocuments}개 있어요. 빠진 설계 항목은 발행 뒤 변경 제안으로 추가해야 해요.`,
+      `후보를 모두 만들지 못한 문서가 ${failedDocuments}개 있어요. 빠진 설계 항목은 프로젝트를 시작한 뒤 변경 제안으로 추가해야 해요.`,
     )
   return notes.length ? ` ${notes.join(' ')}` : ''
 }

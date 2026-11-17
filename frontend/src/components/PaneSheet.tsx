@@ -138,7 +138,7 @@ export function PaneSheet({
         type="button"
         disabled={busy}
         onClick={onClose}
-        className="inline-flex items-center gap-1 self-start text-[13px] font-semibold text-[#57534e] hover:text-foreground"
+        className="inline-flex items-center gap-1 self-start text-sub font-semibold text-[#57534e] hover:text-foreground"
       >
         <ChevronLeft className="size-4" />
         {back}
@@ -147,7 +147,7 @@ export function PaneSheet({
         <div>
           <h3 className="text-lg font-bold">{title}</h3>
           {description && (
-            <p className="mt-0.5 text-[13px] text-muted-foreground">
+            <p className="mt-0.5 text-sub text-muted-foreground">
               {description}
             </p>
           )}

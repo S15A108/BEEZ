@@ -102,21 +102,26 @@ export function PublishedAnalysisStatus({
   onRefresh: () => void
 }) {
   const description = describe(analysis, observedAt)
+  // 발행 요약 아래 작은 상태 줄이다. 제목과 상태를 한 줄에, 발행 전 분석과의 차이 설명은 접어 둔다(S15P31A108-456).
   return (
     <section
       aria-labelledby="published-analysis-title"
       className={cn(
-        'grid gap-2 rounded-xl border bg-card p-4 text-sm',
+        'grid gap-1 rounded-lg border bg-card px-3 py-2 text-[13px] leading-5',
         analysis?.status === 'FAILED' &&
           'border-destructive/40 bg-destructive/5',
       )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 id="published-analysis-title" className="font-semibold">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h4 id="published-analysis-title" className="text-sm font-semibold">
           발행 후 분석 상태
         </h4>
+        <p aria-live="polite" className="min-w-0 flex-1">
+          <strong>{description.title}</strong>{' '}
+          <span className="text-muted-foreground">{description.message}</span>
+        </p>
         <Button
-          size="sm"
+          size="xs"
           variant="outline"
           disabled={refreshing}
           onClick={onRefresh}
@@ -124,21 +129,17 @@ export function PublishedAnalysisStatus({
           상태 새로고침
         </Button>
       </div>
-      <div aria-live="polite" className="grid gap-1">
-        <strong>{description.title}</strong>
-        <p>{description.message}</p>
-        {analysis?.guidance === 'RETRY_SCHEDULED' &&
-          description.title === '오래 대기 중' && (
-            <p className="text-muted-foreground">
-              자동 재시도를 기다리고 있어요.
-            </p>
-          )}
-        {analysis?.current_baseline === false && (
+      {analysis?.guidance === 'RETRY_SCHEDULED' &&
+        description.title === '오래 대기 중' && (
           <p className="text-muted-foreground">
-            이 발행 이후 새로운 기준이 발행됐어요.
+            자동 재시도를 기다리고 있어요.
           </p>
         )}
-      </div>
+      {analysis?.current_baseline === false && (
+        <p className="text-muted-foreground">
+          이 발행 이후 새로운 기준이 발행됐어요.
+        </p>
+      )}
       {analysis &&
         (analysis.requested_at ||
           analysis.finished_at ||
@@ -184,12 +185,17 @@ export function PublishedAnalysisStatus({
           </dl>
         )}
       {/* 발행 후 분석의 입력은 발행한 제출과 이전 기준, 분석 시점의 열린 작업·관계다(#227). 승인 전 분석(CHG-A05)과 합치지 않는다. */}
-      <p className="text-xs text-muted-foreground">
-        발행 전 영향 분석과는 별도의 처리 상태예요. 발행 전 분석은 승인하기 전에
-        제안 내용으로 본 결과이고 영향 탭에 있어요. 발행 후 분석은 발행한 뒤
-        열려 있는 작업과 관계를 기준으로 다시 살펴봐요. 한쪽 결과가 다른 쪽을
-        대신하지 않아요.
-      </p>
+      <details className="text-xs text-muted-foreground">
+        <summary className="w-fit cursor-pointer hover:text-foreground">
+          발행 전 분석과 다른 점
+        </summary>
+        <p className="mt-1">
+          발행 전 영향 분석과는 별도의 처리 상태예요. 발행 전 분석은 승인하기
+          전에 제안 내용으로 본 결과이고 영향 탭에 있어요. 발행 후 분석은 발행한
+          뒤 열려 있는 작업과 관계를 기준으로 다시 살펴봐요. 한쪽 결과가 다른
+          쪽을 대신하지 않아요.
+        </p>
+      </details>
     </section>
   )
 }

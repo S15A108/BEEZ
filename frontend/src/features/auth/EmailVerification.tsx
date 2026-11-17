@@ -188,12 +188,12 @@ export function EmailVerification({
           )}
         </div>
         {(errors.email || sendError) && (
-          <p role="alert" className="text-xs text-destructive">
+          <p role="alert" className="text-sub text-destructive">
             {errors.email?.message ?? sendError}
           </p>
         )}
         {needed && !verified && !errors.email && !sendError && (
-          <p role="alert" className="text-xs text-destructive">
+          <p role="alert" className="text-sub text-destructive">
             이메일 인증을 먼저 해 주세요.
           </p>
         )}
@@ -214,7 +214,7 @@ export function EmailVerification({
               />
               <span
                 className={cn(
-                  'absolute inset-y-0 right-3 flex items-center text-[13px] font-semibold tabular-nums',
+                  'absolute inset-y-0 right-3 flex items-center text-sub font-semibold tabular-nums',
                   expired ? 'text-destructive' : 'text-[#8a6a00]',
                 )}
               >
@@ -232,16 +232,16 @@ export function EmailVerification({
             </Button>
           </div>
           {codeError ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-sub text-destructive">
               {codeError} {resend}
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sub text-muted-foreground">
               메일로 받은 6자리 코드를 5분 안에 입력하세요. {resend}
             </p>
           )}
           {import.meta.env.VITE_API_MODE !== 'live' && mockCode && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sub text-muted-foreground">
               예시 환경이라 메일을 보내지 않아요. 예시 코드: {mockCode}
             </span>
           )}
