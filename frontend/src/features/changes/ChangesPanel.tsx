@@ -129,13 +129,12 @@ function publishedImpact(analysis?: PublishedAnalysis) {
   if (analysis?.status === 'PENDING' || analysis?.status === 'RUNNING')
     return {
       label: '영향 분석 중',
-      message:
-        '발행 후 분석이 끝나기 전이라 영향은 아직 확정되지 않았어요. 이 승인으로 상태가 바뀐 검증과 작업은 작업 현황에서 확인하세요.',
+      message: '발행 후 분석이 끝나야 영향이 확정돼요.',
     }
   return {
     label: '영향 확인 필요',
     message:
-      '발행 후 분석으로 영향이 확정되지 않았어요. 관련 작업과 검증을 작업 현황에서 직접 확인해 주세요.',
+      '발행 후 분석으로 영향이 확정되지 않았어요. 관련 작업을 직접 확인해 주세요.',
   }
 }
 function impactMessage(
@@ -548,7 +547,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         <PaneHeaderAction>
           <Button variant="outline" onClick={() => openPane('documents')}>
             <FolderOpen />
-            공용 문서함에서 제안하기
+            제안하기
           </Button>
         </PaneHeaderAction>
       )}
@@ -638,8 +637,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         aria-current={selectedId === entry.id}
                         onClick={() => select(entry.id)}
                         className={cn(
-                          'grid w-full gap-[3px] rounded-xl border px-3 py-2.5 text-left hover:bg-muted/40',
-                          selectedId === entry.id && LIST_SELECTED,
+                          'grid w-full gap-[3px] rounded-xl border px-3 py-2.5 text-left',
+                          // 고른 항목은 마우스를 올려도 선택 바탕을 그대로 둔다(S15P31A108-456).
+                          selectedId === entry.id
+                            ? LIST_SELECTED
+                            : 'hover:bg-muted/40',
                         )}
                       >
                         {/* 상태 알약은 상세 제목 옆에만 둔다. 목록은 상태 탭으로 거른다(S15P31A108-449). */}
@@ -1254,15 +1256,55 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           )
                           const version = publishedVersion(result.baseline_id)
                           return (
-                            <div className="grid gap-2 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
-                              <h4 className="font-semibold">
-                                발행 완료{impact && ` · ${impact.label}`}
-                              </h4>
-                              <p>
-                                {version && `기준 v${version} · `}
-                                {nameOfAccount(result.approved_by)} 승인 ·{' '}
-                                {formatDate(result.approved_at)}
-                              </p>
+                            // 제목·승인 정보·버튼을 한 줄에 두고, 영향이 확정되지 않았을 때만 한 문장을 더한다(S15P31A108-456).
+                            <div className="grid gap-1 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-[13px] leading-5">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <h4 className="text-sm font-semibold">
+                                  발행 완료{impact && ` · ${impact.label}`}
+                                </h4>
+                                <span className="text-muted-foreground">
+                                  {version && `기준 v${version} · `}
+                                  {nameOfAccount(result.approved_by)} 승인 ·{' '}
+                                  {formatDate(result.approved_at)}
+                                </span>
+                                <span className="ml-auto flex flex-wrap gap-1.5">
+                                  {/* 발행 후 분석은 수동 재처리 API가 없다(CHG-A03 guidance, #243). 다시 시도 버튼은 두지 않는다. */}
+                                  <Button
+                                    size="xs"
+                                    variant={
+                                      impact?.label === '영향 확인 필요'
+                                        ? 'default'
+                                        : 'outline'
+                                    }
+                                    onClick={() => openPane('tasks')}
+                                  >
+                                    관련 작업 확인
+                                  </Button>
+                                  {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
+                                  <Button
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() =>
+                                      openPane(
+                                        'documents',
+                                        version ? `baseline:${version}` : null,
+                                      )
+                                    }
+                                  >
+                                    {version
+                                      ? `기준 v${version} 보기`
+                                      : '기준 보기'}
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() => setMode({ kind: 'history' })}
+                                  >
+                                    승인 이력
+                                  </Button>
+                                </span>
+                              </div>
+                              {impact && <p>{impact.message}</p>}
                               {result.impact_override_reason && (
                                 <p className="whitespace-pre-wrap">
                                   <span className="font-semibold">
@@ -1272,46 +1314,6 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                   {result.impact_override_reason}
                                 </p>
                               )}
-                              <p>
-                                {impact?.message ??
-                                  '이 승인으로 상태가 바뀐 검증과 작업은 작업 현황에서 확인하세요.'}
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {/* 발행 후 분석은 수동 재처리 API가 없다(CHG-A03 guidance, #243). 다시 시도 버튼은 두지 않는다. */}
-                                <Button
-                                  size="sm"
-                                  variant={
-                                    impact?.label === '영향 확인 필요'
-                                      ? 'default'
-                                      : 'outline'
-                                  }
-                                  onClick={() => openPane('tasks')}
-                                >
-                                  관련 작업 확인
-                                </Button>
-                                {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    openPane(
-                                      'documents',
-                                      version ? `baseline:${version}` : null,
-                                    )
-                                  }
-                                >
-                                  {version
-                                    ? `기준 v${version} 보기`
-                                    : '기준 보기'}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setMode({ kind: 'history' })}
-                                >
-                                  승인 이력
-                                </Button>
-                              </div>
                             </div>
                           )
                         }}
@@ -1325,297 +1327,312 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         onRefresh={() => void detail.refetch()}
                       />
                     )}
-                    <div
-                      role="tablist"
-                      aria-label="제안 보기"
-                      className="flex gap-1 border-b"
-                    >
-                      {tabs.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          role="tab"
-                          aria-selected={tab === value}
-                          onClick={() => setTab(value)}
-                          className={cn(
-                            '-mb-px border-b-2 px-3 py-2 text-sm',
-                            tab === value
-                              ? 'border-foreground font-bold'
-                              : 'border-transparent font-medium text-muted-foreground',
-                          )}
-                        >
-                          {label}
-                          {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
-                          {value === 'diff' &&
-                            ` ${current.items.length + current.documents.length}`}
-                          {value === 'impact' &&
-                            impactCount !== undefined &&
-                            ` ${impactCount}`}
-                          {value === 'comments' && ` ${commentList.length}`}
-                        </button>
-                      ))}
-                    </div>
-                    <div role="tabpanel" className="min-h-40">
-                      {tab === 'diff' && (
-                        <div className="grid gap-2">
-                          <p
+                    {/* 탭 줄은 회색 띠, 고른 탭과 내용은 흰 카드로 이어 붙여 창 바탕과 나눈다(S15P31A108-456). */}
+                    <div className="rounded-xl border bg-card">
+                      <div
+                        role="tablist"
+                        aria-label="제안 보기"
+                        className="flex gap-1 rounded-t-xl border-b bg-muted px-2 pt-1.5"
+                      >
+                        {tabs.map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="tab"
+                            aria-selected={tab === value}
+                            onClick={() => setTab(value)}
                             className={cn(
-                              'flex items-center gap-2 rounded-[10px] px-3 py-2 text-[13px]',
-                              current.requires_refresh
-                                ? 'bg-[#fdf8e6] text-[#6e5200]'
-                                : 'bg-[#f3f8f4] text-[#00532a]',
+                              '-mb-px rounded-t-lg border px-3 py-2 text-sm',
+                              tab === value
+                                ? 'border-border border-b-card bg-card font-bold'
+                                : 'border-transparent font-medium text-muted-foreground hover:text-foreground',
                             )}
                           >
-                            {current.requires_refresh ? (
-                              <CircleAlert className="size-4 shrink-0" />
-                            ) : (
-                              <Check className="size-4 shrink-0" />
-                            )}
-                            제안을 만든 기준
-                            {baseVersion ? `(v${baseVersion})` : ''}과 지금
-                            기준이{' '}
-                            {current.requires_refresh ? '달라요' : '같아요'}.
-                          </p>
-                          {data.comparisons.length ? (
-                            <ul className="grid gap-2">
-                              {data.comparisons.map((comparison, index) => {
-                                const change = current.items.find(
-                                  (item) =>
-                                    item.design_item_id ===
-                                    comparison.target_id,
-                                )
-                                const kind = approved.find(
-                                  (item) =>
-                                    item.design_item_id ===
-                                    comparison.target_id,
-                                )?.kind
-                                return (
-                                  <Diff
-                                    key={`${comparison.target_id}-${index}`}
-                                    open={index === 0}
-                                    comparison={comparison}
-                                    operation={
-                                      comparison.target_id
-                                        ? (change?.operation ?? 'UPDATE')
-                                        : 'CREATE'
-                                    }
-                                    label={
-                                      comparison.target_type === 'DOCUMENT'
-                                        ? (documentOptions.find(
-                                            (item) =>
-                                              item.id === comparison.target_id,
-                                          )?.title ?? '문서')
-                                        : comparison.target_id
-                                          ? itemKey(comparison.target_id)
-                                          : ''
-                                    }
-                                    kind={
-                                      comparison.target_type === 'DOCUMENT'
-                                        ? '문서'
-                                        : kind && kindLabel[kind]
-                                    }
-                                  />
-                                )
-                              })}
-                            </ul>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">
-                              비교할 내용이 없어요.
+                            {label}
+                            {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
+                            {value === 'diff' &&
+                              ` ${current.items.length + current.documents.length}`}
+                            {value === 'impact' &&
+                              impactCount !== undefined &&
+                              ` ${impactCount}`}
+                            {value === 'comments' && ` ${commentList.length}`}
+                          </button>
+                        ))}
+                      </div>
+                      <div role="tabpanel" className="min-h-40 p-4">
+                        {tab === 'diff' && (
+                          <div className="grid gap-2">
+                            <p
+                              className={cn(
+                                'flex items-center gap-2 rounded-[10px] px-3 py-2 text-[13px]',
+                                current.requires_refresh
+                                  ? 'bg-[#fdf8e6] text-[#6e5200]'
+                                  : 'bg-[#f3f8f4] text-[#00532a]',
+                              )}
+                            >
+                              {current.requires_refresh ? (
+                                <CircleAlert className="size-4 shrink-0" />
+                              ) : (
+                                <Check className="size-4 shrink-0" />
+                              )}
+                              제안을 만든 기준
+                              {baseVersion ? `(v${baseVersion})` : ''}과 지금
+                              기준이{' '}
+                              {current.requires_refresh ? '달라요' : '같아요'}.
                             </p>
-                          )}
-                        </div>
-                      )}
-                      {tab === 'impact' && (
-                        <AsyncState query={impact}>
-                          {(result) => {
-                            const running = isImpactRunning(result)
-                            const notStarted = isImpactNotStarted(result)
-                            const unavailable = isDocumentOnly(current)
-                            return (
-                              <div className="grid gap-3 text-sm">
-                                {current.status === 'PUBLISHED' && (
-                                  <p className="text-muted-foreground">
-                                    발행 전 영향 분석 결과예요. 발행 후 처리
-                                    상태는 위에서 확인해 주세요.
-                                  </p>
-                                )}
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="text-muted-foreground">
-                                    {impactMessage(
-                                      result,
-                                      editable,
-                                      isDocumentOnly(current),
-                                    )}
-                                  </p>
-                                  {editable && !unavailable && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={action.busy || running}
-                                      onClick={() =>
-                                        void perform(
-                                          () =>
-                                            changesApi.retryImpact(
-                                              projectId,
-                                              current.id,
-                                            ),
-                                          notStarted
-                                            ? IMPACT_STARTED
-                                            : IMPACT_RETRIED,
-                                        )
+                            {data.comparisons.length ? (
+                              <ul className="grid gap-2">
+                                {data.comparisons.map((comparison, index) => {
+                                  const change = current.items.find(
+                                    (item) =>
+                                      item.design_item_id ===
+                                      comparison.target_id,
+                                  )
+                                  const kind = approved.find(
+                                    (item) =>
+                                      item.design_item_id ===
+                                      comparison.target_id,
+                                  )?.kind
+                                  return (
+                                    <Diff
+                                      key={`${comparison.target_id}-${index}`}
+                                      open={index === 0}
+                                      comparison={comparison}
+                                      operation={
+                                        comparison.target_id
+                                          ? (change?.operation ?? 'UPDATE')
+                                          : 'CREATE'
                                       }
-                                    >
-                                      {notStarted
-                                        ? '영향 분석 시작'
-                                        : '다시 분석'}
-                                    </Button>
-                                  )}
-                                </div>
-                                <div
-                                  className={cn(
-                                    'grid gap-2',
-                                    running && 'opacity-50',
-                                  )}
-                                >
-                                  <h4 className="font-semibold">확인된 관계</h4>
-                                  {result.explicit.length ? (
-                                    result.explicit.map((entry, index) => (
-                                      <p
-                                        key={index}
-                                        className="rounded-lg border px-3 py-2"
-                                      >
-                                        {taskKey(entry.task_id)} ·{' '}
-                                        {entry.member_id
-                                          ? nameOfMember(entry.member_id)
-                                          : '미배정'}{' '}
-                                        · {itemKey(entry.design_item_id)}
-                                        {entry.validation_id &&
-                                          ' · 관련 검증 있음'}
-                                      </p>
-                                    ))
-                                  ) : (
+                                      label={
+                                        comparison.target_type === 'DOCUMENT'
+                                          ? (documentOptions.find(
+                                              (item) =>
+                                                item.id ===
+                                                comparison.target_id,
+                                            )?.title ?? '문서')
+                                          : comparison.target_id
+                                            ? itemKey(comparison.target_id)
+                                            : ''
+                                      }
+                                      kind={
+                                        comparison.target_type === 'DOCUMENT'
+                                          ? '문서'
+                                          : kind && kindLabel[kind]
+                                      }
+                                    />
+                                  )
+                                })}
+                              </ul>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                비교할 내용이 없어요.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {tab === 'impact' && (
+                          <AsyncState query={impact}>
+                            {(result) => {
+                              const running = isImpactRunning(result)
+                              const notStarted = isImpactNotStarted(result)
+                              const unavailable = isDocumentOnly(current)
+                              return (
+                                <div className="grid gap-3 text-sm">
+                                  {current.status === 'PUBLISHED' && (
                                     <p className="text-muted-foreground">
-                                      {hasCurrentImpact(result)
-                                        ? '확인된 관계가 없어요.'
-                                        : '확인된 관계를 아직 판단할 수 없어요.'}
+                                      발행 전 영향 분석 결과예요. 발행 후 처리
+                                      상태는 위에서 확인해 주세요.
                                     </p>
                                   )}
-                                  <h4 className="font-semibold">
-                                    AI 후보 · 확정이나 승인이 아니에요
-                                  </h4>
-                                  {result.candidates.map((candidate, index) => (
-                                    <p
-                                      key={index}
-                                      className="rounded-lg border border-dashed px-3 py-2 leading-6"
-                                    >
-                                      {candidate.reason}
-                                      {candidate.member_id &&
-                                        ` · ${nameOfMember(candidate.member_id)}`}
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-muted-foreground">
+                                      {impactMessage(
+                                        result,
+                                        editable,
+                                        isDocumentOnly(current),
+                                      )}
                                     </p>
-                                  ))}
-                                  <p className="text-xs text-muted-foreground">
-                                    후보가 없어도 영향이 없다는 뜻은 아니에요.
-                                    {result.generation?.origin === 'TEMPLATE' &&
-                                      ' 지금 결과는 모델 분석이 아닌 예시 설명이에요.'}
-                                  </p>
+                                    {editable && !unavailable && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={action.busy || running}
+                                        onClick={() =>
+                                          void perform(
+                                            () =>
+                                              changesApi.retryImpact(
+                                                projectId,
+                                                current.id,
+                                              ),
+                                            notStarted
+                                              ? IMPACT_STARTED
+                                              : IMPACT_RETRIED,
+                                          )
+                                        }
+                                      >
+                                        {notStarted
+                                          ? '영향 분석 시작'
+                                          : '다시 분석'}
+                                      </Button>
+                                    )}
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      'grid gap-2',
+                                      running && 'opacity-50',
+                                    )}
+                                  >
+                                    <h4 className="font-semibold">
+                                      확인된 관계
+                                    </h4>
+                                    {result.explicit.length ? (
+                                      result.explicit.map((entry, index) => (
+                                        <p
+                                          key={index}
+                                          className="rounded-lg border px-3 py-2"
+                                        >
+                                          {taskKey(entry.task_id)} ·{' '}
+                                          {entry.member_id
+                                            ? nameOfMember(entry.member_id)
+                                            : '미배정'}{' '}
+                                          · {itemKey(entry.design_item_id)}
+                                          {entry.validation_id &&
+                                            ' · 관련 검증 있음'}
+                                        </p>
+                                      ))
+                                    ) : (
+                                      <p className="text-muted-foreground">
+                                        {hasCurrentImpact(result)
+                                          ? '확인된 관계가 없어요.'
+                                          : '확인된 관계를 아직 판단할 수 없어요.'}
+                                      </p>
+                                    )}
+                                    <h4 className="font-semibold">
+                                      AI 후보 · 확정이나 승인이 아니에요
+                                    </h4>
+                                    {result.candidates.map(
+                                      (candidate, index) => (
+                                        <p
+                                          key={index}
+                                          className="rounded-lg border border-dashed px-3 py-2 leading-6"
+                                        >
+                                          {candidate.reason}
+                                          {candidate.member_id &&
+                                            ` · ${nameOfMember(candidate.member_id)}`}
+                                        </p>
+                                      ),
+                                    )}
+                                    <p className="text-xs text-muted-foreground">
+                                      후보가 없어도 영향이 없다는 뜻은 아니에요.
+                                      {result.generation?.origin ===
+                                        'TEMPLATE' &&
+                                        ' 지금 결과는 모델 분석이 아닌 예시 설명이에요.'}
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
-                            )
-                          }}
-                        </AsyncState>
-                      )}
-                      {tab === 'comments' && (
-                        <div className="grid gap-3 text-sm">
-                          {commentList.map((comment) => (
-                            <article
-                              key={comment.id}
-                              className="grid gap-0.5 rounded-xl border border-[#e7e9ee] px-3 py-[9px] text-[13px] leading-[19px]"
-                            >
-                              <p className="flex flex-wrap items-center gap-1.5">
-                                <strong className="font-semibold">
-                                  {nameOfAccount(comment.author_account_id)}
-                                </strong>
-                                {comment.kind === 'REVIEW_REQUEST' && (
-                                  <Tag tone={statusTone.IN_REVIEW}>
-                                    검토 요청
-                                  </Tag>
-                                )}
-                                {comment.mentioned_member_ids.length > 0 && (
+                              )
+                            }}
+                          </AsyncState>
+                        )}
+                        {tab === 'comments' && (
+                          <div className="grid gap-3 text-sm">
+                            {commentList.map((comment) => (
+                              <article
+                                key={comment.id}
+                                className="grid gap-0.5 rounded-xl border border-[#e7e9ee] px-3 py-[9px] text-[13px] leading-[19px]"
+                              >
+                                <p className="flex flex-wrap items-center gap-1.5">
+                                  <strong className="font-semibold">
+                                    {nameOfAccount(comment.author_account_id)}
+                                  </strong>
+                                  {comment.kind === 'REVIEW_REQUEST' && (
+                                    <Tag tone={statusTone.IN_REVIEW}>
+                                      검토 요청
+                                    </Tag>
+                                  )}
+                                  {comment.mentioned_member_ids.length > 0 && (
+                                    <span className="text-xs leading-[18px] text-muted-foreground">
+                                      →{' '}
+                                      {comment.mentioned_member_ids
+                                        .map(nameOfMember)
+                                        .join(', ')}
+                                    </span>
+                                  )}
+                                  <span className="flex-1" />
                                   <span className="text-xs leading-[18px] text-muted-foreground">
-                                    →{' '}
-                                    {comment.mentioned_member_ids
-                                      .map(nameOfMember)
-                                      .join(', ')}
+                                    {formatDate(comment.created_at)}
                                   </span>
-                                )}
-                                <span className="flex-1" />
-                                <span className="text-xs leading-[18px] text-muted-foreground">
-                                  {formatDate(comment.created_at)}
-                                </span>
+                                </p>
+                                <p className="whitespace-pre-wrap">
+                                  {comment.body}
+                                </p>
+                              </article>
+                            ))}
+                            {comments.hasNextPage && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void comments.fetchNextPage()}
+                              >
+                                의견 더 보기
+                              </Button>
+                            )}
+                            {/* 서버는 발행·철회된 제안의 의견을 409 invalid_transition으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-6). */}
+                            {['PUBLISHED', 'WITHDRAWN'].includes(
+                              current.status,
+                            ) ? (
+                              <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+                                끝난 제안이라 댓글을 달 수 없어요.
                               </p>
-                              <p className="whitespace-pre-wrap">
-                                {comment.body}
-                              </p>
-                            </article>
-                          ))}
-                          {comments.hasNextPage && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void comments.fetchNextPage()}
-                            >
-                              의견 더 보기
-                            </Button>
-                          )}
-                          {/* 서버는 발행·철회된 제안의 의견을 409 invalid_transition으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-6). */}
-                          {['PUBLISHED', 'WITHDRAWN'].includes(
-                            current.status,
-                          ) ? (
-                            <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
-                              끝난 제안이라 댓글을 달 수 없어요.
+                            ) : (
+                              // 서버는 대상이 없는 검토 요청을 400으로 거절하므로(DOC-LIVE-5) 폼이 한 명 이상 고르게 한다. 받을 팀원은 본인을 뺀다.
+                              <ProposalCommentForm
+                                members={people
+                                  .filter(
+                                    (member) =>
+                                      member.account_id !== session.data?.id,
+                                  )
+                                  .map((member) => ({
+                                    id: member.id,
+                                    name: member.name,
+                                  }))}
+                                onSubmit={({ kind, body, memberIds }) =>
+                                  action.run(
+                                    () =>
+                                      changesApi.comment(
+                                        projectId,
+                                        current.id,
+                                        {
+                                          body,
+                                          kind,
+                                          ...(memberIds.length
+                                            ? {
+                                                mentioned_member_ids: memberIds,
+                                              }
+                                            : {}),
+                                        },
+                                      ),
+                                    kind === 'REVIEW_REQUEST'
+                                      ? `${memberIds.length}명에게 검토를 요청했어요.`
+                                      : '의견을 남겼어요.',
+                                  )
+                                }
+                              />
+                            )}
+                            <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              의견은 승인과 달라요. 승인은 팀장이 해요.
                             </p>
-                          ) : (
-                            // 서버는 대상이 없는 검토 요청을 400으로 거절하므로(DOC-LIVE-5) 폼이 한 명 이상 고르게 한다. 받을 팀원은 본인을 뺀다.
-                            <ProposalCommentForm
-                              members={people
-                                .filter(
-                                  (member) =>
-                                    member.account_id !== session.data?.id,
-                                )
-                                .map((member) => ({
-                                  id: member.id,
-                                  name: member.name,
-                                }))}
-                              onSubmit={({ kind, body, memberIds }) =>
-                                action.run(
-                                  () =>
-                                    changesApi.comment(projectId, current.id, {
-                                      body,
-                                      kind,
-                                      ...(memberIds.length
-                                        ? { mentioned_member_ids: memberIds }
-                                        : {}),
-                                    }),
-                                  kind === 'REVIEW_REQUEST'
-                                    ? `${memberIds.length}명에게 검토를 요청했어요.`
-                                    : '의견을 남겼어요.',
-                                )
-                              }
-                            />
-                          )}
-                          <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            의견은 승인과 달라요. 승인은 팀장이 해요.
-                          </p>
-                        </div>
-                      )}
-                      {tab === 'activity' && (
-                        <ProposalActivity
-                          key={current.id}
-                          projectId={projectId}
-                          proposalId={current.id}
-                          onShowComments={() => setTab('comments')}
-                        />
-                      )}
+                          </div>
+                        )}
+                        {tab === 'activity' && (
+                          <ProposalActivity
+                            key={current.id}
+                            projectId={projectId}
+                            proposalId={current.id}
+                            onShowComments={() => setTab('comments')}
+                          />
+                        )}
+                      </div>
                     </div>
                     {/* 서버는 팀장이어도 작성자면 거두게 한다(PR #72 5차 조사 FIFTH-DOC-02). */}
                     {mine && (editable || current.status === 'REJECTED') && (
