@@ -1019,6 +1019,8 @@ function MeetingChip({
 }
 
 // 회의 단계: 대화 → 비비 정리 → 회의 끝내기 → 변경 제안 승인
+// 지난·다음 단계 글자는 foreground 75%(#f3f1ea 위 6.0:1)이고, 지금 단계만 진한 바탕에 굵게 둔다.
+// 단계 사이는 글자 대신 선으로 잇는다(화면 검수 2026-11-16, S15P31A108-439).
 function MeetingSteps({
   current,
   hasProposalStep,
@@ -1030,26 +1032,28 @@ function MeetingSteps({
   return (
     <ol
       aria-label="회의 단계"
-      className="mt-1.5 flex flex-wrap items-center gap-0.5 text-xs"
+      className="mt-1.5 flex flex-wrap items-center gap-1 text-xs"
     >
       {steps.map((step, index) => (
         <li
           key={step}
           aria-current={index === current ? 'step' : undefined}
-          className="flex items-center gap-0.5 text-[#c9c4b8]"
+          className="flex items-center gap-1"
         >
           <span
             className={cn(
               'flex h-6 items-center gap-[5px] rounded-full px-[9px] whitespace-nowrap',
-              index < current && 'font-semibold text-[#57534e]',
-              index === current && 'bg-[#2c291f] font-bold text-white',
-              index > current && 'font-medium text-[#a3a3a3]',
+              index === current
+                ? 'bg-foreground font-bold text-background'
+                : 'font-medium text-foreground/75',
             )}
           >
             <span aria-hidden="true">{index < current ? '✓' : index + 1}</span>
             {step}
           </span>
-          {index < steps.length - 1 && <span aria-hidden="true">›</span>}
+          {index < steps.length - 1 && (
+            <span aria-hidden="true" className="h-px w-3 bg-foreground/60" />
+          )}
         </li>
       ))}
     </ol>
