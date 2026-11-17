@@ -34,7 +34,7 @@ GMS 주소가 코드에 고정된 곳이 많아서, 일반 OpenAI 키로 바꿔 
      `design_drafts.py`(설계 초안), `meeting_analysis.py`(회의 정리), `design_recommendations.py`, `assignment_recommendations.py`
    - `ai/app/routers/validation.py`의 `GMS_CHAT_URL` 상수 (작업 계획 검증)
    - `ai/app/services/retrieval/gms.py`의 `GMS_EMBEDDINGS_URL` (문서 검색용 임베딩)
-2. `ai/app/routers/document_review.py` 107줄의 `gms.ssafy.io` 주소 검사를 고칩니다. 이 검사는 문서 검토, 작업 분해,
+2. `ai/app/routers/document_review.py`의 `_valid_gms_endpoint` 함수에 있는 `gms.ssafy.io` 주소 검사를 고칩니다. 이 검사는 문서 검토, 작업 분해,
    작업 계획 초안, 작업 계획 수정, 문서 수정 초안, 회의 수정 초안 6개 기능이 함께 씁니다.
 3. env 파일에 `GMS_CHAT_ENDPOINT=<OpenAI 채팅 주소>`를 넣고, `GMS_KEY`에는 OpenAI 키를 넣습니다. 2번의 기능들은 이 주소를 씁니다.
 4. 모델 이름은 `ai/app/core/config.py`에 하나로 고정되어 있습니다(24줄 임베딩, 27줄 생성). 쓰려는 공급자에 같은 이름의

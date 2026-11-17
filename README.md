@@ -126,7 +126,7 @@ export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTE
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
 ```
 
-- 키와 함께 위 명령을 모두 실행하세요. 첫 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 둘째 줄은 에이전트가
+- 첫 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 둘째 줄은 에이전트가
   승인된 설계를 읽어 가는 기능을 켭니다. 이 기능들은 기본으로 꺼져 있습니다.
 - 둘째 줄의 기능은 팀 문서([docs/infra/env.md](docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 팀이 아직
   확정하지 않은 값입니다. 이 기능이 꺼져 있으면 에이전트가 설계를 읽지 못하므로 함께 켭니다.

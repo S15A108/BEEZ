@@ -9,9 +9,9 @@ PC에서 실행해 보려면 1-2절을, 새 서버에 배포하려면 1-4절을 
 | 구분 | 제품 | 버전 | 주요 설정 값 | 확인한 파일 |
 | --- | --- | --- | --- | --- |
 | JVM | Eclipse Temurin (OpenJDK) | 21 (빌드 `21-jdk`, 실행 `21-jre`) | `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0` (컨테이너 메모리의 75%까지 힙 사용) | `backend/Dockerfile` |
-| WAS | Spring Boot 내장 Tomcat | Tomcat 11.0.24 (Spring Boot 4.1.1) | 포트 8080, 종료할 때 처리 중인 요청을 최대 20초 기다림 | `backend/build.gradle`, `application.yml` |
+| WAS | Spring Boot 내장 Tomcat | Tomcat 11.0.24 (Spring Boot 4.1.1) | 포트 8080, 종료할 때 처리 중인 요청을 최대 20초 기다림 | 버전은 backend 이미지 안 `tomcat-embed-core-11.0.24.jar`로 확인 (Spring Boot 4.1.1이 정함), 설정은 `application.yml` |
 | 빌드 도구 | Gradle Wrapper | 8.14.3 | | `backend/gradle/wrapper/gradle-wrapper.properties` |
-| 웹서버 | Nginx | 1.24 (서버는 Ubuntu 패키지, 로컬은 `nginx:1.24-alpine` 이미지) | 업로드 최대 2MB, `/api/` 응답 대기 60초, `/mcp` 응답 대기 1시간(버퍼링 끔) | `infra/nginx/sites-available/dev.beez.ai.kr.conf` |
+| 웹서버 | Nginx | 1.24 (서버는 Ubuntu 패키지, 로컬은 `nginx:1.24-alpine` 이미지) | 요청 전체 최대 2MB(backend는 파일 하나를 1MB까지 받음), `/api/` 응답 대기 60초, `/mcp` 응답 대기 1시간(버퍼링 끔) | `infra/nginx/sites-available/dev.beez.ai.kr.conf` |
 | AI 서버 | Python, FastAPI, Uvicorn | Python 3.12 | 포트 8000 (컨테이너 안에서만 열림) | `ai/Dockerfile`, `ai/requirements.lock` |
 | 프론트 빌드 | Node.js, Vite | Node 24, Vite 8 | 빌드할 때 `VITE_API_MODE=live` | `frontend/package.json` |
 | DB | PostgreSQL + pgvector(벡터 검색 확장) | PostgreSQL 17 | DB 이름 `beez`, 포트 5432, `wal_level=logical` | `infra/compose.yaml` |
@@ -40,7 +40,7 @@ PC에서 실행해 보려면 1-2절을, 새 서버에 배포하려면 1-4절을 
 | --- | --- | --- | --- |
 | 호스트와 포트 | 컨테이너 안 `postgres:5432` (PC에서는 열지 않음) | `localhost:5432` | 컨테이너 안 `postgres:5432` (서버 밖에서는 열지 않음) |
 | DB 이름 | `beez` | `beez` | `beez` |
-| 계정 | `infra/local.env`의 `DB_USERNAME`, `DB_PASSWORD` | `beez` / `beez` (`backend/compose.yaml`) | 서버 `/opt/beez/.env.dev` |
+| 계정 | `beez` / `beez` (`infra/local.env`) | `beez` / `beez` (`backend/compose.yaml`) | 서버 `/opt/beez/.env.dev` |
 
 DB에 직접 접속하려면 아래 명령을 실행합니다. Git Bash에서 `the input device is not a TTY` 오류가 나면 명령 앞에 `winpty`를
 붙이세요. `bootRun`으로 띄웠다면 컨테이너 이름이 `beez-postgres`입니다.
@@ -63,6 +63,7 @@ docker exec -it beez-postgres-1 psql -U beez -d beez
 | frontend | `cd frontend && npm ci && VITE_API_MODE=live npm run build` | `frontend/dist/` 폴더 (Nginx가 그대로 보여 주는 정적 파일) |
 
 compose의 `--build`가 backend와 ai 이미지를 직접 빌드하므로, 전체 실행에는 위 명령을 따로 돌리지 않아도 됩니다.
+backend를 따로 빌드할 때만 PC에 JDK 21이 필요합니다.
 
 ## 1-3. 환경변수
 
@@ -105,7 +106,7 @@ GitHub 저장소 권한과 Jenkins가 있어야 하므로, 새 서버에서는 �
 ### 1) 필요한 프로그램 설치
 
 방화벽에서 80, 443 포트를 열고 Docker를 설치합니다. 명령은 [docs/infra/server-setup.md](../docs/infra/server-setup.md)의
-3절(방화벽)과 4절(Docker)에 있습니다. 4절의 `sudo usermod -aG docker ubuntu`에서 `ubuntu`는 내 계정 이름(`$USER`)으로
+3절(방화벽)과 4절(Docker)에 있습니다. 클라우드 서버라면 클라우드 콘솔의 보안 그룹에서도 80, 443을 열어 두세요. 4절의 `sudo usermod -aG docker ubuntu`에서 `ubuntu`는 내 계정 이름(`$USER`)으로
 바꿔 실행하고, 실행한 뒤에는 SSH 접속을 끊었다가 다시 접속하세요. 다시 접속하지 않으면 4)의 `docker compose`가
 `permission denied`로 실패합니다. 그다음 Nginx와 certbot을 설치합니다.
 
@@ -202,7 +203,7 @@ sudo mkdir -p /var/www/beez && sudo rm -rf /var/www/beez/current && sudo mv /tmp
 ### 6) Nginx 설정과 HTTPS 인증서
 
 443 포트 설정은 인증서 파일이 있어야 켜지므로, 인증서를 받는 임시 설정을 먼저 켜고 인증서를 받은 뒤 진짜 설정으로
-바꿉니다. 첫 줄의 `D=`와 certbot의 `<연락 메일>`을 바꿔서 차례로 실행하세요.
+바꿉니다. 첫 줄의 `D=`와 certbot의 `you@example.com`을 내 도메인과 연락 메일로 바꿔서 차례로 실행하세요.
 
 ```bash
 D=내도메인.com
@@ -224,7 +225,7 @@ printf 'server {\n    listen 80;\n    listen [::]:80;\n    server_name %s;\n    
   | sudo tee /etc/nginx/sites-enabled/beez-temp.conf > /dev/null
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot certonly --webroot -w /var/www/letsencrypt -d "$D" \
-  -m <연락 메일> --agree-tos --no-eff-email --deploy-hook "systemctl reload nginx"
+  -m you@example.com --agree-tos --no-eff-email --deploy-hook "systemctl reload nginx"
 
 # 임시 설정을 지우고 진짜 설정을 켭니다
 sudo rm /etc/nginx/sites-enabled/beez-temp.conf

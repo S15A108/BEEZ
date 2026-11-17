@@ -40,7 +40,8 @@
 1. 도시에서 "D+3 착수" 건물을 클릭해 들어갑니다.
 2. 오른쪽 위의 톱니바퀴(설정) 버튼을 누르고, 설정 창 왼쪽 메뉴의 **내 에이전트 관리**에서 토큰을 발급합니다.
 3. 시연에 쓸 빈 폴더를 만들어(`mkdir beez-demo && cd beez-demo`) 그 안에서 화면에 나온 연결 명령을 실행합니다.
-   발급 화면의 다음 단계인 CLAUDE.md 붙여 넣기도 이 폴더에서 해 두면 에이전트가 BEEZ 작업 절차를 따릅니다.
+   이어서 발급 화면 3단계 "CLAUDE.md에 작업 절차 붙여넣기"의 `[CLAUDE.md 내용 복사]`를 누르고, `beez-demo` 폴더에
+   `CLAUDE.md` 파일을 만들어 붙여 넣습니다. 에이전트가 이 파일을 읽고 BEEZ 작업 순서를 따릅니다.
 
    ```bash
    claude mcp add --transport http beez https://dev.beez.ai.kr/mcp --header "Authorization: Bearer <토큰>"
