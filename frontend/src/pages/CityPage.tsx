@@ -302,6 +302,17 @@ function City() {
                   </Link>
                 )
               })}
+              {/* 점선 만들기 카드를 지워 목록이 비면 그 자리가 안내 없이 비었다(PR #318 리뷰). 만들기는 제목 줄 버튼과 빈 부지로 한다. */}
+              {shownProjects.length === 0 && (
+                <p
+                  role="status"
+                  className="col-span-full text-sm text-muted-foreground"
+                >
+                  {allProjects.length === 0
+                    ? '아직 프로젝트가 없어요. 프로젝트 만들기로 시작해 보세요.'
+                    : `‘${search.trim()}’에 맞는 프로젝트가 없어요.`}
+                </p>
+              )}
             </div>
             {projects.hasNextPage && (
               <Button
