@@ -388,7 +388,7 @@ export function DocumentsPanel({
           {started ? null : (
             <section
               aria-labelledby="start-title"
-              className="grid gap-3.5 rounded-2xl border p-5"
+              className="grid gap-3.5 rounded-2xl border bg-card p-5 shadow-xs"
             >
               <div className="grid gap-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -581,7 +581,7 @@ export function DocumentsPanel({
           )}
           <section
             aria-labelledby="current-title"
-            className="rounded-2xl border"
+            className="overflow-hidden rounded-2xl border bg-card shadow-xs"
           >
             <div className="flex flex-wrap items-baseline gap-x-2 px-5 pt-4 pb-2.5">
               <h3 id="current-title" className="font-semibold">

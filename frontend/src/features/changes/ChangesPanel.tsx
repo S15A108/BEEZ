@@ -547,7 +547,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   }
 
   return (
-    <section className="space-y-4">
+    <section
+      className={cn(
+        'space-y-4',
+        // 목록·상세는 왼쪽과 오른쪽이 따로 스크롤하고 창 전체는 움직이지 않는다(사용자 요청 11-17). 높이 0에 창 높이만큼의 최소 높이를 줘서 내용이 길어도 창 본문 높이에 맞춘다(회의실과 같은 방식).
+        mode.kind === 'detail' && 'lg:flex lg:h-0 lg:min-h-full lg:flex-col',
+      )}
+    >
       {/* 설명 문구는 캔버스 PNL-04-v2-changes(v461 이후)처럼 두지 않고, 제안하러 가는 버튼만 업무 창 머리 줄에 둔다.
           새 제안·승인·반려·이력 화면에서는 숨긴다. 누르면 창이 바뀌어 쓰던 내용을 잃는다(PR #88 리뷰). */}
       {mode.kind === 'detail' && (
@@ -580,12 +586,14 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       <div
         className={cn(
           'grid gap-5',
-          mode.kind === 'detail' && 'lg:grid-cols-[290px_minmax(0,1fr)]',
+          mode.kind === 'detail' &&
+            'lg:min-h-0 lg:flex-1 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-start',
         )}
       >
+        {/* 왼쪽 목록과 오른쪽 상세는 작업 현황처럼 흰 카드로 나눈다(사용자 요청 11-17). */}
         <div
           hidden={mode.kind !== 'detail'}
-          className="grid content-start gap-2.5"
+          className="grid content-start gap-2.5 rounded-xl bg-card p-4 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto"
         >
           <div className="flex gap-2">
             <label className="relative flex-1">
@@ -690,7 +698,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
             </Button>
           )}
         </div>
-        <div className="min-w-0">
+        <div
+          className={cn(
+            'min-w-0',
+            mode.kind === 'detail' &&
+              'rounded-xl bg-card p-5 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto',
+          )}
+        >
           {mode.kind === 'form' && !mode.source ? (
             <ProposeFlow
               projectId={projectId}
