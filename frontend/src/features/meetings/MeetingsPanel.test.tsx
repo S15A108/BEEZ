@@ -1232,3 +1232,37 @@ it('팀장이 아닌 참여자도 비비 정리에서 바뀌는 문장을 본다
     screen.queryByRole('button', { name: '수정 초안 만들기' }),
   ).not.toBeInTheDocument()
 })
+
+// PR #328 리뷰: 정리가 있어도 팀장은 대화 화면에서 처음부터 다시 정리를 받을 수 있다(dev처럼).
+it('정리가 있어도 팀장은 대화 화면에서 다시 정리를 요청할 수 있다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  await user.click(screen.getByRole('button', { name: '대화로 돌아가기' }))
+  const summarize = vi.spyOn(meetingsApi, 'summarize')
+  const again = await screen.findByRole('button', { name: '다시 정리 요청' })
+  expect(again).toBeEnabled()
+  await user.click(again)
+  await waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+  expect(
+    await screen.findByRole('heading', { name: '비비 정리' }),
+  ).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+it('팀원에게는 다시 정리 요청이 없다', async () => {
+  const entries = await meetingsApi.entries('101', '901', {})
+  await meetingsApi.summarize('101', '901', {
+    through_entry_id: entries.items.at(-1)!.id,
+  })
+  const user = userEvent.setup()
+  renderPanel(false)
+  await screen.findByRole('heading', { name: '비비 정리' })
+  await user.click(screen.getByRole('button', { name: '대화로 돌아가기' }))
+  expect(
+    await screen.findByRole('button', { name: '비비 정리 보기' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '다시 정리 요청' }),
+  ).not.toBeInTheDocument()
+})

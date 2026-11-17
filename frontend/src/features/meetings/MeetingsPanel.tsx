@@ -590,10 +590,33 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   </span>
                                 )}
                                 {summaryReady ? (
-                                  <Button size="lg" onClick={() => goTo(1)}>
-                                    비비 정리 보기
-                                    <ChevronRight />
-                                  </Button>
+                                  <>
+                                    {/* 정리가 있어도 팀장은 처음부터 다시 정리를 받을 수 있다(dev처럼, PR #328 리뷰). 노란 버튼은 다음 단계 하나다. */}
+                                    {isLeader && (
+                                      <Button
+                                        variant="outline"
+                                        size="lg"
+                                        disabled={
+                                          !participant ||
+                                          !throughEntry ||
+                                          !allLoaded ||
+                                          action.busy
+                                        }
+                                        onClick={() =>
+                                          void requestSummary(
+                                            meeting.id,
+                                            throughEntry!.id,
+                                          ).catch(() => undefined)
+                                        }
+                                      >
+                                        다시 정리 요청
+                                      </Button>
+                                    )}
+                                    <Button size="lg" onClick={() => goTo(1)}>
+                                      비비 정리 보기
+                                      <ChevronRight />
+                                    </Button>
+                                  </>
                                 ) : (
                                   <Button
                                     size="lg"
@@ -1562,7 +1585,8 @@ function InlineMessage({
               !event.nativeEvent.isComposing
             ) {
               event.preventDefault()
-              if (!isSubmitting && !busy && !sending.current)
+              // 키를 누르고 있어 자동으로 반복되는 Enter도 무시한다(PR #328 리뷰).
+              if (!event.repeat && !isSubmitting && !busy && !sending.current)
                 event.currentTarget.form?.requestSubmit()
             }
           }}
