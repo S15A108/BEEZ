@@ -213,25 +213,37 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
     store.useWorkspaceStore.getState().openPane('planning')
   })
   const dialog = page.getByRole('dialog')
-  await dialog.getByText('프로젝트 삭제 권한은 인간 팀장만 가지나요?').click()
-  await dialog.getByRole('textbox', { name: '답변' }).fill('팀장만 삭제해요.')
-  // 다음 질문이 있으면 저장하고 바로 다음 질문으로 넘어간다. 질문 목록으로 돌아가려면 시트를 닫는다.
+  // 보완 질문 탭: 왼쪽 목록에서 질문을 고르면 오른쪽에서 바로 답한다.
   await dialog
-    .getByRole('button', { name: '저장하고 다음', exact: true })
+    .getByRole('tabpanel')
+    .getByRole('button', { name: /프로젝트 삭제 권한은 인간 팀장만 가지나요/ })
     .click()
-  await expect(dialog.getByText('질문 2 / ', { exact: false })).toBeVisible()
-  await dialog.getByRole('button', { name: '취소', exact: true }).click()
-  await expect(dialog.getByText('답변을 저장했어요.')).toBeVisible()
+  await dialog.getByRole('textbox', { name: '답변' }).fill('팀장만 삭제해요.')
+  // 답은 입력을 멈추면 자동으로 저장하고, 답변 칸 옆에 저장됨을 보인다.
+  await expect(dialog.getByText('저장됨')).toBeVisible()
+  await dialog.getByRole('button', { name: '다음', exact: true }).click()
+  await expect(
+    dialog.getByRole('heading', {
+      name: '프로젝트 삭제 권한은 인간 팀장만 가지나요?',
+    }),
+  ).toBeHidden()
+  // 답변 보완 후보 탭: 초안을 만들고 근거 있는 새 항목 후보를 골라 채택한다.
+  await dialog.getByRole('tab', { name: /답변 보완 후보/ }).click()
   await dialog
     .getByRole('button', { name: '답변으로 보완 초안 만들기' })
     .click()
-  const candidate = dialog
-    .locator('article')
+  const row = dialog
+    .getByRole('tabpanel')
+    .getByRole('button')
     .filter({ hasText: '새 항목' })
     .filter({ hasNotText: '근거 없음' })
     .first()
-  await expect(candidate).toBeVisible({ timeout: 15_000 })
-  await candidate.getByRole('button', { name: '채택' }).click()
+  await expect(row).toBeVisible({ timeout: 15_000 })
+  await row.click()
+  await dialog
+    .getByRole('article')
+    .getByRole('button', { name: '채택' })
+    .click()
   await expect(dialog.getByText('후보를 채택했어요.').first()).toBeVisible()
   expect(errors).toEqual([])
 })
