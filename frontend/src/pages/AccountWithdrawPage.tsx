@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { TriangleAlert } from 'lucide-react'
@@ -25,6 +25,8 @@ function AccountWithdraw() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [agreed, setAgreed] = useState(false)
+  // 탈퇴를 누른 뒤 409로 막혔는지. 다시 읽어 막힘 안내가 생기면 누른 버튼(폼)이 사라지므로 포커스를 그 안내로 옮겨 알린다.
+  const blockedOnSubmit = useRef(false)
   // 막는 프로젝트는 서버 판정(ACC-A13)을 쓴다. 참고용이고 최종 판정은 탈퇴 요청 때 서버가 다시 한다(ACC-A10 409).
   const check = useQuery({
     queryKey: checkKey,
@@ -51,6 +53,12 @@ function AccountWithdraw() {
             {blockers.length > 0 && (
               <section
                 aria-labelledby="blocked-title"
+                tabIndex={-1}
+                ref={(node) => {
+                  if (!node || !blockedOnSubmit.current) return
+                  blockedOnSubmit.current = false
+                  node.focus()
+                }}
                 className="rounded-[14px] bg-card p-6 ring-1 ring-destructive/25"
               >
                 <h3
@@ -167,10 +175,12 @@ function AccountWithdraw() {
                         // 다시 읽어 막는 프로젝트가 생기면 이 폼은 거두고 그 이유를 보인다.
                         if (
                           getApiErrorCode(cause) === 'leader_of_team_projects'
-                        )
+                        ) {
+                          blockedOnSubmit.current = true
                           await queryClient.invalidateQueries({
                             queryKey: checkKey,
                           })
+                        }
                         throw cause
                       }
                       queryClient.clear()
