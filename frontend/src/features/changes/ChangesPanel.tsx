@@ -53,6 +53,7 @@ import {
   toDocumentChanges,
 } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
+import type { PublishedAnalysis } from './schemas'
 import { membersQuery } from '@/features/members/membersQuery'
 import { ProposalActivity } from './ProposalActivity'
 
@@ -117,6 +118,26 @@ const hasCurrentImpact = (impact: ChangeImpact) =>
 // 버튼을 그대로 둔다(S15P31A108-359).
 const isDocumentOnly = (change: { items: unknown[]; documents: unknown[] }) =>
   change.items.length === 0 && change.documents.length > 0
+// 발행 상태와 발행 후 분석 상태는 별개다. 분석이 근거까지 갖춰 끝났을 때만 '발행 완료'로 끝내고,
+// 근거 부족·실패·미평가·확인 불가는 영향이 확정된 것으로 보이지 않게 함께 알린다(S15P31A108-434).
+function publishedImpact(analysis?: PublishedAnalysis) {
+  if (
+    analysis?.status === 'COMPLETED' &&
+    analysis.evaluation_status === 'COMPLETED'
+  )
+    return undefined
+  if (analysis?.status === 'PENDING' || analysis?.status === 'RUNNING')
+    return {
+      label: '영향 분석 중',
+      message:
+        '발행 후 분석이 끝나기 전이라 영향은 아직 확정되지 않았어요. 이 승인으로 상태가 바뀐 검증과 작업은 작업 현황에서 확인하세요.',
+    }
+  return {
+    label: '영향 확인 필요',
+    message:
+      '발행 후 분석으로 영향이 확정되지 않았어요. 관련 작업과 검증을 작업 현황에서 직접 확인해 주세요.',
+  }
+}
 function impactMessage(
   impact: ChangeImpact,
   editable: boolean,
@@ -1221,61 +1242,73 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                     )}
                     {current.status === 'PUBLISHED' && (
                       <AsyncState query={approval}>
-                        {(result) => (
-                          <div className="grid gap-2 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
-                            <p className="font-semibold">
-                              새 기준을 발행했어요 ·{' '}
-                              {nameOfAccount(result.approved_by)} 승인 ·{' '}
-                              {formatDate(result.approved_at)}
-                            </p>
-                            {result.impact_override_reason && (
-                              <p className="whitespace-pre-wrap">
-                                <span className="font-semibold">
-                                  영향 분석 없이 승인한 사유
-                                </span>
-                                {'\n'}
-                                {result.impact_override_reason}
+                        {(result) => {
+                          const impact = publishedImpact(
+                            data.published_analysis,
+                          )
+                          const version = publishedVersion(result.baseline_id)
+                          return (
+                            <div className="grid gap-2 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
+                              <h4 className="font-semibold">
+                                발행 완료{impact && ` · ${impact.label}`}
+                              </h4>
+                              <p>
+                                {version && `기준 v${version} · `}
+                                {nameOfAccount(result.approved_by)} 승인 ·{' '}
+                                {formatDate(result.approved_at)}
                               </p>
-                            )}
-                            <p className="text-muted-foreground">
-                              이 승인으로 상태가 바뀐 검증과 작업은 작업
-                              현황에서 확인하세요.
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() =>
-                                  openPane(
-                                    'documents',
-                                    publishedVersion(result.baseline_id)
-                                      ? `baseline:${publishedVersion(result.baseline_id)}`
-                                      : null,
-                                  )
-                                }
-                              >
-                                {publishedVersion(result.baseline_id)
-                                  ? `기준 v${publishedVersion(result.baseline_id)} 보기`
-                                  : '기준 보기'}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setMode({ kind: 'history' })}
-                              >
-                                승인 이력
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openPane('tasks')}
-                              >
-                                작업 현황
-                              </Button>
+                              {result.impact_override_reason && (
+                                <p className="whitespace-pre-wrap">
+                                  <span className="font-semibold">
+                                    영향 분석 없이 승인한 사유
+                                  </span>
+                                  {'\n'}
+                                  {result.impact_override_reason}
+                                </p>
+                              )}
+                              <p>
+                                {impact?.message ??
+                                  '이 승인으로 상태가 바뀐 검증과 작업은 작업 현황에서 확인하세요.'}
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                {/* 발행 후 분석은 수동 재처리 API가 없다(CHG-A03 guidance, #243). 다시 시도 버튼은 두지 않는다. */}
+                                <Button
+                                  size="sm"
+                                  variant={
+                                    impact?.label === '영향 확인 필요'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() => openPane('tasks')}
+                                >
+                                  관련 작업 확인
+                                </Button>
+                                {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    openPane(
+                                      'documents',
+                                      version ? `baseline:${version}` : null,
+                                    )
+                                  }
+                                >
+                                  {version
+                                    ? `기준 v${version} 보기`
+                                    : '기준 보기'}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setMode({ kind: 'history' })}
+                                >
+                                  승인 이력
+                                </Button>
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )
+                        }}
                       </AsyncState>
                     )}
                     {current.status === 'PUBLISHED' && (

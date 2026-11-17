@@ -410,7 +410,11 @@ function Workspace({ projectId }: { projectId: string }) {
                       />
                     )}
                     {pane === 'dashboard' && (
-                      <ActivityPanel projectId={projectId} view="dashboard" />
+                      <ActivityPanel
+                        {...panelProps}
+                        view="dashboard"
+                        hasBaseline={!!data.project.current_baseline}
+                      />
                     )}
                     {pane === 'inbox' && <InboxPanel projectId={projectId} />}
                     {pane === 'chat' && <BibiPanel projectId={projectId} />}
