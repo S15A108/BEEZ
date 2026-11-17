@@ -141,4 +141,33 @@
   html {
     @apply font-sans;
   }
+  /* 업무 창 스크롤바(S15P31A108-455): 6px로 얇게, 스크롤하는 동안만 보인다(data-scrolling, 업무 창이 붙였다 뗀다).
+     막대는 늘 그 자리에 있어 휠·키보드·끌기는 그대로 되고, 막대 위에 올리면 보인다.
+     Chromium·Safari는 ::-webkit-scrollbar로, 그것이 없는 Firefox는 표준 속성으로 그린다. */
+  .pane-scrollbars ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .pane-scrollbars ::-webkit-scrollbar-track,
+  .pane-scrollbars ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  .pane-scrollbars ::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: transparent;
+  }
+  .pane-scrollbars [data-scrolling]::-webkit-scrollbar-thumb,
+  .pane-scrollbars ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--foreground) 28%, transparent);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    .pane-scrollbars * {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .pane-scrollbars [data-scrolling] {
+      scrollbar-color: color-mix(in oklab, var(--foreground) 28%, transparent)
+        transparent;
+    }
+  }
 }

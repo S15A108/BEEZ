@@ -76,6 +76,8 @@ import {
   rememberedScrollTop,
   restoreScrollWhenReady,
 } from '@/lib/restoreScroll'
+import { flashScrollbar } from '@/lib/flashScrollbar'
+import { cn } from '@/lib/utils'
 import NotFoundPage from './NotFoundPage'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
@@ -297,6 +299,12 @@ function Workspace({ projectId }: { projectId: string }) {
         const currentUser = data.members.items.find(
           (member) => member.account_id === session.data?.id,
         )
+        // 목록·상세 창은 1200px 기둥 대신 화면 폭을 다 써서 왼쪽 목록을 창 왼쪽에 붙이고 상세를 가운데에 넓힌다(S15P31A108-455).
+        const splitPane =
+          pane === 'tasks' ||
+          pane === 'changes' ||
+          pane === 'meetings' ||
+          pane === 'relations'
         const panelProps = { projectId, isLeader }
         return (
           <main
@@ -415,7 +423,9 @@ function Workspace({ projectId }: { projectId: string }) {
                   내용이 적거나 비어 있어도 같은 크기·바탕색으로 열린다. */}
               <DialogContent
                 showCloseButton={false}
-                className="inset-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-none bg-background p-0 ring-0 sm:max-w-none"
+                className="pane-scrollbars inset-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-none bg-background p-0 ring-0 sm:max-w-none"
+                // 스크롤바는 얇게, 스크롤하는 동안만 보인다(S15P31A108-455).
+                onScrollCapture={(event) => flashScrollbar(event.target)}
                 onEscapeKeyDown={(event) => {
                   if (pendingMutations) event.preventDefault()
                 }}
@@ -434,7 +444,12 @@ function Workspace({ projectId }: { projectId: string }) {
                 {/* 머리 줄은 흰 띠로 본문과 나누고, 안쪽은 본문과 같은 가운데 기둥에 맞춘다.
                     메뉴 아이콘(단축 바와 같은 그림)·제목·부제목 두 줄, 오른쪽에 창별 버튼·Esc 안내·닫기. */}
                 <DialogHeader className="border-b bg-card">
-                  <div className="mx-auto flex min-h-16 w-full max-w-[1264px] flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 sm:px-8">
+                  <div
+                    className={cn(
+                      'mx-auto flex min-h-16 w-full flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 sm:px-8',
+                      !splitPane && 'max-w-[1264px]',
+                    )}
+                  >
                     {PaneIcon && (
                       <span
                         aria-hidden="true"
@@ -504,8 +519,11 @@ function Workspace({ projectId }: { projectId: string }) {
                   >
                     <PaneSheetHost
                       // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
-                      // 넓은 화면에서 목록·카드가 끝에서 끝까지 늘어나지 않게 1200px 가운데 기둥으로 묶는다.
-                      className="mx-auto flex w-full max-w-[1200px] min-w-0 flex-1 flex-col"
+                      // 넓은 화면에서 목록·카드가 끝에서 끝까지 늘어나지 않게 1200px 가운데 기둥으로 묶는다. 목록·상세 창은 화면 폭을 다 쓴다(S15P31A108-455).
+                      className={cn(
+                        'mx-auto flex w-full min-w-0 flex-1 flex-col',
+                        !splitPane && 'max-w-[1200px]',
+                      )}
                     >
                       {pane === 'documents' && (
                         <DocumentsPanel {...panelProps} />

@@ -35,7 +35,13 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
-import { describeContent, LIST_SELECTED } from '@/lib/display'
+import {
+  describeContent,
+  LIST_ROW,
+  LIST_SELECTED,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
+} from '@/lib/display'
 import { cn } from '@/lib/utils'
 import {
   useRemembered,
@@ -588,8 +594,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       <div
         className={cn(
           'grid gap-5',
-          mode.kind === 'detail' &&
-            'lg:min-h-0 lg:flex-1 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+          mode.kind === 'detail' && [
+            'lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+            SPLIT_COLUMNS,
+          ],
         )}
       >
         {/* 왼쪽 목록과 오른쪽 상세는 작업 현황처럼 흰 카드로 나눈다(사용자 요청 11-17). */}
@@ -654,7 +662,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         aria-current={selectedId === entry.id}
                         onClick={() => select(entry.id)}
                         className={cn(
-                          'grid w-full gap-[3px] rounded-xl border px-3 py-2.5 text-left hover:bg-muted/40',
+                          'grid gap-[3px]',
+                          LIST_ROW,
                           selectedId === entry.id && LIST_SELECTED,
                         )}
                       >
@@ -704,8 +713,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
           className={cn(
             'min-w-0',
             // 상세는 흰 카드, 승인·반려는 가운데에 놓은 흰 결정 시트(머리·내용·아래 버튼 줄)다(사용자 요청 11-17).
-            mode.kind === 'detail' &&
+            mode.kind === 'detail' && [
               'rounded-xl bg-card p-5 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto',
+              SPLIT_DETAIL,
+            ],
             (mode.kind === 'approve' || mode.kind === 'reject') &&
               'mx-auto w-full overflow-hidden rounded-2xl bg-card shadow-xs ring-1 ring-foreground/10',
             mode.kind === 'approve' && 'max-w-3xl',

@@ -86,8 +86,11 @@ import {
 } from '@/stores/workspaceStore'
 import {
   describeContent,
+  LIST_ROW,
   LIST_SELECTED,
   lines,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
   statusLabel,
 } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
@@ -545,7 +548,12 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
           {action.error}
         </p>
       )}
-      <div className="grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-start">
+      <div
+        className={cn(
+          'grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+          SPLIT_COLUMNS,
+        )}
+      >
         <Card className="lg:max-h-full lg:overflow-y-auto">
           <CardHeader>
             <CardTitle className="flex gap-1" role="tablist">
@@ -576,7 +584,8 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
             <AsyncState query={tasks}>
               {() => (
                 <div className="space-y-3">
-                  <div className="flex gap-2">
+                  {/* 256px 목록에서 팀 전체 탭의 담당자 고르기는 검색칸 아래 줄로 내린다(S15P31A108-455). */}
+                  <div className="flex flex-wrap gap-2">
                     <Input
                       type="search"
                       aria-label="작업 검색"
@@ -618,7 +627,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                       <li
                         key={group.label}
                         className={cn(
-                          'grid gap-px rounded-[10px] border px-2 py-[7px] text-center',
+                          'grid gap-px rounded-[10px] border px-1 py-[7px] text-center whitespace-nowrap',
                           group === selectedGroup
                             ? 'border-foreground bg-card'
                             : 'bg-muted text-muted-foreground',
@@ -659,7 +668,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                 type="button"
                                 aria-current={entry.id === selectedId}
                                 className={cn(
-                                  'w-full rounded-xl border p-4 text-left transition-colors hover:bg-muted/50',
+                                  LIST_ROW,
                                   entry.id === selectedId && LIST_SELECTED,
                                 )}
                                 onClick={() =>
@@ -681,7 +690,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                             )?.name ?? '담당자 미정')
                                     }`}
                                 </span>
-                                <strong className="my-2 block text-sm font-medium">
+                                <strong className="my-1 block text-sm font-medium">
                                   {entry.current_plan_revision.plan.title}
                                 </strong>
                                 <span className="flex flex-wrap gap-2">
@@ -721,7 +730,12 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
           </CardContent>
         </Card>
         {/* 오른쪽 상세는 왼쪽 목록과 따로 스크롤한다(사용자 요청 11-17). 카드 테두리가 잘리지 않게 1px 안쪽 여백을 둔다. */}
-        <div className="min-w-0 lg:max-h-full lg:overflow-y-auto lg:p-px">
+        <div
+          className={cn(
+            'min-w-0 lg:max-h-full lg:overflow-y-auto lg:p-px',
+            SPLIT_DETAIL,
+          )}
+        >
           {!selectedId ? (
             <EmptyState>
               작업을 선택하면 계획과 검증 결과를 확인할 수 있어요.

@@ -36,6 +36,7 @@ import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
+import { SPLIT_COLUMNS, SPLIT_DETAIL } from '@/lib/display'
 import {
   useRememberedSelection,
   useWorkspaceStore,
@@ -286,7 +287,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
               className={
                 ending && review && summary
                   ? 'flex flex-1 flex-col'
-                  : 'grid flex-1 gap-5 lg:min-h-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]'
+                  : cn(
+                      'grid flex-1 gap-5 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)]',
+                      SPLIT_COLUMNS,
+                    )
               }
             >
               <div
@@ -317,9 +321,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               type="button"
                               aria-current={meeting.id === selectedId}
                               className={cn(
-                                'grid w-full gap-1 rounded-xl border border-[#ece9e0] bg-[#f7f5ef] px-3.5 py-3 text-left hover:bg-[#fbfaf6]',
+                                'grid w-full gap-1 rounded-lg border border-[#ece9e0] bg-[#f7f5ef] px-3 py-2.5 text-left hover:bg-[#fbfaf6]',
                                 meeting.id === selectedId &&
-                                  'border-2 border-[#2c291f] bg-[#fff8e0] px-[13px] py-[11px] hover:bg-[#fff8e0]',
+                                  'border-2 border-[#2c291f] bg-[#fff8e0] px-[11px] py-[9px] hover:bg-[#fff8e0]',
                               )}
                               onClick={() => select(meeting.id)}
                             >
@@ -557,7 +561,12 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           )
                         : 0
                     return (
-                      <div className="flex min-h-0 min-w-0 flex-col gap-3">
+                      <div
+                        className={cn(
+                          'flex min-h-0 min-w-0 flex-col gap-3',
+                          SPLIT_DETAIL,
+                        )}
+                      >
                         {closeResult?.meetingId === meeting.id && (
                           <section
                             aria-label="회의 끝낸 결과"

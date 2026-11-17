@@ -13,7 +13,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { edgeLabel, nodeKind } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
-import { LIST_SELECTED } from '@/lib/display'
+import {
+  LIST_ROW,
+  LIST_SELECTED,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
+} from '@/lib/display'
 import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusGroupOf, statusGroups } from '@/features/tasks/statusGroups'
 import { RelationGraph } from './RelationGraph'
@@ -120,7 +125,12 @@ export function RelationsView({
         : // 선행 작업 같은 작업 대상은 누른 작업을, 검증은 지금 고른 작업을 연다.
           openPane('tasks', type === 'TASK' ? id : selected)
   return (
-    <div className="grid gap-6 lg:h-0 lg:min-h-full lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-start">
+    <div
+      className={cn(
+        'grid gap-6 lg:h-0 lg:min-h-full lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+        SPLIT_COLUMNS,
+      )}
+    >
       {/* 왼쪽 목록은 작업 현황과 같은 흰 카드: 검색칸, 상태 묶음 머리글, 번호·제목·상태 칩 카드 */}
       <Card className="lg:max-h-full lg:overflow-y-auto">
         <CardContent className="space-y-3">
@@ -161,14 +171,14 @@ export function RelationsView({
                               aria-current={task.id === selected}
                               onClick={() => setPicked(task.id)}
                               className={cn(
-                                'w-full rounded-xl border p-4 text-left transition-colors hover:bg-muted/50',
+                                LIST_ROW,
                                 task.id === selected && LIST_SELECTED,
                               )}
                             >
                               <span className="block text-xs text-muted-foreground">
                                 {task.key}
                               </span>
-                              <strong className="my-2 block text-sm font-medium">
+                              <strong className="my-1 block text-sm font-medium">
                                 {task.current_plan_revision.plan.title}
                               </strong>
                               <span className="flex flex-wrap gap-2">
@@ -191,7 +201,12 @@ export function RelationsView({
           </AsyncState>
         </CardContent>
       </Card>
-      <div className="grid min-w-0 content-start gap-4 lg:max-h-full lg:overflow-y-auto lg:p-px">
+      <div
+        className={cn(
+          'grid min-w-0 content-start gap-4 lg:max-h-full lg:overflow-y-auto lg:p-px',
+          SPLIT_DETAIL,
+        )}
+      >
         {/* 캔버스 PNL-09-v2-relations 오른쪽 위. 관계를 못 읽어도 작업 현황으로 갈 수 있게 관계 응답 밖에 둔다. */}
         {selectedTask && (
           <div className="flex items-start justify-between gap-4">
