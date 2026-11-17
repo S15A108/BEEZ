@@ -374,9 +374,13 @@ function Workspace({ projectId }: { projectId: string }) {
                       </span>
                     )}
                   </div>
-                  {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). */}
+                  {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). 회의실도 본문 자리를 넓히려고 숨긴다(사용자 요청 11-17). 화면 읽기 프로그램은 읽는다. */}
                   <DialogDescription
-                    className={pane === 'documents' ? 'sr-only' : undefined}
+                    className={
+                      pane === 'documents' || pane === 'meetings'
+                        ? 'sr-only'
+                        : undefined
+                    }
                   >
                     {data.project.name}
                     {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}

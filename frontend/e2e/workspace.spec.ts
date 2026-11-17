@@ -330,9 +330,9 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
   ).toBeVisible()
 })
 
-// PR #306 재검토(S15P31A108-438)·S15P31A108-457: 낮은 창에서도 처음부터 펼친 안건과 대화 칸이 납작해지지 않고, 단계 카드의
-// 입력칸과 아래 버튼 줄이 겹치지 않는다. 수정 초안 단계에서 직접 수정 초안을 펼쳐도 '접기'를 다시 누를 수 있다.
-test('1024×768에서 펼친 안건과 대화 칸이 겹치지 않고, 직접 수정 초안을 펼쳤다 접을 수 있다', async ({
+// PR #306 재검토(S15P31A108-438)·S15P31A108-457: 낮은 창에서도 처음부터 펼친 안건과 대화 칸이 납작해지지 않고 서로 겹치지 않는다.
+// 정리 요청 버튼은 제목 줄에 있어 스크롤 없이 보인다. 수정 초안 단계에서 직접 수정 초안을 펼쳐도 '접기'를 다시 누를 수 있다.
+test('1024×768에서 펼친 안건과 대화 칸이 겹치지 않고 정리 요청 버튼이 보이며, 직접 수정 초안을 펼쳤다 접을 수 있다', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 768 })
@@ -356,7 +356,9 @@ test('1024×768에서 펼친 안건과 대화 칸이 겹치지 않고, 직접 �
   expect(logBox!.height).toBeGreaterThanOrEqual(100)
   expect(agendaBox!.y + agendaBox!.height).toBeLessThanOrEqual(logBox!.y)
   expect(logBox!.y + logBox!.height).toBeLessThanOrEqual(inputBox!.y)
-  expect(inputBox!.y + inputBox!.height).toBeLessThan(requestBox!.y)
+  // 정리 요청 버튼은 제목 줄 오른쪽 끝에 있어 창을 스크롤하지 않아도 보인다(사용자 요청 11-17).
+  expect(requestBox!.y + requestBox!.height).toBeLessThan(agendaBox!.y)
+  expect(requestBox!.y + requestBox!.height).toBeLessThanOrEqual(768)
   await page
     .getByRole('button', { name: '비비에게 정리 요청', exact: true })
     .click()

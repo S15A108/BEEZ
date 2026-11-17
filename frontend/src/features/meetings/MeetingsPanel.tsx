@@ -75,20 +75,14 @@ const participationLabel = {
   DECLINED: '불참',
 }
 
-// 회의 단계(회의실 흐름 목업, 사용자 결정 11-17 · S15P31A108-454). 한 단계에 한 화면이고 노란 버튼은 다음 단계 하나다.
-const meetingSteps = [
-  { name: '대화', todo: '정할 것을 맞춰요' },
-  { name: '비비 정리', todo: '결정을 정리해요' },
-  { name: '수정 초안', todo: '바뀌는 문장 확인' },
-  { name: '변경 제안', todo: '팀장 승인으로' },
-]
 // 캔버스 PNL-06-v2 회의실의 칸 테두리
 const line = 'border-[#e4e0d4]'
 
 // 회의는 사람이 만들지 않는다. 작업이 부딪히면 비비가 팀장과 관련 작업자를 불러 연다.
-// 왼쪽은 회의 목록(진행 중·끝남 필터), 오른쪽은 회의 머리·참여자, 단계 네 칸, 흰 단계 카드와 아래 버튼 줄이다(S15P31A108-454·457).
+// 왼쪽은 회의 목록(진행 중·끝남 필터), 오른쪽은 회의 머리·참여자, '정할 것' 줄, 흰 단계 카드와 아래 버튼 줄이다(S15P31A108-454·457).
+// 단계 표시줄은 없애고(사용자 요청 11-17) 단계는 다음 할 일 버튼과 '‹ 돌아가기'로 오간다.
 // 단계는 서버 상태로 정한다: 끝난 회의 → 변경 제안, 지금 정리로 만든 수정 초안 → 수정 초안, 정리 뒤 새 대화가 없는 최신 정리 →
-// 비비 정리, 그 밖에는 대화. 사람은 지난 단계로 돌아가 볼 수 있다(단계 칸, '‹ 돌아가기').
+// 비비 정리, 그 밖에는 대화. 사람은 지난 단계로 돌아가 볼 수 있다('‹ 돌아가기', 끝난 회의는 결과의 '회의 기록 보기'·'비비 정리 보기').
 // API 없음: origin·task_ids·conflict_summary·status·closed_*는 dev 명세의 '수정안 요청'이라 서버가 주면 그린다.
 export function MeetingsPanel({ projectId, isLeader }: Props) {
   const session = useSession()
@@ -452,8 +446,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             <span className="text-xs text-muted-foreground">
                               {[
                                 formatShort(meeting.created_at),
-                                meeting.origin === 'BEE_CONFLICT' &&
-                                  '비비가 엶',
                                 `참여 ${meeting.participants.length}명`,
                               ]
                                 .filter(Boolean)
@@ -471,8 +463,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               </span>
                               <span className="text-xs text-muted-foreground">
                                 {formatShort(meeting.created_at)}
-                                {meeting.origin === 'BEE_CONFLICT' &&
-                                  ' · 비비가 엶'}
                               </span>
                             </>
                           )}
@@ -519,25 +509,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           ]
                         : []
                     })
-                    const talkCount = notes.filter(
-                      (entry) => entry.kind === 'TEXT',
-                    ).length
-                    const captions = [
-                      progress > 0
-                        ? `메시지 ${talkCount}개`
-                        : meetingSteps[0].todo,
-                      progress > 1 && summary
-                        ? `결정 ${summary.decisions.length}개`
-                        : meetingSteps[1].todo,
-                      progress > 2 && summary
-                        ? `문서 ${summary.document_changes.length}개`
-                        : meetingSteps[2].todo,
-                      closedMeeting
-                        ? proposalId
-                          ? '제안을 올렸어요'
-                          : '변경 없이 끝남'
-                        : meetingSteps[3].todo,
-                    ]
                     // 회의 중단(변경 없이 끝내기, 사용자 결정 11-17): 서버의 회의 끝내기(MTG-A13)는 정리가 있어야 하고
                     // 정리에 바뀔 문서가 있으면 늘 변경 제안을 만든다. 그래서 바뀔 문서 없는 최신 정리가 있을 때만 끝낸다.
                     const stopBlocked = !summary
@@ -567,7 +538,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                     return (
                       <div className="flex min-h-0 min-w-0 flex-col gap-3.5">
                         <div className="grid gap-1">
-                          {/* 제목 줄: 제목 오른쪽에 참여자와 더보기를 둔다(화면 검수 11-16). 좁으면 참여자가 제목 아래로 내려간다. */}
+                          {/* 제목 줄: 제목 오른쪽 끝에 대화 단계의 다음 할 일 버튼을 둬 스크롤하지 않아도 보이게 한다(사용자 요청 11-17).
+                              참여자·더보기와 회의 정보는 그 아래 줄이다. */}
                           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                             <div className="flex flex-wrap items-center gap-2">
                               <h3 className="text-lg font-bold">
@@ -578,6 +550,44 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 origin={meeting.origin}
                               />
                             </div>
+                            {step === 0 && !closedMeeting && (
+                              <div className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1">
+                                {!isLeader && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {summaryReady
+                                      ? '팀장이 비비 정리를 확인하고 회의를 끝내요.'
+                                      : '팀장만 요청할 수 있어요'}
+                                  </span>
+                                )}
+                                {summaryReady ? (
+                                  <Button size="lg" onClick={() => goTo(1)}>
+                                    비비 정리 보기
+                                    <ChevronRight />
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="lg"
+                                    disabled={
+                                      !isLeader ||
+                                      !participant ||
+                                      !throughEntry ||
+                                      !allLoaded ||
+                                      action.busy
+                                    }
+                                    onClick={() =>
+                                      void requestSummary(
+                                        meeting.id,
+                                        throughEntry!.id,
+                                      ).catch(() => undefined)
+                                    }
+                                  >
+                                    비비에게 정리 요청
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                             <div className="flex items-start gap-1">
                               <div
                                 role="group"
@@ -721,36 +731,47 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 </Popover>
                               )}
                             </div>
+                            <p className="text-xs text-muted-foreground">
+                              {[
+                                formatDate(meeting.created_at),
+                                closedMeeting &&
+                                  `${nameOfAccount(meeting.closed_by)}이 끝냄`,
+                                '기록은 원문 그대로 남아요',
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </p>
                           </div>
-                          <p className="text-xs text-muted-foreground">
-                            {[
-                              formatDate(meeting.created_at),
-                              closedMeeting
-                                ? `${nameOfAccount(meeting.closed_by)}이 끝냄`
-                                : meeting.origin === 'BEE_CONFLICT' &&
-                                  '비비가 열었어요',
-                              '기록은 원문 그대로 남아요',
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </p>
                         </div>
-                        <MeetingSteps
-                          current={step}
-                          done={(index) =>
-                            index < Math.max(progress, step) && canView(index)
-                          }
-                          canView={canView}
-                          captions={captions}
-                          onSelect={goTo}
-                        />
+                        {/* '정할 것' 줄은 단계와 상관없이 회의 머리 아래에 둔다(사용자 요청 11-17, 단계 표시줄 자리).
+                            펼친 안내는 단계 카드와 남는 높이를 나누고 안에서 스크롤한다(S15P31A108-438). */}
+                        {(meeting.conflict_summary ||
+                          meeting.conflict_guidance) && (
+                          <MeetingConflictGuidance
+                            // 대화 단계는 펼쳐서 시작하고, 정리 이후 단계로 넘어가면 한 줄로 접어 정리·수정 초안 자리를 넓힌다.
+                            key={`${meeting.id}:${step === 0}`}
+                            defaultOpen={step === 0}
+                            summary={meeting.conflict_summary}
+                            taskIds={meeting.task_ids ?? []}
+                            guidance={meeting.conflict_guidance}
+                            brief={
+                              notes.find(
+                                (entry) => entry.kind === 'CONFLICT_BRIEF',
+                              )?.text
+                            }
+                            closed={closedMeeting}
+                            taskKeyOf={(id) => taskOf(id)?.key}
+                            documentTitleOf={documentTitleOf}
+                          />
+                        )}
                         {/* 단계 카드: 위는 그 단계의 내용, 아래는 버튼 줄. 넓은 화면에서는 남는 높이를 모두 쓰고 안에서 스크롤한다.
-                            대화·정리 단계는 펼친 안건(128px)·대화 칸(112px) 또는 정리(192px)와 아래 입력칸·버튼 줄이 겹치지 않을 높이(416px)를 지키고,
+                            대화 단계는 대화 칸(112px)과 입력칸이, 정리 단계는 정리(144px)와 입력칸·버튼 줄이 겹치지 않을 높이를 지키고,
                             창이 그보다 낮으면 회의실 창이 스크롤한다(PR #306 재검토와 같은 방식). */}
                         <div
                           className={cn(
                             'flex flex-col rounded-2xl border bg-white lg:min-h-0 lg:flex-1',
-                            step <= 1 && 'lg:min-h-[26rem]',
+                            step === 0 && 'lg:min-h-64',
+                            step === 1 && 'lg:min-h-[21.5rem]',
                             line,
                           )}
                         >
@@ -762,24 +783,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           >
                             {step === 0 && (
                               <>
-                                {(meeting.conflict_summary ||
-                                  meeting.conflict_guidance) && (
-                                  <MeetingConflictGuidance
-                                    key={meeting.id}
-                                    summary={meeting.conflict_summary}
-                                    taskIds={meeting.task_ids ?? []}
-                                    guidance={meeting.conflict_guidance}
-                                    brief={
-                                      notes.find(
-                                        (entry) =>
-                                          entry.kind === 'CONFLICT_BRIEF',
-                                      )?.text
-                                    }
-                                    closed={closedMeeting}
-                                    taskKeyOf={(id) => taskOf(id)?.key}
-                                    documentTitleOf={documentTitleOf}
-                                  />
-                                )}
                                 {review &&
                                   !summary &&
                                   summaryQuery.isError &&
@@ -791,7 +794,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                     </p>
                                   )}
                                 {/* lg 미만은 창이 내용 높이로 늘어나므로 대화 칸 높이를 묶어 안에서 스크롤한다(새 메시지로 내리기).
-                                    lg부터는 단계 카드에서 안건·입력칸을 뺀 남은 높이를 모두 쓰고, 이 칸만 스크롤한다. */}
+                                    lg부터는 단계 카드에서 입력칸을 뺀 남은 높이를 모두 쓰고, 이 칸만 스크롤한다. */}
                                 <AsyncState query={entries}>
                                   {() => (
                                     <div
@@ -841,24 +844,32 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                     끝난 회의라 메시지를 보낼 수 없어요.
                                   </p>
                                 ) : joined ? (
-                                  <InlineMessage
-                                    key={`message-${meeting.id}`}
-                                    label="메시지"
-                                    placeholder="메시지 보내기"
-                                    submitLabel="보내기"
-                                    max={ENTRY_MAX}
-                                    onSubmit={async (text) => {
-                                      await runPlain(
-                                        () =>
-                                          meetingsApi.addEntry(
-                                            projectId,
-                                            meeting.id,
-                                            { text },
-                                          ),
-                                        '메시지를 보냈어요.',
-                                      )
-                                    }}
-                                  />
+                                  <div className="grid gap-1.5">
+                                    {isLeader && talkedAfterSummary && (
+                                      <p className="text-xs text-[#8a6a00]">
+                                        정리한 뒤에 새 대화가 있어요. 끝내기
+                                        전에 비비에게 정리를 다시 요청해 주세요.
+                                      </p>
+                                    )}
+                                    <InlineMessage
+                                      key={`message-${meeting.id}`}
+                                      label="메시지"
+                                      placeholder="메시지 보내기"
+                                      submitLabel="보내기"
+                                      max={ENTRY_MAX}
+                                      onSubmit={async (text) => {
+                                        await runPlain(
+                                          () =>
+                                            meetingsApi.addEntry(
+                                              projectId,
+                                              meeting.id,
+                                              { text },
+                                            ),
+                                          '메시지를 보냈어요.',
+                                        )
+                                      }}
+                                    />
+                                  </div>
                                 ) : (
                                   <p className="text-sm text-muted-foreground">
                                     비비가 부른 사람만 메시지를 보낼 수 있어요.
@@ -869,7 +880,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             {step === 1 &&
                               (summary ? (
                                 <>
-                                  <div className="-mx-1 grid content-start gap-3.5 px-1 lg:min-h-48 lg:flex-1 lg:overflow-y-auto">
+                                  <div className="-mx-1 grid content-start gap-3.5 px-1 lg:min-h-36 lg:flex-1 lg:overflow-y-auto">
                                     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                                       <BibiFace className="size-7 shrink-0" />
                                       <h4 className="font-bold">비비 정리</h4>
@@ -1063,6 +1074,15 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   >
                                     회의 기록 보기
                                   </Button>
+                                  {summary && (
+                                    <Button
+                                      variant="outline"
+                                      size="lg"
+                                      onClick={() => goTo(1)}
+                                    >
+                                      비비 정리 보기
+                                    </Button>
+                                  )}
                                   {proposalId && (
                                     <Button
                                       size="lg"
@@ -1078,6 +1098,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             )}
                           </div>
                           <div
+                            hidden={step === 0 && !closedMeeting}
                             className={cn(
                               'flex flex-wrap items-center gap-2.5 rounded-b-2xl border-t bg-[#fbfaf6] px-4 py-3 sm:px-6',
                               line,
@@ -1085,55 +1106,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           >
                             {step === 0 && (
                               <>
-                                <p
-                                  className={cn(
-                                    'mr-auto min-w-0 flex-1 basis-60 text-xs leading-5',
-                                    isLeader &&
-                                      !closedMeeting &&
-                                      talkedAfterSummary
-                                      ? 'text-[#8a6a00]'
-                                      : 'text-muted-foreground',
-                                  )}
-                                >
-                                  {closedMeeting
-                                    ? '끝난 회의에는 더 쓸 수 없어요.'
-                                    : !isLeader
-                                      ? summaryReady
-                                        ? '팀장이 비비 정리를 확인하고 회의를 끝내요.'
-                                        : '팀장만 요청할 수 있어요'
-                                      : talkedAfterSummary
-                                        ? '정리한 뒤에 새 대화가 있어요. 끝내기 전에 비비에게 정리를 다시 요청해 주세요.'
-                                        : summaryReady
-                                          ? '정리한 뒤에 새로 말하면 비비에게 정리를 다시 요청해야 해요.'
-                                          : '합의가 끝나면 비비에게 정리를 맡기세요. 정리하면 정리 화면으로 넘어가요.'}
+                                <p className="mr-auto text-xs leading-5 text-muted-foreground">
+                                  끝난 회의에는 더 쓸 수 없어요.
                                 </p>
-                                {closedMeeting ? (
-                                  resultButton
-                                ) : summaryReady ? (
-                                  <Button size="lg" onClick={() => goTo(1)}>
-                                    비비 정리 보기
-                                    <ChevronRight />
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    size="lg"
-                                    disabled={
-                                      !isLeader ||
-                                      !participant ||
-                                      !throughEntry ||
-                                      !allLoaded ||
-                                      action.busy
-                                    }
-                                    onClick={() =>
-                                      void requestSummary(
-                                        meeting.id,
-                                        throughEntry!.id,
-                                      ).catch(() => undefined)
-                                    }
-                                  >
-                                    비비에게 정리 요청
-                                  </Button>
-                                )}
+                                {resultButton}
                               </>
                             )}
                             {step === 1 && (
@@ -1261,83 +1237,6 @@ function MeetingChip({
     >
       {status === 'CLOSED' ? '완료' : '작업 충돌'}
     </span>
-  )
-}
-
-// 회의 단계 네 칸(회의실 흐름 목업). 지난 단계는 초록 체크, 지금 단계는 노란 테두리, 볼 수 있는 단계는 눌러 옮겨 간다.
-// 글자 대비는 S15P31A108-439 기준(지난·다음 단계 text-foreground/75)을 따른다.
-function MeetingSteps({
-  current,
-  done,
-  canView,
-  captions,
-  onSelect,
-}: {
-  current: number
-  done: (index: number) => boolean
-  canView: (index: number) => boolean
-  captions: string[]
-  onSelect: (index: number) => void
-}) {
-  return (
-    <ol
-      aria-label="회의 단계"
-      className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-    >
-      {meetingSteps.map((item, index) => {
-        const now = index === current
-        const finished = !now && done(index)
-        const box = cn(
-          'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] leading-tight',
-          now
-            ? 'bg-white font-semibold text-foreground ring-2 ring-primary ring-inset'
-            : 'bg-[#f1efe7] text-foreground/75',
-        )
-        const body = (
-          <>
-            <span
-              aria-hidden="true"
-              className={cn(
-                'grid size-[22px] shrink-0 place-items-center rounded-full text-xs font-bold',
-                now
-                  ? 'bg-primary text-primary-foreground'
-                  : finished
-                    ? 'bg-green-700 text-white'
-                    : 'bg-white ring-1 ring-[#d6d1c4]',
-              )}
-            >
-              {finished ? <Check className="size-3.5" /> : index + 1}
-            </span>
-            <span className="grid min-w-0 gap-0.5">
-              <span className={cn(finished && 'text-foreground')}>
-                {item.name}
-              </span>
-              <span className="truncate text-[11px] font-normal text-muted-foreground [@media(max-height:820px)]:hidden">
-                {captions[index]}
-              </span>
-            </span>
-          </>
-        )
-        return (
-          <li key={item.name} aria-current={now ? 'step' : undefined}>
-            {!now && canView(index) ? (
-              <button
-                type="button"
-                className={cn(
-                  box,
-                  'outline-none hover:bg-[#e9e6dc] focus-visible:ring-2 focus-visible:ring-ring',
-                )}
-                onClick={() => onSelect(index)}
-              >
-                {body}
-              </button>
-            ) : (
-              <div className={box}>{body}</div>
-            )}
-          </li>
-        )
-      })}
-    </ol>
   )
 }
 

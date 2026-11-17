@@ -13,6 +13,7 @@ export function MeetingConflictGuidance({
   guidance,
   brief,
   closed,
+  defaultOpen = true,
   taskKeyOf,
   documentTitleOf,
 }: {
@@ -21,12 +22,14 @@ export function MeetingConflictGuidance({
   guidance?: Guidance
   brief?: string
   closed: boolean
+  /** 처음에 펼칠지. 회의실 대화 단계는 펼치고, 정리 이후 단계는 한 줄로 접어 내용 자리를 넓힌다. */
+  defaultOpen?: boolean
   taskKeyOf: (id: string) => string | undefined
   documentTitleOf: (id: string) => string
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   // 처음부터 펼쳐 둔다(사용자 요청 11-17, S15P31A108-457). 접으면 '정할 것' 한 줄만 남는다.
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(defaultOpen)
   const detailId = useId()
   const [first, second] = guidance?.tasks ?? []
   const hasComparison =
