@@ -305,7 +305,9 @@ test('기획 분석에서 프로젝트 시작을 누르면 바로 기준 v1이 �
   expect(errors).toEqual([])
 })
 
-test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 끝내면 변경 제안이 올라간다', async ({
+// S15P31A108-454: 회의는 대화 → 비비 정리 → 수정 초안 → 변경 제안 네 단계 화면으로 나아간다. 노란 버튼은 다음 단계 하나다.
+// 창이 스크롤하지 않고 대화 칸만 스크롤하는지(S15P31A108-438)는 기본 창(1280×720)에서 본다.
+test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 끝내면 변경 제안이 올라가고 그 제안을 연다', async ({
   page,
 }) => {
   await openWorkspace(page)
@@ -345,72 +347,106 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
       exact: true,
     }),
   ).toBeVisible()
-  // 정리가 없으면 회의를 끝낼 수 없다.
-  await expect(
-    page.getByRole('button', { name: '회의 끝내기', exact: true }),
-  ).toHaveCount(0)
+  // 정리가 없으면 다음 단계로 가거나 회의를 끝낼 수 없다.
+  await expect(page.getByRole('button', { name: /회의 끝내기/ })).toHaveCount(0)
   await page
     .getByRole('button', { name: '비비에게 정리 요청', exact: true })
     .click()
-  await expect(log.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
-  // 새로 고쳐도 최신 정리를 서버(MTG-A15)에서 다시 받아 이어 간다.
+  // 비비 정리 단계: 정리는 대화 칸이 아니라 이 단계에 보이고, 아래 입력칸은 '비비 정리 수정'이다(S15P31A108-457).
+  await expect(page.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
+  await expect(
+    page.getByRole('textbox', { name: '비비에게 고칠 점' }),
+  ).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '메시지' })).toHaveCount(0)
+  // 새로 고쳐도 최신 정리를 서버(MTG-A15)에서 다시 받아 정리 단계부터 이어 간다.
   await page.reload()
   await page.getByRole('button', { name: '회의실', exact: true }).click()
-  await expect(
-    page
-      .getByRole('log', { name: '회의 대화' })
-      .getByRole('region', { name: '바뀔 문서' }),
-  ).toBeVisible()
-  await page.getByRole('button', { name: '회의 끝내기', exact: true }).click()
-  await expect(
-    page.getByRole('heading', { name: '회의를 끝낼까요?' }),
-  ).toBeVisible()
+  await expect(page.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
   await page
-    .getByRole('button', { name: '회의 끝내고 변경 제안 만들기' })
+    .getByRole('button', { name: '수정 초안 만들기', exact: true })
+    .click()
+  await expect(
+    page.getByRole('heading', { name: '변경 제안에 담을 것' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '변경 제안', exact: true }).click()
+  // 회의를 끝내면 만든 변경 제안을 변경 제안 창에서 골라 둔 채 연다(사용자 요청 11-17).
+  await expect(
+    page.getByRole('heading', { name: '변경 제안', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText('회의 결과: 초대 안내 문구 검토').first(),
+  ).toBeVisible()
+  // 회의실로 돌아오면 끝난 회의는 '끝남'에서 보이고, 기록은 읽기만 한다. 업무 창이 열린 동안 단축 바는 창 뒤에서
+  // 접근성 트리에서 숨지만 눌러서 메뉴를 바꿀 수 있다.
+  await page
+    .getByRole('button', { name: '회의실', exact: true, includeHidden: true })
+    .click()
+  await page.getByRole('button', { name: /^끝남/ }).click()
+  await page
+    .getByRole('list', { name: '끝난 회의' })
+    .getByRole('button', { name: /초대 안내 문구 검토/ })
     .click()
   await expect(
     page.getByRole('region', { name: '회의 끝낸 결과' }),
   ).toContainText('변경 제안을 올렸어요')
-  // 끝난 회의는 읽기만 하고, 변경 제안으로 이동할 수 있다.
+  await page.getByRole('button', { name: '회의 기록 보기' }).click()
   await expect(
     page.getByText('끝난 회의라 메시지를 보낼 수 없어요.'),
   ).toBeVisible()
+  await page.getByRole('button', { name: '결과 보기' }).click()
   await expect(
-    page.getByRole('button', { name: '변경 제안 보기', exact: true }),
+    page.getByRole('button', { name: '변경 제안에서 보기', exact: true }),
   ).toBeVisible()
 })
 
-// PR #306 재검토(S15P31A108-438): 낮은 창에서 비비 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 납작해지지 않고
-// (초안은 버튼과 초안 몇 줄, 안건은 '정할 것' 줄과 안내 몇 줄), 모자라면 창이 스크롤해 '접기'를 다시 누를 수 있다.
-test('1024×768에서 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 보이고 다시 접을 수 있다', async ({
+// PR #306 재검토(S15P31A108-438)·S15P31A108-457: 낮은 창에서도 처음부터 펼친 안건과 대화 칸이 납작해지지 않고 서로 겹치지 않는다.
+// 정리 요청 버튼은 제목 줄에 있어 스크롤 없이 보인다. 수정 초안 단계에서 직접 수정 초안을 펼쳐도 '접기'를 다시 누를 수 있다.
+test('1024×768에서 펼친 안건과 대화 칸이 겹치지 않고 정리 요청 버튼이 보이며, 직접 수정 초안을 펼쳤다 접을 수 있다', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 768 })
   await openWorkspace(page)
   await page.getByRole('button', { name: '회의실', exact: true }).click()
+  const agenda = page.getByRole('region', { name: '안건' })
+  await expect(agenda.getByRole('button', { name: '접기' })).toBeVisible()
   const log = page.getByRole('log', { name: '회의 대화' })
+  await expect(
+    log.getByText('TASK-002에서 만료 전용 안내는 뺄게요.'),
+  ).toBeAttached()
+  const agendaBox = await agenda.boundingBox()
+  const logBox = await log.boundingBox()
+  const inputBox = await page
+    .getByRole('textbox', { name: '메시지' })
+    .boundingBox()
+  const requestBox = await page
+    .getByRole('button', { name: '비비에게 정리 요청', exact: true })
+    .boundingBox()
+  expect(agendaBox!.height).toBeGreaterThanOrEqual(120)
+  expect(logBox!.height).toBeGreaterThanOrEqual(100)
+  expect(agendaBox!.y + agendaBox!.height).toBeLessThanOrEqual(logBox!.y)
+  expect(logBox!.y + logBox!.height).toBeLessThanOrEqual(inputBox!.y)
+  // 정리 요청 버튼은 제목 줄 오른쪽 끝에 있어 창을 스크롤하지 않아도 보인다(사용자 요청 11-17).
+  expect(requestBox!.y + requestBox!.height).toBeLessThan(agendaBox!.y)
+  expect(requestBox!.y + requestBox!.height).toBeLessThanOrEqual(768)
   await page
     .getByRole('button', { name: '비비에게 정리 요청', exact: true })
     .click()
-  await expect(log.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
-  await page.getByRole('button', { name: '회의 수정 초안 만들기' }).click()
-  const fold = page.getByRole('button', { name: '회의 수정 초안 접기' })
-  const draft = fold.locator('..')
-  const agenda = page.getByRole('region', { name: '안건' })
-  await agenda.getByRole('button', { name: '펼치기' }).click()
-  await expect(agenda.getByRole('button', { name: '접기' })).toBeVisible()
-  const draftBox = await draft.boundingBox()
-  const foldBox = await fold.boundingBox()
-  const agendaBox = await agenda.boundingBox()
-  expect(draftBox!.height).toBeGreaterThanOrEqual(150)
-  expect(foldBox!.y + foldBox!.height).toBeLessThanOrEqual(
-    draftBox!.y + draftBox!.height,
-  )
-  expect(agendaBox!.height).toBeGreaterThanOrEqual(120)
+  await expect(page.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
+  await page
+    .getByRole('button', { name: '수정 초안 만들기', exact: true })
+    .click()
+  await page.getByRole('button', { name: '직접 수정 초안 만들기' }).click()
+  await expect(
+    page.getByRole('region', { name: '회의 수정 초안' }),
+  ).toBeVisible()
+  const fold = page.getByRole('button', { name: '직접 수정 초안 접기' })
   await fold.click()
   await expect(
-    page.getByRole('button', { name: '회의 수정 초안 만들기' }),
+    page.getByRole('button', { name: '직접 수정 초안 만들기' }),
   ).toBeVisible()
+  await expect(
+    page.getByRole('region', { name: '회의 수정 초안' }),
+  ).toHaveCount(0)
 })
 
 // 이름표(HTML 버튼)는 캔버스 위에 겹쳐 있다. 이름표 위에서 굴린 휠과 이름표에서 시작한 끌기도 고리를 돌리고 페이지는
