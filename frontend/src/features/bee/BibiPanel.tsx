@@ -151,21 +151,20 @@ export function BibiPanel({ projectId }: { projectId: string }) {
     : 0
   return (
     // 창 높이를 다 쓰고, 대화가 짧아도 질문 입력줄은 아래에 둔다.
-    <div className="grid min-h-full gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+    // 근거 칸은 첫 답이 온 뒤에 연다. 그 전에는 '근거 0'만 있는 칸이 폭의 1/4을 차지했다(S15P31A108-449).
+    <div
+      className={cn(
+        'grid min-h-full gap-5',
+        selected && 'lg:grid-cols-[minmax(0,1fr)_300px]',
+      )}
+    >
       <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <BibiFace className="size-12 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <h3 className="font-bold">
-              비비{' '}
-              <span className="text-sm font-medium text-muted-foreground">
-                공용 문서에서 찾아 답해요
-              </span>
-            </h3>
-            <p className="text-sub text-muted-foreground">
-              답마다 찾은 문서를 붙여요. 최종 설계는 인간 팀장이 승인해요.
-            </p>
-          </div>
+          {/* 창 제목이 이미 '비비'라 이름과 '공용 문서에서 찾아 답해요'를 다시 쓰지 않는다(S15P31A108-449). */}
+          <p className="min-w-0 flex-1 text-sub text-muted-foreground">
+            답마다 찾은 문서를 붙여요. 최종 설계는 인간 팀장이 승인해요.
+          </p>
           <div
             role="radiogroup"
             aria-labelledby={scopeLabel}
@@ -350,33 +349,26 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         {/* 입력줄이 본래 놓일 자리의 끝. 붙어 있는 입력줄 안에 두면 늘 보이는 것으로 쳐서 내려가지 않는다. */}
         <div ref={end} aria-hidden className="-mt-4 scroll-mb-8" />
       </div>
-      <aside
-        id={sourcesId}
-        ref={sourcesRef}
-        tabIndex={-1}
-        aria-label="선택한 답의 근거"
-        className="rounded-2xl border bg-muted/30 p-4"
-      >
-        <h3 className="flex justify-between text-sm font-bold">
-          이 답의 근거
-          <span className="text-muted-foreground">{referenceCount}</span>
-        </h3>
-        {selected ? (
+      {selected && (
+        <aside
+          id={sourcesId}
+          ref={sourcesRef}
+          tabIndex={-1}
+          aria-label="선택한 답의 근거"
+          className="rounded-2xl border bg-muted/30 p-4"
+        >
+          <h3 className="flex justify-between text-sm font-bold">
+            이 답의 근거
+            <span className="text-muted-foreground">{referenceCount}</span>
+          </h3>
           <BeeAnswerEvidence answer={selected.answer} titleOf={documentTitle} />
-        ) : (
-          <p className="mt-3 text-sub text-muted-foreground">
-            질문하면 비비가 찾은 문서가 여기에 떠요. 근거를 못 찾으면 짐작하지
-            않고 못 찾았다고 답해요.
-          </p>
-        )}
-        {selected && (
           <p className="mt-3 text-sub text-muted-foreground">
             {selected.scope === 'APPROVED'
               ? '승인된 문서만 찾았어요.'
               : '초안까지 찾았어요. 초안은 아직 팀장이 승인하지 않은 내용이에요.'}
           </p>
-        )}
-      </aside>
+        </aside>
+      )}
     </div>
   )
 }

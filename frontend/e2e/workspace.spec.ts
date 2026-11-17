@@ -114,6 +114,8 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await dialog.getByRole('button', { name: '닫기', exact: true }).click()
   await page.getByRole('button', { name: '작업 현황', exact: true }).click()
   dialog = page.getByRole('dialog')
+  // S15P31A108-416: 통과한 작업은 계획 탭부터 열리고 검증 결과는 탭을 골라 본다.
+  await dialog.getByRole('tab', { name: /검증 결과/ }).click()
   await expect(
     dialog.getByText('설계와 계획의 검증 결과', { exact: true }),
   ).toBeVisible()

@@ -49,6 +49,27 @@ function renderPanel() {
   )
 }
 
+// S15P31A108-449: 개요 탭은 다른 탭의 요약뿐이라 뺐고, '검토 중' 알약이 목록과 상세 제목에 두 번 보였다.
+it('첫 탭은 바뀌는 내용이고 상태 알약은 상세 제목 옆에만 있다', async () => {
+  renderPanel()
+  const heading = await screen.findByRole('heading', {
+    name: /프로젝트 목록 빈 화면 안내/,
+  })
+  expect(within(heading).getByText('검토 중')).toBeInTheDocument()
+  const row = screen.getByRole('button', { name: /CP-71/ })
+  expect(within(row).queryByText('검토 중')).not.toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: '개요' })).not.toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: /^바뀌는 내용/ })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  // 개요에만 있던 제안 이유와 관련 작업은 제목 아래에 남는다.
+  expect(
+    screen.getByText(/참여한 프로젝트가 없을 때 무엇을 하면 되는지/),
+  ).toBeInTheDocument()
+  expect(screen.getByText(/관련 작업 TASK-001/)).toBeInTheDocument()
+})
+
 it('알 수 없는 발행 후 상태는 상세를 유지하고 확인 필요로 표시한다', async () => {
   const base = await changesApi.get('101', '71')
   const payload = {
@@ -111,7 +132,8 @@ it('발행된 제안은 상세 응답의 후속 분석 실패를 표시하고 �
   expect(retry).not.toHaveBeenCalled()
 })
 
-it('영향 분석이 실패했으면 개요와 영향 탭에서 0건으로 대신 표시하지 않는다', async () => {
+// S15P31A108-449: 개요 탭을 빼서 탭 이름과 영향 탭만 본다.
+it('영향 분석이 실패했으면 영향 탭 이름과 내용에서 0건으로 대신 표시하지 않는다', async () => {
   const user = userEvent.setup()
   vi.spyOn(changesApi, 'impact').mockResolvedValue({
     explicit: [],
@@ -120,13 +142,13 @@ it('영향 분석이 실패했으면 개요와 영향 탭에서 0건으로 대�
     is_current: true,
   })
   renderPanel()
-  expect(await screen.findByText('분석하지 못했어요.')).toBeInTheDocument()
-  expect(screen.queryByText(/확인된 관계 0/)).not.toBeInTheDocument()
-  expect(screen.getByRole('tab', { name: '영향' })).toBeInTheDocument()
-  await user.click(screen.getByRole('tab', { name: '영향' }))
+  const tab = await screen.findByRole('tab', { name: /^영향/ })
+  await user.click(tab)
   expect(
-    screen.getByText('확인된 관계를 아직 판단할 수 없어요.'),
+    await screen.findByText('확인된 관계를 아직 판단할 수 없어요.'),
   ).toBeInTheDocument()
+  expect(tab).toHaveAccessibleName('영향')
+  expect(screen.queryByText(/확인된 관계 0/)).not.toBeInTheDocument()
 })
 
 it('상태를 새로고침하면 같은 제안의 변경된 발행 후 처리 결과를 보여 준다', async () => {
@@ -181,7 +203,7 @@ it('팀장은 탭으로 제안을 살펴보고 창 안에서 확인한 뒤 기�
   const user = userEvent.setup()
   renderPanel()
   await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
-  await user.click(screen.getByRole('tab', { name: '바뀌는 내용' }))
+  await user.click(screen.getByRole('tab', { name: /^바뀌는 내용/ }))
   await user.click(await screen.findByText('REQ-001'))
   expect(screen.getByText(/\+ .*초대를 기다리라는 안내/)).toBeInTheDocument()
   await user.click(
@@ -493,9 +515,7 @@ it('변경 제안 창에는 새 제안 버튼 대신 공용 문서함으로 가�
   expect(
     screen.queryByRole('button', { name: '새 변경 제안' }),
   ).not.toBeInTheDocument()
-  await user.click(
-    screen.getByRole('button', { name: '공용 문서함에서 제안하기' }),
-  )
+  await user.click(screen.getByRole('button', { name: '제안하기' }))
   expect(useWorkspaceStore.getState().pane).toBe('documents')
 })
 
@@ -1028,26 +1048,22 @@ it('승인 요청의 사유는 승인 이력에 남고 공백뿐인 사유는 �
   )
 })
 
-// PR #88 리뷰: '공용 문서함에서 제안하기'는 창을 바꾸므로, 새 제안·승인·반려·이력 화면에서는 숨겨 쓰던 내용을 지킨다.
-it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 숨기고, 상세로 돌아오면 다시 보인다', async () => {
+// PR #88 리뷰: 공용 문서함으로 가는 '제안하기'(S15P31A108-456 전 이름 '공용 문서함에서 제안하기')는 창을 바꾸므로, 새 제안·승인·반려·이력 화면에서는 숨겨 쓰던 내용을 지킨다.
+it('승인 확인 화면에서는 제안하기 버튼을 숨기고, 상세로 돌아오면 다시 보인다', async () => {
   const user = userEvent.setup()
   renderPanel()
   await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
-  expect(
-    screen.getByRole('button', { name: '공용 문서함에서 제안하기' }),
-  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '제안하기' })).toBeInTheDocument()
   await user.click(
     screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
   )
   expect(
     screen.getByRole('heading', { name: '기준 v2 발행을 승인할까요?' }),
   ).toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: '공용 문서함에서 제안하기' }),
-  ).toBeNull()
+  expect(screen.queryByRole('button', { name: '제안하기' })).toBeNull()
   await user.click(screen.getByRole('button', { name: '취소' }))
   expect(
-    await screen.findByRole('button', { name: '공용 문서함에서 제안하기' }),
+    await screen.findByRole('button', { name: '제안하기' }),
   ).toBeInTheDocument()
 })
 
@@ -1516,8 +1532,9 @@ it('항목과 문서가 함께 든 제안은 확인된 관계를 볼 수 있게 
   expect(screen.getByRole('button', { name: '다시 분석' })).toBeEnabled()
 })
 
-// S15P31A108-371 7: 회의가 만든 제안처럼 문서만 바꾸는 제안도 개요 숫자와 줄에 문서 변경이 보이고, 사유 줄바꿈이 남는다.
-it('문서만 바꾸는 제안의 개요는 문서 변경을 세고 줄로 보이며 사유 줄바꿈을 지킨다 (S15P31A108-371)', async () => {
+// S15P31A108-371 7: 회의가 만든 제안처럼 문서만 바꾸는 제안도 바뀌는 내용 숫자에 문서 변경이 들어가고, 사유 줄바꿈이 남는다.
+// S15P31A108-449: 개요 탭을 빼서 숫자는 '바뀌는 내용' 탭에, 사유는 제목 아래에 있다. 문서 줄은 바뀌는 내용 탭의 비교(DOCUMENT)로 본다.
+it('문서만 바꾸는 제안은 바뀌는 내용 탭이 문서 변경을 세고 사유 줄바꿈을 지킨다 (S15P31A108-371)', async () => {
   const base = await changesApi.get('101', '71')
   const { document } = await documentsApi.get('101', '203')
   const reason = '회의에서 정한 내용이에요.\n\n충돌:\n- REQ-005 안내 문구'
@@ -1538,26 +1555,19 @@ it('문서만 바꾸는 제안의 개요는 문서 변경을 세고 줄로 보�
   } as never)
   renderPanel()
   expect(
-    await screen.findByRole('heading', { name: /^바뀌는 내용 1/ }),
-  ).toHaveTextContent('문서 1')
-  expect(
-    await screen.findByText('요구사항 명세서 v1 → 새 버전'),
-  ).toBeInTheDocument()
+    await screen.findByRole('tab', { name: '바뀌는 내용 1' }),
+  ).toHaveAttribute('aria-selected', 'true')
   expect(screen.queryByText(/공용 문서함 승인 흐름/)).not.toBeInTheDocument()
   const paragraph = screen.getByText(/^회의에서 정한 내용이에요/)
   expect(paragraph.textContent).toBe(reason)
   expect(paragraph).toHaveClass('whitespace-pre-wrap')
 })
 
-it('항목과 문서가 함께 든 제안의 개요는 둘을 합쳐 세고 나눠 보인다 (S15P31A108-371)', async () => {
+it('항목과 문서가 함께 든 제안은 바뀌는 내용 탭이 둘을 합쳐 센다 (S15P31A108-371)', async () => {
   await stubDocumentProposal(true)
   renderPanel()
   expect(
-    await screen.findByRole('heading', { name: /^바뀌는 내용 2/ }),
-  ).toHaveTextContent('고치기 1 · 문서 1')
-  // 제안의 기준 버전이 지금 승인본과 다르면 버전 번호를 짐작하지 않는다.
-  expect(
-    await screen.findByText('요구사항 명세서 → 새 버전'),
+    await screen.findByRole('tab', { name: '바뀌는 내용 2' }),
   ).toBeInTheDocument()
 })
 

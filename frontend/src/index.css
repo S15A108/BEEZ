@@ -91,11 +91,13 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.72 0.14 88);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  /* 차트 색은 브랜드 꿀색 단계다(S15P31A108-449). chart-1은 막대 하나짜리 차트의 기본 색이고 흰 카드에서 3.4:1,
+     회색 트랙에서 3.1:1이라 그래픽 대비 3:1을 넘는다. 밝은 chart-3·5는 혼자 서는 막대나 글자에 쓰지 않는다. */
+  --chart-1: oklch(0.64 0.13 80);
+  --chart-2: oklch(0.5 0.09 65);
+  --chart-3: oklch(0.78 0.12 85);
+  --chart-4: oklch(0.4 0.06 60);
+  --chart-5: oklch(0.88 0.06 90);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);

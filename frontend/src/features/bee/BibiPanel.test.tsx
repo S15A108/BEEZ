@@ -48,6 +48,18 @@ async function send(question: string) {
   await userEvent.click(screen.getByRole('button', { name: '보내기' }))
 }
 
+// S15P31A108-449: 첫 질문 전에는 '근거 0'만 있는 칸이 폭의 1/4을 차지했다.
+it('근거 칸은 첫 답이 온 뒤에 열린다', async () => {
+  renderPanel()
+  expect(
+    screen.queryByRole('complementary', { name: '선택한 답의 근거' }),
+  ).not.toBeInTheDocument()
+  await send('로그인 실패는 어떻게 처리하나요?')
+  expect(
+    await screen.findByRole('complementary', { name: '선택한 답의 근거' }),
+  ).toBeInTheDocument()
+})
+
 it('찾는 범위를 그대로 두면 승인된 문서에서 찾고 대화가 쌓인다', async () => {
   const ask = vi.spyOn(beeApi, 'ask')
   renderPanel()
