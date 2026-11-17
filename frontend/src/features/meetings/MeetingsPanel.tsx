@@ -923,6 +923,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 submitLabel="보내기"
                                 max={ENTRY_MAX}
                                 onSubmit={async (text) => {
+                                  // 보낸 글은 대화 칸에 바로 보여서 '보냈어요' 알림을 띄우지 않는다(사용자 요청 11-17). 실패는 오류로 알린다.
                                   await runPlain(
                                     () =>
                                       meetingsApi.addEntry(
@@ -930,7 +931,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                         meeting.id,
                                         { text },
                                       ),
-                                    '메시지를 보냈어요.',
+                                    '',
                                   )
                                 }}
                               />

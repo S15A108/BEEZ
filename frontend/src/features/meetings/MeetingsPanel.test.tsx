@@ -172,6 +172,8 @@ it('팀장은 정리 뒤에도 합의를 대화로 남기고 그 기록까지 �
   await user.type(screen.getByRole('textbox', { name: '메시지' }), decision)
   await user.click(screen.getByRole('button', { name: '보내기' }))
   expect(await within(log).findByText(decision)).toBeInTheDocument()
+  // 보낸 글은 대화 칸에 바로 보이므로 '보냈어요' 알림은 띄우지 않는다(사용자 요청 11-17).
+  expect(screen.queryByText('메시지를 보냈어요.')).not.toBeInTheDocument()
   expect(revise).not.toHaveBeenCalled()
   const entries = await meetingsApi.entries('101', '901', {})
   const entry = entries.items.find((item) => item.text === decision)
