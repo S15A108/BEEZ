@@ -365,8 +365,8 @@ function City() {
               footer={
                 <p className="rounded-[10px] bg-[#fbfaf6] px-3 py-2.5 text-[13px] leading-5 text-[#57534e]">
                   만든 뒤 문서 초안 4종(기획안 · ERD · 요구사항 명세서 · API
-                  명세서)을 올리고 팀장이 모두 승인하면 '프로젝트 시작'으로
-                  시작해요.
+                  명세서)을 올리고 팀장이 모두 승인하면 '설계 초안 만들기'로
+                  기획 분석에서 설계를 정하고 시작해요.
                 </p>
               }
               submitLabel="프로젝트 만들기"

@@ -1,14 +1,16 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import {
   authApi,
+  dashboardApi,
   documentsApi,
   membersApi,
+  planningApi,
   presenceApi,
   projectsApi,
 } from '@/api/services'
@@ -48,7 +50,10 @@ beforeEach(async () => {
   localStorage.setItem('beez.tour.12', 'seen')
   useWorkspaceStore.setState({ pane: null, focusId: null })
 })
-afterEach(() => restore())
+afterEach(() => {
+  restore()
+  vi.restoreAllMocks()
+})
 
 // 예시 데이터를 읽고 상황에 맞게 바꿔 HUD를 그린다. 102는 문서 4종을 초안으로 올린 시작 전 프로젝트, 101은 시작한 프로젝트다.
 async function renderGuide(
@@ -266,6 +271,48 @@ it('팀장에게 승인 요청이 와 있으면 승인 단계를 먼저 크게 �
     within(guide).getByRole('button', { name: '승인 요청 보기' }),
   ).toBeInTheDocument()
   expect(within(guide).getByText(/승인 요청 1건/)).toBeVisible()
+})
+
+// S15P31A108-424: 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다.
+// 승인 전 3단계는 지금 버튼('문서함 보기')과 다음 순서를 알리고, '켜진다'처럼 없는 버튼을 가리키지 않는다.
+it('4종 승인 전 3단계는 문서함 보기와 함께 승인 뒤 설계 초안 만들기로 이어진다고 알린다', async () => {
+  const user = userEvent.setup()
+  const guide = await renderGuide('102')
+  await user.click(
+    within(guide).getByRole('button', { name: /4종 승인하고 프로젝트 시작/ }),
+  )
+  expect(
+    within(guide).getByText(
+      /팀장이 4종을 승인하면 '설계 초안 만들기'로 기획 분석을 열어요/,
+    ),
+  ).toBeVisible()
+  expect(
+    within(guide).getByRole('button', { name: '문서함 보기' }),
+  ).toBeInTheDocument()
+  expect(within(guide).queryByText(/켜져요/)).not.toBeInTheDocument()
+})
+
+it('4종이 승인되면 3단계의 설계 초안 만들기는 발행하지 않고 기획 분석을 연다', async () => {
+  const user = userEvent.setup()
+  const counts = await dashboardApi.documents('102')
+  vi.spyOn(dashboardApi, 'documents').mockResolvedValue({
+    ...counts,
+    by_kind: counts.by_kind.map((item) => ({ ...item, approved_count: 1 })),
+  })
+  const publish = vi.spyOn(planningApi, 'publishBaseline')
+  const guide = await renderGuide('102')
+  await waitFor(() =>
+    expect(nextStep(guide)).toHaveTextContent('4종 승인하고 프로젝트 시작'),
+  )
+  expect(within(guide).getByText(/문서 4종 승인 4 \/ 4/)).toBeVisible()
+  expect(
+    within(guide).queryByRole('button', { name: '프로젝트 시작' }),
+  ).not.toBeInTheDocument()
+  await user.click(
+    within(guide).getByRole('button', { name: '설계 초안 만들기' }),
+  )
+  expect(useWorkspaceStore.getState().pane).toBe('planning')
+  expect(publish).not.toHaveBeenCalled()
 })
 
 it('팀 목록은 요약 한 줄로 접혀 있다가 누르면 펼쳐진다', async () => {

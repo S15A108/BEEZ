@@ -100,7 +100,8 @@ export function ProjectReadiness({
                     }
                   : {
                       text: '기획 분석에서 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요.',
-                      label: '프로젝트 시작',
+                      // 배너·시작 가이드와 같은 이름. 초안이 있어도 같은 기획 분석을 연다(발행은 기획 분석에서만).
+                      label: '설계 초안 만들기',
                       open: () => openPane('planning'),
                     }
 

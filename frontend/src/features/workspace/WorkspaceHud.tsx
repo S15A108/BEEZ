@@ -23,7 +23,6 @@ import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import type { GetResponse as Project } from '@/features/projects/schemas'
 import type { OnboardingResponse } from '@/features/projects/schemas'
-import { useProjectStart } from '@/features/projects/useProjectStart'
 import { InboxPopover } from '@/features/inbox/InboxPopover'
 import {
   openMeetingCount,
@@ -101,7 +100,7 @@ const notices: Record<
   },
   2: {
     title: '문서 4종이 모두 승인됐어요',
-    text: "색인까지 끝났어요. 가이드의 '프로젝트 시작'을 누르면 기준 v1이 생기고 프로젝트가 시작돼요.",
+    text: "색인까지 끝났어요. 가이드의 '설계 초안 만들기'에서 설계 항목을 검토하고 발행하면 프로젝트가 시작돼요.",
     member: '팀장이 프로젝트를 시작하면 알려 드려요.',
   },
   3: {
@@ -117,15 +116,7 @@ type Step = {
   /** 필수 표시(문서 초안 4종) */
   required?: boolean
   locked?: boolean
-  action?: {
-    label: string
-    pane?: WorkspacePane
-    focus?: string
-    run?: () => void
-    disabled?: boolean
-  }
-  /** 주 버튼 옆에 두는 보조 링크(창 열기) */
-  secondary?: { label: string; pane: WorkspacePane }
+  action?: { label: string; pane: WorkspacePane; focus?: string }
   note?: string
   children?: ReactNode
 }
@@ -175,14 +166,13 @@ export function WorkspaceHud({
     queryKey: ['projects', project.id, 'hud', 'tasks'],
     queryFn: () => dashboardApi.tasks(project.id),
   })
-  // 팀장 시작 가이드: 문서별 승인 요청(DOC-A19)과 프로젝트 시작(PLN-A10)
+  // 팀장 시작 가이드: 문서별 승인 요청(DOC-A19)
   const submitted = useQuery({
     queryKey: ['projects', project.id, 'document-submissions', 'SUBMITTED'],
     queryFn: () =>
       documentsApi.reviewSubmissions(project.id, { status: 'SUBMITTED' }),
     enabled: isLeader && !started,
   })
-  const start = useProjectStart(project.id, isLeader && !started)
   const pendingApprovals = submitted.data?.length ?? 0
   const approvedKinds =
     documentCounts.data?.by_kind.filter(
@@ -345,33 +335,20 @@ export function WorkspaceHud({
       detail: started
         ? '프로젝트를 시작했어요.'
         : allApproved
-          ? `문서 4종 승인 4 / 4 · ${start.indexed ? '설계 초안 준비됨' : start.needsDrafts ? '설계 항목 초안을 만들어야 시작할 수 있어요' : '설계 초안 확인 중'}`
-          : `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하고 색인이 끝나면 '프로젝트 시작'이 켜져요. 누르면 기준 v1이 생기고 프로젝트가 시작돼요.`,
+          ? '문서 4종 승인 4 / 4 · 기획 분석에서 설계 항목을 검토하고 발행하면 시작돼요'
+          : // 승인 전 버튼은 '승인 요청 보기'·'문서함 보기'라서 '켜진다'고 하지 않고 다음 순서만 알린다(잠긴 줄의 이유 글자로도 쓰인다).
+            `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '설계 초안 만들기'로 기획 분석을 열어요. 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요.`,
       done: started,
       locked: !allUploaded,
-      // 서버는 문서 승인·색인 뒤 설계 초안을 만들지 않아, 초안이 없으면 기획 분석 창(초안 만들기·직접 추가)으로 보낸다.
+      // 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다. '설계 초안 만들기'는 그 창을 연다.
       action: pendingApprovals
         ? { label: '승인 요청 보기', pane: 'documents' }
-        : allApproved && start.needsDrafts
+        : allApproved
           ? { label: '설계 초안 만들기', pane: 'planning' }
-          : allApproved
-            ? {
-                label: '프로젝트 시작',
-                run: () => void start.start().catch(() => undefined),
-                disabled: !start.ready || start.busy,
-              }
-            : { label: '문서함 보기', pane: 'documents' },
-      secondary:
-        allApproved && !start.needsDrafts && start.work.open
-          ? { label: start.work.label, pane: 'planning' }
-          : undefined,
-      note: start.error
-        ? start.error
-        : allApproved && !start.needsDrafts && start.work.open
-          ? `${start.work.summary} · 시작하면 이 후보는 기준에 들어가지 않아요`
-          : allApproved
-            ? '시작하면 변경 제안과 작업 계획을 받을 수 있어요'
-            : undefined,
+          : { label: '문서함 보기', pane: 'documents' },
+      note: allApproved
+        ? '시작하면 변경 제안과 작업 계획을 받을 수 있어요'
+        : undefined,
     },
   ]
   const memberSteps: Step[] = [
@@ -956,26 +933,11 @@ export function WorkspaceHud({
                       {focus.action && (
                         <Button
                           size="xs"
-                          disabled={focus.action.disabled}
                           onClick={() =>
-                            focus.action!.run
-                              ? focus.action!.run()
-                              : openPane(
-                                  focus.action!.pane!,
-                                  focus.action!.focus,
-                                )
+                            openPane(focus.action!.pane, focus.action!.focus)
                           }
                         >
                           {focus.action.label}
-                        </Button>
-                      )}
-                      {focus.secondary && (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          onClick={() => openPane(focus.secondary!.pane)}
-                        >
-                          {focus.secondary.label}
                         </Button>
                       )}
                       {!isLeader && focus.title === '기준 문서 v1 읽기' && (

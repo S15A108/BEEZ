@@ -132,11 +132,16 @@ it('4종이 승인되고 설계 초안이 없으면 설계 초안 만들기로 �
   expect(useWorkspaceStore.getState().pane).toBe('planning')
 })
 
-it('4종이 승인되고 설계 초안이 있으면 프로젝트 시작으로 기획 분석을 연다', async () => {
+// 배너·시작 가이드와 같은 이름을 쓴다. 초안이 있어도 '프로젝트 시작'이라는 다른 이름을 붙이지 않는다.
+it('4종이 승인되고 설계 초안이 있어도 설계 초안 만들기로 기획 분석을 연다', async () => {
   const user = userEvent.setup()
   seed(['APPROVED', 'APPROVED', 'APPROVED', 'APPROVED'], 1)
   mount()
-  await user.click(await screen.findByRole('button', { name: '프로젝트 시작' }))
+  expect(
+    await screen.findByText(/기획 분석에서 설계 항목을 검토하고 발행하면/),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '프로젝트 시작' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: '설계 초안 만들기' }))
   expect(useWorkspaceStore.getState().pane).toBe('planning')
 })
 
