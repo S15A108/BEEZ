@@ -9,6 +9,7 @@ BEEZ가 쓰는 외부 서비스와, 다른 환경에서 쓰려면 무엇을 가�
 | --- | --- | --- | --- |
 | SSAFY GMS (LLM API) | 문서 검토, 보완 질문, 설계 초안, 계획 검증, 비비 질문, 회의 정리, 영향 분석, 문서 검색용 임베딩 | 서비스는 뜨지만 AI 기능을 쓸 수 없습니다 | env 파일 `GMS_KEY` |
 | Claude Code (Anthropic) | BEEZ에 연결해 작업 계획을 올리는 AI 에이전트. 시연 ②에 필요합니다 | 에이전트 연결과 시연 ②를 할 수 없습니다. 웹 화면은 그대로 씁니다 | 시연 PC ([2-7](#2-7-ai-에이전트-claude-code)) |
+| Anthropic API | GitHub PR 자동 리뷰(`.github/workflows/ai-review.yml`) | PR 자동 리뷰만 돌지 않습니다 | GitHub 저장소 시크릿 `CLAUDE_CODE_OAUTH_TOKEN` 또는 `ANTHROPIC_API_KEY` |
 | SMTP 메일 계정 | 가입 인증 코드, 비밀번호 찾기, 팀 초대 메일 | 서버에서 회원가입과 초대를 할 수 없습니다. PC 실행은 메일 대신 로그를 쓰므로 필요 없습니다 | env 파일 `MAIL_*` |
 | Let's Encrypt | HTTPS 인증서 | HTTP로만 접속됩니다 | 서버 Nginx |
 | GitHub Actions, GitHub 컨테이너 저장소(GHCR) | 테스트, 이미지 빌드와 보관 | 자동 배포만 안 됩니다. [직접 배포](01-build-and-deploy.md#1-4-새-서버에-배포하기)는 가능합니다 | GitHub 저장소 설정 |
@@ -26,14 +27,16 @@ BEEZ의 ai 서버는 SSAFY가 교육생에게 제공하는 GMS를 거쳐 OpenAI 
 
 ### SSAFY 밖에서 쓰려면
 
-대부분의 AI 기능은 GMS 주소가 코드에 고정되어 있어서, 일반 OpenAI 키로 바꿔 쓰려면 코드를 고쳐야 합니다.
-고칠 곳은 아래와 같습니다.
+GMS 주소가 코드에 고정된 곳이 많아서, 일반 OpenAI 키로 바꿔 쓰려면 아래를 고쳐야 합니다.
 
-- `ai/app/routers/` 안 6개 파일의 `_GMS_CHAT` 상수: `bee_chat.py`(비비 질문), `planning_questions.py`(보완 질문),
-  `design_drafts.py`(설계 초안), `meeting_analysis.py`(회의 정리), `design_recommendations.py`, `assignment_recommendations.py`
-- `ai/app/routers/validation.py`의 `GMS_CHAT_URL` 상수 (작업 계획 검증)
-- `ai/app/services/retrieval/gms.py`의 `GMS_EMBEDDINGS_URL` (문서 검색용 임베딩)
-- `ai/app/routers/document_review.py` 107줄의 `gms.ssafy.io` 주소 검사 (문서 검토)
+1. 주소가 상수로 박힌 곳을 OpenAI 주소로 바꿉니다.
+   - `ai/app/routers/` 안 6개 파일의 `_GMS_CHAT` 상수: `bee_chat.py`(비비 질문), `planning_questions.py`(보완 질문),
+     `design_drafts.py`(설계 초안), `meeting_analysis.py`(회의 정리), `design_recommendations.py`, `assignment_recommendations.py`
+   - `ai/app/routers/validation.py`의 `GMS_CHAT_URL` 상수 (작업 계획 검증)
+   - `ai/app/services/retrieval/gms.py`의 `GMS_EMBEDDINGS_URL` (문서 검색용 임베딩)
+2. `ai/app/routers/document_review.py` 107줄의 `gms.ssafy.io` 주소 검사를 고칩니다. 이 검사는 문서 검토, 작업 분해,
+   작업 계획 초안, 작업 계획 수정, 문서 수정 초안, 회의 수정 초안 6개 기능이 함께 씁니다.
+3. env 파일에 `GMS_CHAT_ENDPOINT=<OpenAI 채팅 주소>`를 넣고, `GMS_KEY`에는 OpenAI 키를 넣습니다. 2번의 기능들은 이 주소를 씁니다.
 
 `ai/app/routers/impact.py`의 `_GMS_CHAT`은 호출 주소가 아니라 "GMS 주소일 때만 `GMS_KEY`를 쓴다"는 비교에 쓰이니
 고치지 마세요. 변경 영향 분석은 코드를 고치지 않고 env 파일에 `IMPACT_LLM_ENDPOINT`(OpenAI 호환 주소)와
@@ -41,18 +44,17 @@ BEEZ의 ai 서버는 SSAFY가 교육생에게 제공하는 GMS를 거쳐 OpenAI 
 
 ### 쓰는 모델
 
-| 용도 | 모델 |
-| --- | --- |
-| 문서 검색용 임베딩 | `text-embedding-3-small` (1024차원) |
-| 일반 생성 | `gpt-6-luna` |
-| 복잡한 생성 | `gpt-6.1-sol` |
-| 변경 영향 분석 | `gpt-6-luna` |
+| 용도 | 모델 | 설정 |
+| --- | --- | --- |
+| 문서 검색용 임베딩 | `text-embedding-3-small` (1024차원) | `GMS_EMBEDDING_MODEL` |
+| 그 밖의 AI 기능(문서 검토, 보완 질문, 비비 질문, 계획 검증, 회의 정리 등) | `gpt-6-luna` | `BEE_DEFAULT_MODEL` |
+| 변경 영향 분석 | `gpt-6-luna` | `IMPACT_LLM_MODEL` |
 
 ### 키를 넣는 곳
 
 - 서버: `/opt/beez/.env.dev`의 `GMS_KEY=` 뒤에 붙이고 서비스를 다시 띄웁니다. 이미 운영 중인 서버라면
   [docs/infra/cd.md "3. GMS 키 넣기·바꾸기"](../docs/infra/cd.md#3-gms-키-넣기바꾸기)의 명령을 쓰면 키가 화면에 남지 않습니다.
-- PC 전체 실행: [1-2절 "AI 기능 켜기"](01-build-and-deploy.md#3-ai-기능-켜기)대로 터미널에만 넣습니다.
+- PC 전체 실행: [README "AI 기능 켜기"](../README.md#4-ai-기능-켜기)대로 터미널에만 넣습니다.
 - ai만 따로 실행: `ai/.env`에 넣습니다.
 
 키는 저장소, `VITE_`로 시작하는 변수, 메신저에 남기지 마세요.
@@ -109,7 +111,7 @@ BEEZ의 ai 서버는 SSAFY가 교육생에게 제공하는 GMS를 거쳐 OpenAI 
 ## 2-5. SSAFY GitLab
 
 GitHub(`S15A108/BEEZ`)에 어느 브랜치나 태그를 push하든 GitHub Actions(`sync-gitlab.yml`)가 같은 커밋을
-`https://lab.ssafy.com/s15-final/S15P31A108`에 복사합니다. GitLab에는 직접 push하지 마세요. 설정은
+`https://lab.ssafy.com/s15-final/S15P31A108`에 복사합니다. 설정은
 [docs/gitlab-sync.md](../docs/gitlab-sync.md)에 있습니다.
 
 ## 2-6. 알림 (Mattermost)

@@ -61,42 +61,66 @@
 
 ## 빠르게 실행하기
 
-클론한 폴더에서 명령 두 개로 전체 서비스(Nginx, 프론트엔드, backend, ai, PostgreSQL, SeaweedFS)를 띄웁니다.
+PC에서 전체 서비스(Nginx, 프론트엔드, backend, ai, PostgreSQL, SeaweedFS)를 한 번에 띄웁니다.
 
-준비물: Docker Desktop(실행 중이어야 합니다), Node.js 24, Git Bash(Windows) 또는 macOS·Linux 터미널
+준비물: Docker Desktop(실행 중이어야 합니다), Node.js 24, Git, 그리고 Windows라면 Git Bash
 
-Windows에서는 Git Bash에서 실행하세요. 첫 명령의 `VITE_API_MODE=live npm run build`는 PowerShell과 cmd에서
-동작하지 않습니다. PowerShell을 써야 한다면 `frontend/.env` 파일에 `VITE_API_MODE=live` 한 줄을 적고
-`npm ci; npm run build`만 실행해도 됩니다. 다만 아래 인증 코드 확인과 AI 기능 켜기는 bash 명령이라 Git Bash에서 실행하세요.
+이 절의 명령은 모두 Git Bash(Windows) 또는 macOS·Linux 터미널에서 실행하세요. `VITE_API_MODE=live npm run build`,
+`grep`, `read` 같은 명령은 PowerShell과 cmd에서 동작하지 않습니다.
+
+### 1) 소스 받기
 
 ```bash
-# 1) 프론트엔드를 실제 API에 붙는 모드로 빌드합니다 (frontend/dist 생성)
+git clone -b dev https://lab.ssafy.com/s15-final/S15P31A108.git beez
+cd beez
+```
+
+GitHub에서 받는다면 주소를 `https://github.com/S15A108/BEEZ.git`으로 바꾸세요. 개발 서버와 같은 코드인 `dev` 브랜치를 받습니다.
+
+### 2) 빌드하고 띄우기
+
+```bash
+# 프론트엔드를 실제 API에 붙는 모드로 빌드합니다 (frontend/dist 생성)
 cd frontend && npm ci && VITE_API_MODE=live npm run build && cd ..
 
-# 2) 이미지를 빌드하고 전체 서비스를 띄웁니다
+# 이미지를 빌드하고 전체 서비스를 띄웁니다
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait
 ```
 
-1번 출력 끝에 `built in`(빌드 완료) 줄이 나왔는지 확인하고 2번을 실행하세요. 1번이 중간에 실패하면 터미널이 `frontend` 폴더에
-남아 있어서 2번이 파일을 찾지 못합니다. 그때는 `cd ..`로 돌아와 1번부터 다시 실행합니다.
+첫 명령 출력 끝에 `built in`(빌드 완료) 줄이 나왔는지 확인하고 두 번째 명령을 실행하세요. 첫 명령이 중간에 실패하면
+터미널이 `frontend` 폴더에 남아 있으니 `cd ..`로 돌아와 다시 실행합니다.
 
-2번 명령이 끝나면 브라우저에서 <http://localhost:8088>을 엽니다. 처음에는 이미지를 빌드하느라 5분쯤 걸리고,
+두 번째 명령이 끝나면 브라우저에서 <http://localhost:8088>을 엽니다. 처음에는 이미지를 빌드하느라 5분쯤 걸리고,
 다음부터는 1분 안에 뜹니다.
 
-### 회원가입하기
+### 3) 회원가입하기
 
-로컬에서는 인증 메일을 보내지 않고 backend 로그에 인증 코드를 남깁니다. 가입 화면에서 코드를 요청한 뒤 아래 명령으로
+PC에서는 인증 메일을 보내지 않고 backend 로그에 인증 코드를 남깁니다. 가입 화면에서 코드를 요청한 뒤 아래 명령으로
 6자리 코드를 확인해 입력하세요. 여러 번 요청했다면 맨 아래에 나온 코드가 최신입니다.
 
 ```bash
 docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 코드입니다"
 ```
 
-### AI 기능까지 쓰려면
+### 4) AI 기능 켜기
 
-키 없이도 서비스는 뜨지만 문서 검토, 비비 질문 같은 AI 기능은 실패합니다. SSAFY GMS API 키(SSAFY 교육생만 발급 가능)를
-받았다면 [포팅 매뉴얼 1-2절 "AI 기능 켜기"](exec/01-build-and-deploy.md#3-ai-기능-켜기)의 명령으로 키를 넣고 기능을 켜세요.
-키만 넣으면 기능이 꺼진 채라 여전히 실패하니, 그 절의 명령을 모두 실행해야 합니다.
+키 없이도 서비스는 뜨지만 문서 검토, 비비 질문 같은 AI 기능은 실패합니다. AI 기능을 쓰려면 SSAFY GMS API 키
+([발급 방법](exec/02-external-services.md#2-1-llm-api-ssafy-gms), SSAFY 교육생만 발급 가능)를 받아 아래 명령을 차례로
+실행합니다. 키는 파일에 저장하지 않고 지금 열린 터미널에만 둡니다.
+
+```bash
+read -rs GMS_KEY && export GMS_KEY      # 키를 붙여 넣고 Enter. Git Bash에서는 Shift+Insert로 붙여 넣습니다 (화면에 보이지 않습니다)
+export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna
+export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTEXT_SELECTION_MAX_ITEMS=10 \
+       CONTEXT_SELECTION_MAX_EVIDENCE=8 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30
+docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
+```
+
+- 키와 함께 둘째, 셋째 줄도 꼭 실행하세요. 둘째 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 셋째 줄은 에이전트가
+  승인된 설계를 읽어 가는 기능을 켭니다. 이 기능들은 기본으로 꺼져 있습니다.
+- 셋째 줄의 기능은 팀 문서([docs/infra/env.md](docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 AI 담당이
+  확정하기 전의 제안값입니다. 이 기능이 꺼져 있으면 에이전트가 설계를 읽지 못하므로 함께 켭니다.
+- `export`한 값은 지금 열린 터미널에만 남습니다. 터미널을 새로 열었다면 위 명령을 처음부터 다시 실행한 뒤 서비스를 띄우세요.
 
 ### 주소
 
@@ -107,16 +131,14 @@ docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 �
 | <http://localhost:8088/actuator/health> | 서버 상태 확인 |
 | <http://localhost:18080/swagger-ui.html> | API 문서 |
 
-### 상태 보기와 종료
+### 상태 보기와 끄기
 
 ```bash
 docker compose -p beez ps                 # postgres, seaweedfs, ai, backend 가 (healthy) 면 정상입니다. nginx 는 Up 으로만 나옵니다
 docker compose -p beez logs -f backend    # backend 로그 보기 (Ctrl+C 로 빠져나옵니다)
 docker compose -p beez down               # 끄기. 데이터는 남습니다
+docker compose -p beez down -v            # 데이터까지 지우기. 가입한 계정과 올린 문서가 모두 지워집니다
 ```
-
-데이터까지 지우고 처음부터 다시 시작하려면 `docker compose -p beez down -v`를 실행하세요. 가입한 계정과 올린 문서가
-모두 지워집니다.
 
 실행이 안 되면 [docs/infra/docker-images.md의 "안 될 때"](docs/infra/docker-images.md#안-될-때) 표에서 증상을 찾아보세요.
 

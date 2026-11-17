@@ -2,14 +2,14 @@
 
 ## 3-1. 제출 파일
 
-| 파일 | 내용 | 만든 곳 |
-| --- | --- | --- |
-| `beez-dump.sql` (제출할 때 따로 첨부) | PostgreSQL 17 `pg_dump` SQL 파일. 테이블 구조와 시연 데이터 | 팀 개발 서버, 시연 버튼을 누르기 전 상태 |
+| 파일 | 내용 | 만든 곳 | 덤프를 만든 커밋 |
+| --- | --- | --- | --- |
+| `beez-dump.sql` (제출할 때 따로 첨부) | PostgreSQL 17 `pg_dump` SQL 파일. 테이블 구조와 시연 데이터 | 팀 개발 서버, 시연 버튼을 누르기 전 상태 | (제출할 때 기입: `beez-dump.commit`의 SHA) |
 
 덤프 파일은 저장소에 커밋하지 않고 제출 채널에 따로 올립니다. GitHub 저장소가 공개이고 GitLab은 그 복사본이라,
 커밋하면 가입한 사람의 이메일과 비밀번호 해시가 공개되기 때문입니다.
 
-테이블 구조만 필요하면 덤프가 없어도 됩니다. backend가 처음 뜰 때 Flyway가 V52까지의 마이그레이션을 차례로 적용해
+테이블 구조만 필요하면 덤프가 없어도 됩니다. backend가 처음 뜰 때 Flyway(DB 테이블 생성 도구)가 최신 마이그레이션까지 차례로 적용해
 빈 DB에 최신 테이블을 만듭니다. 테이블 설명은 [docs/design/03-erd.md](../docs/design/03-erd.md)와
 `docs/design/erd-core.png`, `docs/design/erd-others.png`에 있습니다.
 
@@ -25,12 +25,12 @@
 ### 명령
 
 팀 개발 서버에 접속해 아래 명령을 실행합니다. 홈 폴더에 덤프 파일과, 덤프를 만든 코드 버전(이미지 태그에 든 커밋 SHA)을
-적은 파일이 생깁니다.
+적은 파일이 생깁니다. 이미지 이름 `ghcr.io/s15a108/beez-backend:<SHA>`에서 SHA만 남깁니다.
 
 ```bash
 U=$(grep -E '^DB_USERNAME=' /opt/beez/.env.dev | cut -d= -f2-)
 docker exec beez-postgres-1 pg_dump -U "$U" -d beez --no-owner --no-privileges > ~/beez-dump.sql
-docker inspect beez-backend-1 --format '{{.Config.Image}}' > ~/beez-dump.commit
+docker inspect beez-backend-1 --format '{{.Config.Image}}' | sed 's/.*://' > ~/beez-dump.commit
 ls -lh ~/beez-dump.sql; cat ~/beez-dump.commit
 ```
 
@@ -47,7 +47,7 @@ scp <서버>:~/beez-dump.sql <서버>:~/beez-dump.commit .
 ssh <서버> 'rm ~/beez-dump.sql ~/beez-dump.commit'
 ```
 
-제출할 때 `beez-dump.commit`에 적힌 커밋도 함께 적어 주세요.
+`beez-dump.commit`에 적힌 SHA를 3-1 표의 "덤프를 만든 커밋" 칸에 적어 제출합니다.
 
 ## 3-3. 덤프로 복원하기 (PC에서)
 
@@ -56,9 +56,9 @@ ssh <서버> 'rm ~/beez-dump.sql ~/beez-dump.commit'
 
 준비할 것:
 
-- 저장소를 클론하고, 덤프를 만든 커밋(`beez-dump.commit`에 적힌 SHA)으로 체크아웃합니다(`git checkout <커밋>`). 코드가 덤프보다 새로우면 backend가
+- 저장소를 클론하고, 3-1 표의 "덤프를 만든 커밋"으로 체크아웃합니다(`git checkout <커밋>`). 코드가 덤프보다 새로우면 backend가
   뜰 때 마이그레이션이 더 적용되고, 오래되면 backend가 DB를 알아보지 못해 뜨지 않을 수 있습니다.
-- [README "빠르게 실행하기"](../README.md#빠르게-실행하기)의 1번(프론트엔드 빌드)을 먼저 마칩니다. 건너뛰면 화면이 비어 보입니다.
+- [README "빠르게 실행하기"](../README.md#빠르게-실행하기) 2)의 첫 명령(프론트엔드 빌드)을 먼저 실행합니다. 건너뛰면 화면이 비어 보입니다.
 - 덤프 파일을 저장소 폴더에 `beez-dump.sql`로 둡니다.
 
 Git Bash에서 저장소 폴더에 있는 상태로 실행합니다.
