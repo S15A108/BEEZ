@@ -45,21 +45,27 @@
   더 새로운 코드라면 backend가 뜰 때 덤프 이후에 추가된 마이그레이션을 이어서 적용합니다.
 - [README "빠르게 실행하기"](../README.md#빠르게-실행하기) 2)의 첫 명령(프론트엔드 빌드)을 먼저 실행합니다. 건너뛰면 화면이 비어 보입니다.
 
-Git Bash에서 저장소 폴더에 있는 상태로 실행합니다.
+Git Bash에서 저장소 폴더에 있는 상태로 아래 블록을 통째로 붙여 넣어 실행합니다. 괄호로 묶여 있어, 어느 단계든 실패하면
+그 자리에서 멈추고 다음 단계로 넘어가지 않습니다.
 
 ```bash
-# 1) 기존 로컬 데이터를 지우고, DB만 먼저 띄웁니다
-docker compose -p beez down -v
-docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait postgres
+(
+  set -euo pipefail
 
-# 2) 덤프를 넣습니다. 오류가 나면 그 자리에서 멈춥니다
-gunzip -c exec/beez-db-dump.sql.gz | docker exec -i beez-postgres-1 psql -v ON_ERROR_STOP=1 -q -U beez -d beez > /dev/null
+  # 1) 기존 로컬 데이터를 지우고, DB만 먼저 띄웁니다
+  docker compose -p beez down -v
+  docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait postgres
 
-# 3) 나머지 서비스를 띄웁니다
-docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait
+  # 2) 덤프를 넣습니다
+  gunzip -c exec/beez-db-dump.sql.gz | docker exec -i beez-postgres-1 psql -v ON_ERROR_STOP=1 -q -U beez -d beez > /dev/null
+
+  # 3) 나머지 서비스를 띄웁니다
+  docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait
+)
 ```
 
-2)에서 `ERROR`가 나오고 멈췄다면 1)부터 다시 실행하세요. 일부만 들어간 DB로는 backend가 제대로 동작하지 않습니다.
+중간에 오류가 나고 멈췄다면 원인을 고친 뒤 블록을 처음부터 다시 실행하세요. 1)이 DB를 비우고 시작하므로, 일부만 들어간
+DB가 남지 않습니다.
 
 2)에서 `wal_level` 경고가 한 줄 나올 수 있는데, 무시해도 됩니다. 개발 서버의 변경 감지(CDC) 설정이 덤프에 함께 들어
 있어서 나오는 안내입니다.

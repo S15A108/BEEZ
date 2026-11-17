@@ -20,7 +20,8 @@ name=beez-sanitize-$$
 [ -r "$raw" ] || { echo "원본 덤프를 읽을 수 없습니다: $raw" >&2; exit 1; }
 [ -f infra/compose.yaml ] || { echo "저장소 루트에서 실행하세요" >&2; exit 1; }
 
-cleanup() { docker rm -f "$name" > /dev/null 2>&1 || true; }
+# 이미지가 데이터 폴더를 볼륨으로 선언해 docker run 이 익명 볼륨을 만든다. -v 로 함께 지워야 원본 DB 가 PC 에 남지 않는다
+cleanup() { docker rm -fv "$name" > /dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 echo "1/4 임시 DB 띄우기"
