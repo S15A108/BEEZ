@@ -39,6 +39,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
   --color-destructive-ink: var(--destructive-ink);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -83,6 +84,8 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* 안 읽음 같은 상태 점(D49). 흰 바탕 3.67:1, 노란 옅은 바탕 3.57:1, 회색 호버 바탕 3.36:1 */
+  --success: oklch(0.596 0.145 163.2);
   /* destructive/10·/20 바탕 위 글자. #ac1a1b, 4.81:1 이상 (S15P31A108-442) */
   --destructive-ink: oklch(0.48 0.18 27.325);
   --border: oklch(0.922 0 0);
@@ -120,6 +123,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.765 0.177 163.2);
   --primary-ink: var(--primary);
   --destructive-ink: var(--destructive);
   --border: oklch(1 0 0 / 10%);
