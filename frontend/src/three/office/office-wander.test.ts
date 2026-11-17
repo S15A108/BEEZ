@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 import { ALL_KEYS, makeBuilding } from './building'
 import { makeDreamFloor } from './dream-floor'
 import { officeActors } from './office-actors'
+import { clearOfChairs, clearOfFurniture } from './motion'
 import {
   getOfficeLifeActivity,
   OfficeLifeSimulation,
@@ -56,6 +57,40 @@ test('막혔을 때 물러설 자리는 벽 없이 곧장 가고 막은 사람�
       (x, y) => Math.hypot(x - from.x, y - from.y) < 5,
     ),
   ).toBeUndefined()
+})
+
+// 칸 단위 막기는 1 m 깊이 테이블이 두 칸에 53%·47%씩 걸치면 어느 칸도 막지 않아, 모던 화이트 가운데 테이블 위를
+// 사람이 걸어 다녔다. 걷는 판정은 가구 실제 바닥면에서 몸 반지름만큼 떨어져야 한다.
+test('단단한 가구 바닥면에서 12px 안은 걸을 수 없고, 유리 칸막이는 칸 단위 판정에, 의자는 피해 가는 길에 맡긴다', () => {
+  const table = { kind: 'table', x: 1, y: 1, w: 2, h: 1, solid: true }
+  const glass = {
+    kind: 'glass-partition',
+    x: 5,
+    y: 1,
+    w: 0.12,
+    h: 3,
+    solid: true,
+  }
+  const chair = { kind: 'chair', x: 8, y: 1, w: 1, h: 1, solid: false }
+  const furniture = [table, glass, chair]
+  expect(clearOfFurniture(furniture, 64, 48)).toBe(false)
+  expect(clearOfFurniture(furniture, 64, 32 + 32 + 11)).toBe(false)
+  expect(clearOfFurniture(furniture, 64, 32 + 32 + 13)).toBe(true)
+  expect(clearOfFurniture(furniture, 5 * 32 + 2, 64)).toBe(true)
+  expect(clearOfFurniture(furniture, 8.5 * 32, 48)).toBe(true)
+  expect(clearOfChairs(furniture, 8.5 * 32, 48 + 17)).toBe(false)
+  expect(clearOfChairs(furniture, 8.5 * 32, 48 + 19)).toBe(true)
+  const modern = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'modern', null, {}).floors[1],
+    4,
+  )
+  const center = modern.furniture.find(
+    (item) => item.solid && item.kind === 'table' && item.w > 4,
+  )!
+  const x = (center.x + center.w / 2) * 32,
+    y = (center.y + center.h / 2) * 32
+  expect(modern.blocked[Math.floor(y / 32)][Math.floor(x / 32)]).toBe(false)
+  expect(officeWalkable(modern, x, y)).toBe(false)
 })
 
 const DESIGNS = ['glass', 'brick', 'modern', 'tower', 'wood'] as const
@@ -162,6 +197,7 @@ test.each(DESIGNS)(
     const stops = new Map<string, Set<string>>()
     let previous = simulation.step(floor, actors, 0.05, { caller: me })
     let closest = Infinity
+    let closestPeople = Infinity
     for (let frame = 0; frame < 1800; frame++) {
       const current = simulation.step(floor, actors, 0.05, { caller: me })
       for (const [index, actor] of current.entries()) {
@@ -180,6 +216,11 @@ test.each(DESIGNS)(
         if (person) expect(actor.seated).toBeFalsy()
         if (person || activity === 'strolling')
           expect(officeWalkable(floor, actor.x, actor.y)).toBe(true)
+        // 가구 실제 바닥면에서 몸이 떨어져 걷는다(칸 단위 막기가 비운 가구 위를 지나지 않는다).
+        if (person || activity === 'strolling')
+          expect(clearOfFurniture(floor.furniture, actor.x, actor.y, 1)).toBe(
+            true,
+          )
         if (activity && !['walking', 'standing'].includes(activity))
           (
             stops.get(actor.id) ?? stops.set(actor.id, new Set()).get(actor.id)!
@@ -195,6 +236,21 @@ test.each(DESIGNS)(
               Math.hypot(
                 everyone[a].x - everyone[b].x,
                 everyone[a].y - everyone[b].y,
+              ),
+            )
+      }
+      // 처음 자리에서 갈라진 뒤에는 걷거나 서 있는 팀원끼리 몸 폭(약 36px)보다 넓게 떨어진다.
+      if (frame > 200) {
+        const walkers = current.filter((actor) =>
+          people.some((person) => person.id === actor.id),
+        )
+        for (let a = 0; a < walkers.length; a++)
+          for (let b = a + 1; b < walkers.length; b++)
+            closestPeople = Math.min(
+              closestPeople,
+              Math.hypot(
+                walkers[a].x - walkers[b].x,
+                walkers[a].y - walkers[b].y,
               ),
             )
       }
@@ -214,5 +270,6 @@ test.each(DESIGNS)(
     expect(working.seated).toBe(true)
     expect(walked.get('agent:24')).toBe(0)
     expect(closest).toBeGreaterThanOrEqual(PERSONAL_SPACE - 1)
+    expect(closestPeople).toBeGreaterThanOrEqual(37)
   },
 )

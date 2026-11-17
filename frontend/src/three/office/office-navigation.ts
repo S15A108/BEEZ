@@ -1,13 +1,14 @@
 import type { Floor } from './floors'
 import { T } from './floors'
-import { gridWalkable } from './motion'
+import { clearOfFurniture, gridWalkable } from './motion'
 import type { Point } from './motion'
 import { PERSONAL_SPACE } from './office-life'
 
 export function officeWalkable(floor: Floor, x: number, y: number): boolean {
   return (
     gridWalkable({ x, y: y - 4 }, floor.blocked, T, 6) &&
-    floor.grid[Math.floor((y - 4) / T)]?.[Math.floor(x / T)] !== '#'
+    floor.grid[Math.floor((y - 4) / T)]?.[Math.floor(x / T)] !== '#' &&
+    clearOfFurniture(floor.furniture, x, y)
   )
 }
 

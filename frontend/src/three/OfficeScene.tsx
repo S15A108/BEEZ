@@ -174,8 +174,14 @@ function OfficeRuntime(
       officeWalkable(latest.current.floor, x, y)
     const walkTo = (destination: Point) => {
       const currentFloor = latest.current.floor
+      // 발 위치가 단단한 가구에 붙는 칸도 막아, 가구에 반쯤 걸친 칸으로 길을 내지 않는다.
       const blocked = currentFloor.blocked.map((row, y) =>
-        row.map((value, x) => value || currentFloor.grid[y][x] === '#'),
+        row.map(
+          (value, x) =>
+            value ||
+            currentFloor.grid[y][x] === '#' ||
+            !free(x * 32 + 16, y * 32 + 27),
+        ),
       )
       const points = findPath(
         blocked,
