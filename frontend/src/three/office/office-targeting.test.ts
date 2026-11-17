@@ -1,7 +1,6 @@
 import { assert, test } from 'vitest'
 import * as THREE from 'three'
 import {
-  OfficeAimOutline,
   isOfficePickVisible,
   pickOfficeInteraction,
   pickOfficeObject,
@@ -47,23 +46,17 @@ test('the first visible surface blocks objects behind it, including glass partit
   assert.strictEqual(pickOfficeObject(ray(), [target, wall])?.object, target)
 })
 
-test('decorative furniture has no interaction or outline, even when it has a furniture label', () => {
+test('decorative furniture has no interaction, even when it has a furniture label', () => {
   const scene = new THREE.Scene(),
     decoration = new THREE.Group(),
-    mesh = box(-2),
-    outline = new OfficeAimOutline()
+    mesh = box(-2)
   decoration.userData.officeFurniture = { kind: 'sofa', x: 2, y: 2, w: 2, h: 1 }
   decoration.userData.aimRoot = true
   decoration.add(mesh)
   scene.add(decoration)
   scene.updateMatrixWorld(true)
-  outline.update(decoration)
-  assert.strictEqual(outline.maskScene.children.length, 1)
   const interaction = pickOfficeInteraction(ray(), [decoration])
-  outline.update(interaction?.hit.object)
   assert.strictEqual(interaction, null)
-  assert.strictEqual(outline.maskScene.children.length, 0)
-  outline.dispose()
 })
 
 test('functional screens keep their selected task and UV coordinates, while furniture blocks actions behind it', () => {
@@ -149,134 +142,4 @@ test('only the projector device and beam disappear in third person; the screen s
     assert.strictEqual(device.visible, firstPerson)
     assert.strictEqual(isOfficePickVisible(beam), firstPerson)
   }
-})
-
-test('the outline mask uses the actual curved geometry and follows each animated part', () => {
-  const scene = new THREE.Scene(),
-    target = new THREE.Group(),
-    joint = new THREE.Group(),
-    outline = new OfficeAimOutline()
-  const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.6),
-      new THREE.MeshBasicMaterial(),
-    ),
-    arm = box(0),
-    hidden = box(0),
-    shadow = box(0)
-  hidden.visible = false
-  shadow.userData.ignorePicking = true
-  joint.position.set(0.8, 0, 0)
-  joint.add(arm)
-  target.add(head, joint, hidden, shadow)
-  target.position.set(2, 0, -4)
-  scene.add(target)
-  scene.updateMatrixWorld(true)
-  outline.update(target)
-  assert.strictEqual(outline.maskScene.children.length, 2)
-  const [headMask, armMask] = outline.maskScene.children as THREE.Mesh[]
-  assert.strictEqual(headMask.geometry, head.geometry)
-  assert.strictEqual(armMask.geometry, arm.geometry)
-  assert.isOk(headMask.matrixWorld.equals(head.matrixWorld))
-  target.position.x = -3
-  joint.rotation.z = 0.7
-  scene.updateMatrixWorld(true)
-  outline.update(target)
-  assert.isOk(armMask.matrixWorld.equals(arm.matrixWorld))
-  let sourceDisposals = 0
-  head.geometry.addEventListener('dispose', () => {
-    sourceDisposals++
-  })
-  outline.update()
-  assert.strictEqual(outline.maskScene.children.length, 0)
-  outline.update(target)
-  outline.dispose()
-  assert.strictEqual(outline.maskScene.children.length, 0)
-  assert.strictEqual(sourceDisposals, 0)
-})
-
-test('silhouette rendering restores room visibility, background, materials and render state on failure', () => {
-  const scene = new THREE.Scene(),
-    target = box(-4),
-    ignored = box(-2),
-    hidden = box(-1),
-    outline = new OfficeAimOutline()
-  const background = new THREE.Color('#8fcff5'),
-    originalMaterial = new THREE.MeshBasicMaterial(),
-    originalTarget = new THREE.WebGLRenderTarget()
-  scene.background = background
-  scene.overrideMaterial = originalMaterial
-  ignored.userData.ignorePicking = true
-  hidden.visible = false
-  scene.add(target, ignored, hidden)
-  scene.updateMatrixWorld(true)
-  outline.update(target)
-  outline.setSize(640, 480)
-  const clearColor = new THREE.Color('#abcdef')
-  let alpha = 0.4,
-    renderTarget = originalTarget
-  const renderer = {
-    autoClear: true,
-    shadowMap: { autoUpdate: true },
-    getClearColor: (color: THREE.Color) => color.copy(clearColor),
-    getClearAlpha: () => alpha,
-    setClearColor: (color: THREE.ColorRepresentation, value: number) => {
-      clearColor.set(color)
-      alpha = value
-    },
-    getRenderTarget: () => renderTarget,
-    setRenderTarget: (value: THREE.WebGLRenderTarget) => {
-      renderTarget = value
-    },
-    clear() {},
-    render() {
-      assert.strictEqual(ignored.visible, false)
-      throw new Error('mask render failed')
-    },
-  }
-  assert.throws(
-    () =>
-      outline.render(
-        renderer as unknown as THREE.WebGLRenderer,
-        scene,
-        new THREE.PerspectiveCamera(),
-      ),
-    /mask render failed/,
-  )
-  assert.strictEqual(scene.background, background)
-  assert.strictEqual(scene.overrideMaterial, originalMaterial)
-  assert.strictEqual(ignored.visible, true)
-  assert.strictEqual(hidden.visible, false)
-  assert.strictEqual(renderer.autoClear, true)
-  assert.strictEqual(renderer.shadowMap.autoUpdate, true)
-  assert.strictEqual(renderTarget, originalTarget)
-  assert.strictEqual(clearColor.getHexString(), 'abcdef')
-  assert.strictEqual(alpha, 0.4)
-  outline.dispose()
-  originalTarget.dispose()
-})
-
-// S15P31A108-380: 비비 GLB와 Kenney 사람 모델은 뼈대로 자세를 잡는 스킨 메쉬다. 마스크를 뼈대 없는 메쉬로 그리면
-// 기본 자세로 그려져 실제 몸과 깊이가 어긋나고, 몸 안쪽에 노란 선이 여러 겹 생겼다.
-test('스킨 메쉬의 윤곽 마스크는 같은 뼈대로 그려 움직이는 자세를 따라간다', () => {
-  const scene = new THREE.Scene(),
-    bone = new THREE.Bone(),
-    mesh = new THREE.SkinnedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshBasicMaterial(),
-    ),
-    outline = new OfficeAimOutline()
-  mesh.add(bone)
-  mesh.position.set(1, 0, -4)
-  scene.add(mesh)
-  scene.updateMatrixWorld(true)
-  mesh.bind(new THREE.Skeleton([bone]))
-  outline.update(mesh)
-  const [mask] = outline.maskScene.children
-  assert.instanceOf(mask, THREE.SkinnedMesh)
-  if (!(mask instanceof THREE.SkinnedMesh)) return
-  assert.strictEqual(mask.geometry, mesh.geometry)
-  assert.strictEqual(mask.skeleton, mesh.skeleton)
-  assert.strictEqual(mask.bindMode, mesh.bindMode)
-  assert.isOk(mask.bindMatrix.equals(mesh.bindMatrix))
-  outline.dispose()
 })

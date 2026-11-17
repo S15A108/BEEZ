@@ -45,7 +45,6 @@ import {
   type TagRole,
 } from './nameTag'
 import {
-  OfficeAimOutline,
   pickOfficeInteraction,
   setOfficeViewVisibility,
 } from './office-targeting'
@@ -369,7 +368,6 @@ export class OfficeRenderer3D {
   private lastScreens: OfficeScreens | undefined
   private workSurfacesDirty = true
   private readonly raycaster = new THREE.Raycaster()
-  private readonly aimOutline = new OfficeAimOutline()
   private aimTarget: OfficeAimTarget | null = null
   get aimedTarget() {
     return this.aimTarget
@@ -536,7 +534,6 @@ export class OfficeRenderer3D {
     this.width = Math.max(1, width)
     this.height = Math.max(1, height)
     if (this.ownsRenderer) this.renderer.setSize(this.width, this.height, false)
-    this.aimOutline.setSize(this.width, this.height)
     this.cameraKey = ''
   }
 
@@ -4008,11 +4005,10 @@ export class OfficeRenderer3D {
     // Aim after camera, NPC and furniture transforms settle for this frame.
     this.scene.updateMatrixWorld(true)
     this.camera.updateMatrixWorld(true)
-    const aimed = this.firstPerson
+    // 가운데에 온 대상은 Enter로 고를 수만 있고 윤곽선은 그리지 않는다(사용자 요청 2026-11-16).
+    this.aimTarget = this.firstPerson
       ? this.pickScene(this.width / 2, this.height / 2)
       : null
-    this.aimTarget = aimed?.target ?? null
-    this.aimOutline.update(aimed?.outline)
     // Overlap pane edges at eye level; restore the original cutaway frame widths outside.
     for (const mullion of this.windowMullions)
       mullion.scale.x = this.firstPerson ? 1.3 : 1
@@ -4034,7 +4030,6 @@ export class OfficeRenderer3D {
       this.renderer.render(this.scene, this.camera)
       this.renderer.autoClear = true
     } else this.renderer.render(this.scene, this.camera)
-    this.aimOutline.render(this.renderer, this.scene, this.camera)
   }
 
   project(x: number, y: number, height = 0) {
@@ -4047,10 +4042,7 @@ export class OfficeRenderer3D {
     }
   }
 
-  private pickScene(
-    screenX: number,
-    screenY: number,
-  ): { target: OfficeAimTarget; outline?: THREE.Object3D } | null {
+  private pickScene(screenX: number, screenY: number): OfficeAimTarget | null {
     if (!this.floor) return null
     this.raycaster.setFromCamera(
       new THREE.Vector2(
@@ -4076,24 +4068,16 @@ export class OfficeRenderer3D {
       this.outdoorPortal
     ) {
       const exit = this.floor.outdoorExit
-      return {
-        target: { ...exit.landing, outdoorExit: true, label: exit.label },
-        outline: this.outdoorPortal,
-      }
+      return { ...exit.landing, outdoorExit: true, label: exit.label }
     }
     if (entityId) {
       const robot = this.robots.get(entityId)
       if (!robot) return null
       return {
-        target: {
-          x: robot.root.position.x * TILE,
-          y: robot.root.position.z * TILE,
-          entityId,
-          label: '동료와 대화',
-        },
-        // 비비에는 윤곽을 그리지 않는다(S15P31A108-380, 사용자 요청). 가리키고 Enter를 누르면 비비 대화가
-        // 열리는 것은 그대로다.
-        outline: robot.appearance === 'bibi' ? undefined : robot.body,
+        x: robot.root.position.x * TILE,
+        y: robot.root.position.z * TILE,
+        entityId,
+        label: '동료와 대화',
       }
     }
     if (!workHit) return null
@@ -4117,15 +4101,12 @@ export class OfficeRenderer3D {
     const surface = (
       hit.object.userData.workSurface as OfficeWorkSurface | undefined
     )?.kind
-    return {
-      target: { x, y, furniture, workHit, label: workHit.title, surface },
-      outline: hit.object,
-    }
+    return { x, y, furniture, workHit, label: workHit.title, surface }
   }
 
   screenToWorld(screenX: number, screenY: number): OfficeSceneHit | null {
     const picked = this.pickScene(screenX, screenY)
-    if (picked) return picked.target
+    if (picked) return picked
     if (!this.floor) return null
     const position = this.raycaster.ray.intersectPlane(
       this.ground,
@@ -4144,7 +4125,6 @@ export class OfficeRenderer3D {
 
   dispose() {
     this.aimTarget = null
-    this.aimOutline.dispose()
     this.workSurfaces.forEach(({ surface }) => surface.dispose())
     this.workSurfaces.length = 0
     this.windowCityView.dispose()
