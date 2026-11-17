@@ -419,19 +419,27 @@ export function WorkspaceHud({
       : steps.some((step) => !step.done))
   // 가이드는 남은 단계 하나만 크게 보이고(focus) 나머지는 한 줄씩, 끝낸 단계는 접는다(S15P31A108-430).
   // 할 수 있는 버튼이 있는 단계를 먼저 고른다(팀장이 정할 담당 도메인은 기다리기만 하는 단계라 그다음).
+  // 팀장에게 승인 요청이 와 있으면 그 단계('승인 요청 보기')를 먼저 연다. 비비 검토 단계는 4종이 다 승인돼야 끝나서
+  // 그대로 두면 승인 대기가 접힌 줄에 묻힌다(PR #315 리뷰).
   const isOpen = (step: Step) => !step.done && !step.locked
-  const actionable = steps.findIndex(
-    (step) => isOpen(step) && Boolean(step.action ?? step.children),
-  )
-  const current = actionable >= 0 ? actionable : steps.findIndex(isOpen)
+  const firstOpen = (match: (step: Step) => boolean) =>
+    steps.findIndex((step) => isOpen(step) && match(step))
+  const current =
+    [
+      firstOpen((step) => step.action?.label === '승인 요청 보기'),
+      firstOpen((step) => Boolean(step.action ?? step.children)),
+      firstOpen(() => true),
+    ].find((index) => index >= 0) ?? -1
   // 남은 단계 줄을 누르면 그 단계를 크게 연다. 끝났거나 잠긴 단계를 고른 채면 current 로 돌아간다.
   const [picked, setPicked] = useState<string>()
   const [showDone, setShowDone] = useState(false)
   const [teamOpen, setTeamOpen] = useState(false)
   const doneSteps = steps.filter((step) => step.done)
+  // 남은 단계가 모두 잠겼으면(시작을 기다리는 팀원) 첫 잠긴 단계를 기다림 카드로 크게 보이고 잠긴 이유를 적는다.
   const focus =
     steps.find((step) => step.title === picked && isOpen(step)) ??
-    steps[current]
+    steps[current] ??
+    steps.find((step) => !step.done)
   const agentStepNow =
     !isLeader && guideOpen && steps[current]?.title === '내 에이전트 연결하기'
   // 비비 대화 창이 열린 동안은 단축 바만 남기고 다른 위젯은 숨긴다(PNL-12 B안).
@@ -905,9 +913,27 @@ export function WorkspaceHud({
               </span>
             </h2>
             {focus && (
-              <div className="mt-2 flex items-start gap-2 rounded-xl border border-primary bg-primary/5 p-2.5">
-                <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
-                  {steps.indexOf(focus) + 1}
+              <div
+                className={cn(
+                  'mt-2 flex items-start gap-2 rounded-xl border p-2.5',
+                  focus.locked
+                    ? 'border-dashed bg-muted/40'
+                    : 'border-primary bg-primary/5',
+                )}
+              >
+                <span
+                  className={cn(
+                    'grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-bold',
+                    focus.locked
+                      ? 'bg-muted text-muted-foreground'
+                      : 'bg-primary text-primary-foreground',
+                  )}
+                >
+                  {focus.locked ? (
+                    <Lock className="size-3" aria-hidden="true" />
+                  ) : (
+                    steps.indexOf(focus) + 1
+                  )}
                 </span>
                 <div className="grid flex-1 gap-0.5">
                   <h3 className="text-sm font-bold">
@@ -921,52 +947,58 @@ export function WorkspaceHud({
                   <span className="text-xs text-muted-foreground">
                     {focus.detail}
                   </span>
-                  {focus.children}
-                  <span className="mt-1 flex flex-wrap items-center gap-2 empty:hidden">
-                    {focus.action && (
-                      <Button
-                        size="xs"
-                        disabled={focus.action.disabled}
-                        onClick={() =>
-                          focus.action!.run
-                            ? focus.action!.run()
-                            : openPane(focus.action!.pane!, focus.action!.focus)
-                        }
-                      >
-                        {focus.action.label}
-                      </Button>
-                    )}
-                    {focus.secondary && (
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => openPane(focus.secondary!.pane)}
-                      >
-                        {focus.secondary.label}
-                      </Button>
-                    )}
-                    {!isLeader && focus.title === '기준 문서 v1 읽기' && (
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => {
-                          writeFlag(readKey)
-                          rerender((value) => value + 1)
-                        }}
-                      >
-                        읽었어요
-                      </Button>
-                    )}
-                    {focus.note && (
-                      <span className="text-[11px] text-muted-foreground">
-                        {focus.note}
-                      </span>
-                    )}
-                  </span>
+                  {!focus.locked && focus.children}
+                  {!focus.locked && (
+                    <span className="mt-1 flex flex-wrap items-center gap-2 empty:hidden">
+                      {focus.action && (
+                        <Button
+                          size="xs"
+                          disabled={focus.action.disabled}
+                          onClick={() =>
+                            focus.action!.run
+                              ? focus.action!.run()
+                              : openPane(
+                                  focus.action!.pane!,
+                                  focus.action!.focus,
+                                )
+                          }
+                        >
+                          {focus.action.label}
+                        </Button>
+                      )}
+                      {focus.secondary && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => openPane(focus.secondary!.pane)}
+                        >
+                          {focus.secondary.label}
+                        </Button>
+                      )}
+                      {!isLeader && focus.title === '기준 문서 v1 읽기' && (
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => {
+                            writeFlag(readKey)
+                            rerender((value) => value + 1)
+                          }}
+                        >
+                          읽었어요
+                        </Button>
+                      )}
+                      {focus.note && (
+                        <span className="text-[11px] text-muted-foreground">
+                          {focus.note}
+                        </span>
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
-            {/* 남은 단계는 한 줄씩. 잠기지 않은 줄을 누르면 그 단계가 위 칸에 크게 열린다. */}
+            {/* 남은 단계는 한 줄씩. 잠기지 않은 줄을 누르면 그 단계가 위 칸에 크게 열린다.
+                잠긴 줄은 이유를 툴팁이 아닌 글로 아래에 둔다(키보드·터치에서도 보이게, PR #315 리뷰). */}
             {steps.some((step) => !step.done && step !== focus) && (
               <ol aria-label="남은 단계" className="mt-1.5 grid gap-0.5">
                 {steps.map((step, index) =>
@@ -986,7 +1018,14 @@ export function WorkspaceHud({
                             index + 1
                           )}
                         </span>
-                        <span className="truncate">{step.title}</span>
+                        <span className="grid min-w-0">
+                          <span className="truncate">{step.title}</span>
+                          {step.locked && (
+                            <span className="line-clamp-2 text-[11px]">
+                              {step.detail}
+                            </span>
+                          )}
+                        </span>
                       </button>
                     </li>
                   ),
@@ -998,6 +1037,7 @@ export function WorkspaceHud({
                 <button
                   type="button"
                   aria-expanded={showDone}
+                  aria-controls="hud-guide-done"
                   onClick={() => setShowDone((value) => !value)}
                   className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-green-700 hover:bg-muted"
                 >
@@ -1019,24 +1059,24 @@ export function WorkspaceHud({
                     )}
                   />
                 </button>
-                {showDone && (
-                  <ul
-                    aria-label="완료한 단계"
-                    className="grid gap-1 pr-2.5 pb-1 pl-9"
-                  >
-                    {doneSteps.map((step) => (
-                      <li key={step.title} className="min-w-0 text-xs">
-                        <span className="font-semibold">{step.title}</span>
-                        <span
-                          title={step.detail}
-                          className="block truncate text-muted-foreground"
-                        >
-                          {step.detail}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <ul
+                  id="hud-guide-done"
+                  aria-label="완료한 단계"
+                  hidden={!showDone}
+                  className="grid gap-1 pr-2.5 pb-1 pl-9"
+                >
+                  {doneSteps.map((step) => (
+                    <li key={step.title} className="min-w-0 text-xs">
+                      <span className="font-semibold">{step.title}</span>
+                      <span
+                        title={step.detail}
+                        className="block truncate text-muted-foreground"
+                      >
+                        {step.detail}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
             {setupLinks.length > 0 && (

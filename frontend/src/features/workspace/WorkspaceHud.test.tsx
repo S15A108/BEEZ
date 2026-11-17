@@ -1,11 +1,17 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import { authApi, membersApi, presenceApi, projectsApi } from '@/api/services'
+import {
+  authApi,
+  documentsApi,
+  membersApi,
+  presenceApi,
+  projectsApi,
+} from '@/api/services'
 import type { Member } from '@/api/contracts/common'
 import { agentConnectionsQuery } from '@/features/agents/useAgentStatusOf'
 import { presenceQuery } from '@/features/presence/presenceQuery'
@@ -20,6 +26,7 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { reviewDocument } from '@/test/beeReview'
 import { sceneQuery } from './sceneQuery'
 import { WorkspaceHud } from './WorkspaceHud'
 
@@ -114,6 +121,8 @@ it('시작 전 팀장 가이드는 남은 필수 단계 하나만 크게 보이�
     name: /비비 검토 반영하기/,
   })
   expect(review).toHaveAttribute('aria-disabled', 'true')
+  // PR #315 리뷰: 잠긴 이유가 title 툴팁에만 있어 키보드·터치로는 보이지 않았다.
+  expect(within(review).getByText('4종이 다 올라가면 열려요.')).toBeVisible()
   await user.click(review)
   expect(nextStep(guide)).toHaveTextContent('문서 초안 4종 올리기')
 
@@ -136,10 +145,11 @@ it('끝낸 단계는 한 줄로 접혀 있다가 누르면 펼쳐지고, 남은 
 
   const done = within(guide).getByRole('button', { name: /완료 1단계/ })
   expect(done).toHaveAttribute('aria-expanded', 'false')
-  expect(within(guide).queryByText('문서 초안 4종 올리기')).toBeNull()
+  expect(within(guide).getByText('문서 초안 4종 올리기')).not.toBeVisible()
   await user.click(done)
   expect(done).toHaveAttribute('aria-expanded', 'true')
   const list = within(guide).getByRole('list', { name: '완료한 단계' })
+  expect(done).toHaveAttribute('aria-controls', list.id)
   expect(within(list).getByText('문서 초안 4종 올리기')).toBeInTheDocument()
   expect(within(list).getByText('4 / 4 올림')).toBeInTheDocument()
   await user.click(done)
@@ -199,6 +209,63 @@ it('팀원 가이드는 팀장을 기다리는 담당 도메인보다 버튼이 
   expect(
     within(guide).queryByRole('button', { name: '지금 초대하기' }),
   ).not.toBeInTheDocument()
+})
+
+// PR #315 리뷰: 남은 단계가 모두 잠긴 팀원은 큰 칸이 없고 '필수 3단계를 모두 마쳤어요'와 잠긴 줄이 함께 보였다.
+it('남은 단계가 모두 잠긴 팀원에게는 첫 잠긴 단계를 기다림 칸으로 크게 보이고 이유를 적는다', async () => {
+  const guide = await renderGuide('101', {
+    project: { my_role: 'MEMBER' },
+    onboarding: { my_agent_connected: true, baseline_published: false },
+    me: (members) => members.find((member) => member.account_id === '12'),
+  })
+  expect(nextStep(guide)).toHaveTextContent(/읽기/)
+  expect(
+    within(guide).getByText('팀장이 프로젝트를 시작하면 열려요.'),
+  ).toBeVisible()
+  expect(
+    within(guide).queryByRole('button', { name: '공용 문서함에서 보기' }),
+  ).not.toBeInTheDocument()
+  expect(
+    within(guide).queryByRole('button', { name: '읽었어요' }),
+  ).not.toBeInTheDocument()
+  const rest = within(guide).getByRole('list', { name: '남은 단계' })
+  expect(
+    within(rest).getByText('프로젝트를 시작한 뒤에 할 수 있어요.'),
+  ).toBeVisible()
+  expect(
+    within(guide).getByRole('button', { name: /완료 3단계/ }),
+  ).toBeInTheDocument()
+  expect(within(guide).queryByText(/모두 마쳤어요/)).not.toBeInTheDocument()
+})
+
+// PR #315 리뷰: 승인 요청이 와도 비비 검토 단계가 크게 남고 '승인 요청 보기'는 접힌 줄에 묻혔다.
+it('팀장에게 승인 요청이 와 있으면 승인 단계를 먼저 크게 보인다', async () => {
+  const documentId = '221'
+  const copy = await documentsApi.workingCopy('102', documentId)
+  const review = await reviewDocument('102', documentId, copy.revision)
+  let revision = copy.revision
+  for (const suggestion of review.suggestions)
+    revision = (
+      await documentsApi.decideSuggestion(
+        '102',
+        documentId,
+        review.id,
+        suggestion.id,
+        { expected_revision: revision, decision: 'SKIP' },
+      )
+    ).revision
+  await documentsApi.submitReview('102', documentId, {
+    expected_revision: revision,
+    review_id: review.id,
+  })
+  const guide = await renderGuide('102')
+  await waitFor(() =>
+    expect(nextStep(guide)).toHaveTextContent('4종 승인하고 프로젝트 시작'),
+  )
+  expect(
+    within(guide).getByRole('button', { name: '승인 요청 보기' }),
+  ).toBeInTheDocument()
+  expect(within(guide).getByText(/승인 요청 1건/)).toBeVisible()
 })
 
 it('팀 목록은 요약 한 줄로 접혀 있다가 누르면 펼쳐진다', async () => {
