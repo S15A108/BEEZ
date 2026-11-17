@@ -1355,7 +1355,7 @@ function DocumentDetail({
               </Button>
               {author && (
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
                   disabled={locked}
                   title={
@@ -1400,7 +1400,7 @@ function DocumentDetail({
             </button>
           </div>
           {tab === 'content' && (
-            <div className="w-44 pb-1.5">
+            <div className="pb-1.5">
               <NativeSelect
                 size="sm"
                 aria-label="열람할 버전"
@@ -1425,11 +1425,11 @@ function DocumentDetail({
       )}
     </div>
   )
-  // 문서 읽기는 넓은 창에서도 읽기 좋은 폭의 가운데 기둥으로 둔다.
+  // 문서 읽기는 넓은 창에서도 읽기 좋은 폭(920px)으로 두고, 왼쪽을 창 머리 제목과 같은 선에 맞춘다.
   if (unresolved)
     // 이력을 읽는 중이면 불러오는 중, 실패하면 오류와 다시 불러오기를 AsyncState가 보인다.
     return (
-      <div className="mx-auto grid w-full max-w-[920px] min-w-0 gap-4">
+      <div className="grid w-full max-w-[920px] min-w-0 gap-4">
         {header}
         {versions.isSuccess ? (
           <p
@@ -1446,7 +1446,7 @@ function DocumentDetail({
       </div>
     )
   return (
-    <div className="mx-auto grid w-full max-w-[920px] min-w-0 gap-4">
+    <div className="grid w-full max-w-[920px] min-w-0 gap-4">
       {header}
       <AsyncState query={document}>
         {(data) => {

@@ -253,11 +253,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     setNotice(null)
   }
   return (
-    // 창 본문을 베이지로 채운다(캔버스 PNL-06-v2: 머리 아래 #f3f1ea). 창의 안쪽 여백만큼 밖으로 넓힌다.
+    // 풀스크린 업무 창(S15P31A108-431)에서는 다른 메뉴처럼 창 바탕 위에 놓고 가운데 기둥 폭을 따른다. 아래만 창의 안쪽 여백만큼 내려 입력줄을 창 바닥에 붙인다.
     // 넓은 화면에서는 창 높이에 맞춰 대화 칸만 안에서 스크롤한다. 창의 1fr 줄이 내용 높이로 늘지 않게 높이 0에 min-h로 채운다.
     <section
       className={cn(
-        '-mx-5 -mb-5 flex min-h-[calc(100%+1.25rem)] flex-col gap-3.5 border-t bg-[#f3f1ea] px-5 py-5 sm:-mx-8 sm:-mb-8 sm:min-h-[calc(100%+2rem)] sm:px-7 lg:h-0 lg:overflow-y-auto',
+        '-mb-5 flex min-h-[calc(100%+1.25rem)] flex-col gap-3.5 pb-5 sm:-mb-8 sm:min-h-[calc(100%+2rem)] lg:h-0 lg:overflow-y-auto',
         line,
       )}
     >
@@ -454,7 +454,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           <div
                             // 카드가 길어도 버튼 줄은 창 아래에 붙어 항상 보인다(대화 입력줄과 같은 방식).
                             className={cn(
-                              'sticky -bottom-5 z-10 -mb-5 flex flex-wrap items-center justify-between gap-2 border-t bg-[#f3f1ea] pt-3.5 pb-5 sm:-bottom-8',
+                              'sticky -bottom-5 z-10 -mb-5 flex flex-wrap items-center justify-between gap-2 border-t bg-background pt-3.5 pb-5 sm:-bottom-8',
                               line,
                             )}
                           >
@@ -903,7 +903,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             </section>
                           )}
                         {/* 입력줄은 창 아래 끝에 붙여 둔다(창 전체가 스크롤해도 보이게). 창의 안쪽 여백만큼 내려 아래로 지나가는 대화를 가린다. */}
-                        <div className="sticky -bottom-5 z-10 -mb-5 bg-[#f3f1ea] pt-1 pb-5 sm:-bottom-8">
+                        <div className="sticky -bottom-5 z-10 -mb-5 bg-background pt-1 pb-5 sm:-bottom-8">
                           {closedMeeting ? (
                             <p className="rounded-[10px] border border-dashed border-[#d6d1c4] bg-white px-3 py-2.5 text-[13px] text-muted-foreground">
                               끝난 회의라 메시지를 보낼 수 없어요.
