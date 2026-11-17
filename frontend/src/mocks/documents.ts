@@ -153,7 +153,11 @@ async function upload(
       file_name: fileName,
     })
   analyzeDocument(context, version)
-  activity(context, 'DOCUMENT_REGISTERED')
+  // 서버처럼 대상은 올린 문서 버전이다(DocumentApplicationService.upload).
+  activity(context, 'DOCUMENT_REGISTERED', {
+    target_type: 'DOCUMENT_VERSION',
+    target_id: version.id,
+  })
   return {
     status: 201,
     data: existingId ? version : { document, analysis_status: 'PENDING' },

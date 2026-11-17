@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router'
 import { useIsMutating } from '@tanstack/react-query'
+import { useAccountDialog } from '@/features/account/useAccountDialog'
 import { AgentsPanel } from '@/features/agents/AgentsPanel'
 import { useAgentCheckStore } from '@/features/agents/agentCheckStore'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
@@ -35,6 +36,7 @@ export function SettingsDialog({
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const pending = useIsMutating()
+  const account = useAccountDialog()
   // 예전 사무실 화면(office)은 프로젝트 관리 아래쪽 시간대로 합쳤다. 예전 링크도 프로젝트 관리를 연다.
   const section: Section =
     focusId === 'project' || focusId === 'office'
@@ -91,15 +93,18 @@ export function SettingsDialog({
             </p>
           )}
           <div className="grid gap-0.5">
-            {/* 회원 설정은 계정 전체에 걸린 화면(비밀번호 변경·탈퇴 하위 페이지 포함)이라 프로젝트 창에 넣지 않고 /account로 잇는다. */}
+            {/* 회원 설정은 계정 전체에 걸린 창이라 이 설정 창 안에 넣지 않는다. 이 창을 닫고 사무실 위에 회원 설정 창을 연다
+                (D48, 11-17 사용자 결정. 예전에는 /account 페이지로 옮겼다). */}
             <Link
-              to="/account"
+              {...account.linkTo('profile')}
               aria-disabled={busy || undefined}
-              onClick={(event) => busy && event.preventDefault()}
+              onClick={(event) => {
+                if (busy) event.preventDefault()
+                else openPane(null)
+              }}
               className="flex min-h-9 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
               회원 설정
-              <span className="text-sub text-muted-foreground">↗</span>
             </Link>
             {item('team', '팀 관리')}
             {item(

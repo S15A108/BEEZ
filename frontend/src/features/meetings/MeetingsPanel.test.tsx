@@ -707,6 +707,8 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     await within(agenda).findByRole('button', { name: /TASK-001/ }),
   ).toBeInTheDocument()
+  // 안내 전문은 처음에 접혀 있어 대화가 첫 화면에 보인다(S15P31A108-437).
+  await user.click(within(agenda).getByRole('button', { name: '펼치기' }))
   const guidance = within(agenda).getByRole('region', {
     name: '비비의 충돌 안내',
   })
@@ -770,7 +772,8 @@ it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근�
   )
   const user = userEvent.setup()
   renderPanel(true)
-  const guidance = await screen.findByRole('region', {
+  await user.click(await screen.findByRole('button', { name: '펼치기' }))
+  const guidance = screen.getByRole('region', {
     name: '비비의 충돌 안내',
   })
   expect(guidance).toHaveTextContent('API-01 · GET /users')
@@ -807,6 +810,8 @@ it('회의가 열리면 두 계획의 충돌 값과 이유를 표시하고 근�
     focusId: '502',
   })
   act(() => useWorkspaceStore.getState().openPane('meetings'))
+  // 회의실을 다시 열면 안내는 다시 접혀 있다.
+  await user.click(await screen.findByRole('button', { name: '펼치기' }))
   const documentLink = await screen.findByRole('button', {
     name: /근거 문서.*5행/,
   })
@@ -826,6 +831,72 @@ it('참여자 칩은 비비를 포함해 세고 사람마다 이 회의의 작�
   expect(await within(people).findByText('팀장 · TASK-001')).toBeInTheDocument()
   expect(within(people).getByText('TASK-002')).toBeInTheDocument()
   expect(within(people).getByText(/^참여자 \d+$/)).toHaveTextContent('참여자 4')
+})
+
+// 화면 검수 11-16(S15P31A108-438): 참여자를 제목 줄로 올려 입력줄에 가리지 않게 하고, 넓은 화면에서는 창 대신 대화 칸만 스크롤한다.
+// jsdom은 레이아웃을 계산하지 않아 순서와 높이 클래스로 확인한다(실제 높이는 E2E 회의 시나리오에서 본다).
+it('참여자는 안건보다 앞 제목 줄에 있고, 펼친 안건은 대화 칸과 남는 높이를 나눠 안에서 스크롤한다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  const title = await screen.findByRole('heading', {
+    name: '초대 안내 문구 검토',
+  })
+  const people = screen.getByRole('group', { name: '참여자' })
+  const agenda = screen.getByRole('region', { name: '안건' })
+  const log = await screen.findByRole('log', { name: '회의 대화' })
+  const after = (a: Element, b: Element) =>
+    !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(after(title, people)).toBe(true)
+  expect(after(people, agenda)).toBe(true)
+  expect(after(agenda, log)).toBe(true)
+  // 접은 '정할 것' 한 줄은 줄어들지 않고, 펼치면 대화 칸과 높이를 나누되 최소 높이를 지킨다(PR #306 재검토).
+  expect(agenda).not.toHaveClass('lg:flex-1')
+  await user.click(within(agenda).getByRole('button', { name: '펼치기' }))
+  expect(agenda).toHaveClass(
+    'lg:flex-1',
+    'lg:max-h-max',
+    'lg:min-h-32',
+    'lg:overflow-y-auto',
+  )
+  expect(log).toHaveClass('flex-1', 'lg:min-h-28')
+})
+
+// PR #306 재검토: 역할·작업은 칩에 펼치지 않지만 마우스와 키보드 초점 모두로 툴팁을 열어 볼 수 있다.
+it('참여자 칩에 마우스를 올리거나 키보드로 초점을 두면 역할과 작업을 툴팁으로 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  const people = await screen.findByRole('group', { name: '참여자' })
+  await within(people).findByText('TASK-002')
+  // Tab으로 김동료 칩까지 간다(초점이 body면 body 글자에 이름이 섞여 있어 건너뛴다).
+  const onChip = () =>
+    document.activeElement !== document.body &&
+    !!document.activeElement?.textContent?.includes('김동료')
+  for (let step = 0; step < 40 && !onChip(); step++) await user.tab()
+  expect(onChip()).toBe(true)
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    '김동료 · TASK-002',
+  )
+  // jsdom은 닫힘 애니메이션이 끝나지 않아 앞 툴팁이 남을 수 있어, 열린 툴팁들 중에서 찾는다.
+  await user.hover(within(people).getByText('이팀장'))
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('tooltip').map((tip) => tip.textContent),
+    ).toContain('이팀장 · 팀장 · TASK-001'),
+  )
+})
+
+// PR #306 리뷰: 역할은 툴팁으로 접어도, 다른 곳에 없는 참여 상태(참여 요청·불참)는 칩에 글자로 남긴다.
+it('관련자로 부른 사람의 칩에는 참여 요청이 글자로 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await screen.findByRole('heading', { name: '초대 안내 문구 검토' })
+  await user.click(screen.getByRole('button', { name: '관련자' }))
+  await user.click(await screen.findByRole('checkbox', { name: /박팀원/ }))
+  await user.keyboard('{Escape}')
+  const people = screen.getByRole('group', { name: '참여자' })
+  expect(await within(people).findByText('참여 요청')).not.toHaveClass(
+    'sr-only',
+  )
 })
 
 // live 모드: dev 백엔드에 회의 API가 아직 없으면 회의 칸만 '준비 중'으로 두고 창은 그대로 연다.

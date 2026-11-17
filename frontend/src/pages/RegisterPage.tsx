@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { getApiErrorCode } from '@/api/error'
 import { authApi } from '@/api/services'
 import { ActionForm, type FormField } from '@/components/ActionForm'
+import { AuthLayout } from '@/features/auth/AuthLayout'
 import { EmailVerification } from '@/features/auth/EmailVerification'
 import { invitationQuery } from '@/features/members/invitationQuery'
 import { PASSWORD_HINT, passwordRule } from '@/features/auth/passwordRule'
@@ -40,69 +41,64 @@ export default function RegisterPage() {
   // 초대 화면에서 왔으면 초대 토큰과 메일 링크의 프로젝트 ID를 로그인까지 넘긴다.
   const login = `/login${invitationQuery(params)}`
   return (
-    // 캔버스 SCR-01-v2-register: 위쪽에 둔 카드 하나, 이름 → 이메일·인증 코드 → 비밀번호 → 확인 순서
-    <main className="px-4 py-10">
-      <section
-        aria-labelledby="register-title"
-        className="mx-auto max-w-[480px] rounded-[22px] border bg-card px-10 py-9 shadow-sm"
-      >
-        <h2 id="register-title" className="text-2xl font-bold">
-          회원가입
-        </h2>
-        {/* React의 submit은 부모로 전파돼, 폼 검사 결과와 상관없이 누를 때마다 센다. */}
-        <div className="mt-6" onSubmit={() => setAttempt((count) => count + 1)}>
-          <ActionForm
-            block
-            auth
-            fields={[
-              { name: 'name', label: '이름', required: true, max: 40 },
-              {
-                name: 'verification',
-                label: '이메일',
-                custom: (
-                  <EmailVerification
-                    key={verifyKey}
-                    needed={needVerify}
-                    attempt={attempt}
-                    onVerified={setVerified}
-                  />
-                ),
-              },
-              ...passwordFields,
-            ]}
-            submitLabel="가입하기"
-            onSubmit={async (values) => {
-              if (!verified) {
-                setNeedVerify(true)
-                return
+    // 로그인과 같은 2단 틀에 폼만 바꾼다(S15P31A108-448). 이름 → 이메일·인증 코드 → 비밀번호 → 확인 순서(캔버스 SCR-01-v2-register)
+    <AuthLayout titleId="register-title">
+      <h2 id="register-title" className="text-2xl font-bold">
+        회원가입
+      </h2>
+      {/* React의 submit은 부모로 전파돼, 폼 검사 결과와 상관없이 누를 때마다 센다. */}
+      <div className="mt-6" onSubmit={() => setAttempt((count) => count + 1)}>
+        <ActionForm
+          block
+          auth
+          fields={[
+            { name: 'name', label: '이름', required: true, max: 40 },
+            {
+              name: 'verification',
+              label: '이메일',
+              custom: (
+                <EmailVerification
+                  key={verifyKey}
+                  needed={needVerify}
+                  attempt={attempt}
+                  onVerified={setVerified}
+                />
+              ),
+            },
+            ...passwordFields,
+          ]}
+          submitLabel="가입하기"
+          onSubmit={async (values) => {
+            if (!verified) {
+              setNeedVerify(true)
+              return
+            }
+            try {
+              await authApi.register({
+                name: values.name,
+                email: verified.email,
+                password: values.password,
+                verified_token: verified.verified_token,
+              })
+            } catch (cause) {
+              if (getApiErrorCode(cause) === 'email_not_verified') {
+                setVerified(null)
+                setVerifyKey((key) => key + 1)
+                // 새로 그린 인증 칸이 지난 가입 시도로 '이메일을 입력해 주세요.'를 띄우지 않게 한다.
+                setAttempt(0)
               }
-              try {
-                await authApi.register({
-                  name: values.name,
-                  email: verified.email,
-                  password: values.password,
-                  verified_token: verified.verified_token,
-                })
-              } catch (cause) {
-                if (getApiErrorCode(cause) === 'email_not_verified') {
-                  setVerified(null)
-                  setVerifyKey((key) => key + 1)
-                  // 새로 그린 인증 칸이 지난 가입 시도로 '이메일을 입력해 주세요.'를 띄우지 않게 한다.
-                  setAttempt(0)
-                }
-                throw cause
-              }
-              navigate(login, { state: { registered: verified.email } })
-            }}
-          />
-        </div>
-        <p className="mt-5 text-center text-sm text-muted-foreground">
-          이미 계정이 있나요?{' '}
-          <Link to={login} className="font-semibold text-foreground">
-            로그인
-          </Link>
-        </p>
-      </section>
-    </main>
+              throw cause
+            }
+            navigate(login, { state: { registered: verified.email } })
+          }}
+        />
+      </div>
+      <p className="mt-5 text-center text-sm text-muted-foreground">
+        이미 계정이 있나요?{' '}
+        <Link to={login} className="font-semibold text-foreground">
+          로그인
+        </Link>
+      </p>
+    </AuthLayout>
   )
 }

@@ -39,7 +39,7 @@ export function InboxPanel({ projectId }: { projectId: string }) {
   }
   return (
     <div className="space-y-5">
-      {/* 제목 '알림함'은 창 머리에 있어 여기서 다시 쓰지 않는다(D48). */}
+      {/* 제목 '알림함'은 창 머리에 있어 여기서 다시 쓰지 않는다(D49). */}
       <div className="flex justify-end">
         <Button
           variant="outline"
@@ -54,7 +54,7 @@ export function InboxPanel({ projectId }: { projectId: string }) {
           const items = data.pages.flatMap((page) => page.items)
           return (
             <>
-              {/* 알림은 줄로 나눈 목록이다. 안 읽은 알림은 점 하나와 굵은 제목으로만 알린다(D48). */}
+              {/* 알림은 줄로 나눈 목록이다. 안 읽은 알림은 점 하나와 굵은 제목으로만 알린다(D49). */}
               {items.length > 0 && (
                 <ul className="divide-y border-y">
                   {items.map((item) => (

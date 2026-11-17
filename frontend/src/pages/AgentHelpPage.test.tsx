@@ -23,6 +23,21 @@ it('주소의 해시가 가리키는 절로 스크롤한다', () => {
   )
 })
 
+// S15P31A108-448: 긴 문서라 오른쪽에 목차를 둔다. 목차 링크마다 같은 이름의 절이 있어야 한다.
+it('목차의 링크마다 같은 제목의 절로 간다', () => {
+  renderAt('/help/agent-connection')
+  const links = within(
+    screen.getByRole('navigation', { name: '목차' }),
+  ).getAllByRole('link')
+  expect(links).toHaveLength(7)
+  for (const link of links) {
+    const section = document.getElementById(link.getAttribute('href')!.slice(1))
+    expect(section).toBe(
+      screen.getByRole('region', { name: link.textContent! }),
+    )
+  }
+})
+
 // PR #230 리뷰: 연결 미확인은 진행 중 작업을 맡은 채 30분 넘게 조용한 것(AGT-A05)이고, #229로 연결 끊김이 생겼다.
 it('상태 표는 연결 미확인을 진행 중 작업 기준으로 설명하고 연결 끊김을 보인다', () => {
   renderAt('/help/agent-connection')
