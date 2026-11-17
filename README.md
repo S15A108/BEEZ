@@ -63,9 +63,11 @@
 
 클론한 폴더에서 명령 두 개로 전체 서비스(Nginx, 프론트엔드, backend, ai, PostgreSQL, SeaweedFS)를 띄웁니다.
 
-**준비물**: Docker Desktop(실행 중이어야 합니다), Node.js 24, Git Bash(Windows) 또는 macOS·Linux 터미널
+준비물: Docker Desktop(실행 중이어야 합니다), Node.js 24, Git Bash(Windows) 또는 macOS·Linux 터미널
 
-> Windows에서는 **Git Bash**에서 실행하세요. 첫 명령의 `VITE_API_MODE=live npm run build`는 PowerShell과 cmd에서 동작하지 않습니다.
+Windows에서는 Git Bash에서 실행하세요. 첫 명령의 `VITE_API_MODE=live npm run build`는 PowerShell과 cmd에서
+동작하지 않습니다. PowerShell을 써야 한다면 `frontend/.env` 파일에 `VITE_API_MODE=live` 한 줄을 적고
+`npm ci; npm run build`만 실행해도 됩니다.
 
 ```bash
 # 1) 프론트엔드를 실제 API에 붙는 모드로 빌드합니다 (frontend/dist 생성)
@@ -74,6 +76,9 @@ cd frontend && npm ci && VITE_API_MODE=live npm run build && cd ..
 # 2) 이미지를 빌드하고 전체 서비스를 띄웁니다
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait
 ```
+
+1번 출력 끝에 `built in`(빌드 완료) 줄이 나왔는지 확인하고 2번을 실행하세요. 1번이 중간에 실패하면 터미널이 `frontend` 폴더에
+남아 있어서 2번이 파일을 찾지 못합니다. 그때는 `cd ..`로 돌아와 1번부터 다시 실행합니다.
 
 2번 명령이 끝나면 브라우저에서 <http://localhost:8088>을 엽니다. 처음에는 이미지를 빌드하느라 5분쯤 걸리고,
 다음부터는 1분 안에 뜹니다.
@@ -96,11 +101,16 @@ docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 �
 ```bash
 read -rs GMS_KEY && export GMS_KEY      # 키를 붙여 넣고 Enter (화면에 보이지 않습니다)
 export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna
+export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTEXT_SELECTION_MAX_ITEMS=10 \
+       CONTEXT_SELECTION_MAX_EVIDENCE=8 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
 ```
 
-두 번째 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을 켭니다. 이 기능들은 기본으로 꺼져 있어서 키만 넣으면
-여전히 실패합니다.
+- 둘째 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을 켭니다.
+- 셋째 줄은 에이전트가 승인된 설계를 읽어 가는 기능을 켭니다. 이 줄이 없으면 에이전트를 연결해도 설계를 읽지 못합니다.
+- 이 기능들은 기본으로 꺼져 있어서 키만 넣으면 여전히 실패합니다.
+- `export`한 값은 지금 열린 터미널에만 남습니다. 터미널을 새로 열었다면 위 명령을 처음부터 다시 실행한 뒤 서비스를
+  띄우세요. 그러지 않으면 AI 기능이 꺼진 채로 뜹니다.
 
 ### 주소
 
@@ -149,11 +159,12 @@ npm run dev
 ### 백엔드
 
 Java 21과 Docker Desktop이 필요합니다. Docker Desktop을 켜 둔 상태에서 실행하세요. PostgreSQL과 SeaweedFS가 자동으로
-함께 뜨고, DB 테이블도 자동으로 만들어집니다.
+함께 뜨고, DB 테이블도 자동으로 만들어집니다. PostgreSQL이 PC의 5432 포트를 쓰므로, PC에 PostgreSQL이 이미 설치되어
+실행 중이라면 먼저 꺼 주세요.
 
 ```bash
 cd backend
-./gradlew bootRun      # Windows cmd·PowerShell 에서는 gradlew.bat bootRun
+./gradlew bootRun      # PowerShell 은 .\gradlew.bat bootRun, cmd 는 gradlew.bat bootRun
 ```
 
 <http://localhost:8080/swagger-ui.html>에서 API 목록을 볼 수 있습니다.
@@ -180,8 +191,8 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 에이전트 연결하기
 
-1. 웹에 로그인하고 프로젝트에 들어가 **설정 → 내 에이전트 관리**에서 토큰을 발급합니다.
-   토큰은 이때 한 번만 보이니 바로 복사하세요.
+1. 웹에 로그인하고 연결할 프로젝트에 들어갑니다. 화면 위쪽의 톱니바퀴(설정) 버튼을 눌러 **내 에이전트 관리**에서
+   토큰을 발급합니다. 토큰은 프로젝트마다 따로 발급하고, 발급할 때 한 번만 보이니 바로 복사하세요.
 2. 화면에 나온 명령을 작업할 저장소 폴더에서 실행합니다. 로컬 서버라면 주소가 `http://localhost:8088/mcp`입니다.
 
    ```bash

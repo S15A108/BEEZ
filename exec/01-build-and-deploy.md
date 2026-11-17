@@ -1,23 +1,23 @@
 # 1. 빌드 및 배포
 
-이 문서만 보고 BEEZ를 PC에서 띄우거나 새 서버에 배포할 수 있도록 정리했습니다.
+PC에서 실행해 보려면 1-2절을, 새 서버에 배포하려면 1-4절을 순서대로 따르세요.
 
-## 1-1. 사용 제품과 버전
+## 1-1. 사용 제품, 버전, 설정 값
 
 ### 런타임과 서버
 
-| 구분 | 제품 | 버전 | 확인한 파일 |
-| --- | --- | --- | --- |
-| JVM | Eclipse Temurin (OpenJDK) | 21 (빌드 `21-jdk`, 실행 `21-jre`) | `backend/Dockerfile`, `backend/build.gradle` |
-| WAS | Spring Boot 내장 Tomcat | Spring Boot 4.1.1 | `backend/build.gradle` |
-| 빌드 도구 | Gradle Wrapper | 8.14.3 | `backend/gradle/wrapper/gradle-wrapper.properties` |
-| 웹서버 | Nginx | 1.24 (서버는 Ubuntu 패키지, 로컬은 `nginx:1.24-alpine` 이미지) | `infra/compose.local.yaml`, `docs/infra/nginx-https.md` |
-| AI 서버 | Python, FastAPI, Uvicorn | Python 3.12 | `ai/Dockerfile`, `ai/requirements.lock` |
-| 프론트 빌드 | Node.js, Vite | Node 24, Vite 8 | `frontend/package.json` |
-| DB | PostgreSQL + pgvector | PostgreSQL 17 | `infra/compose.yaml` |
-| 파일 저장소 | SeaweedFS (S3 호환) | 4.51 | `infra/compose.yaml` |
-| 컨테이너 | Docker Engine, Docker Compose v2 | 서버 Docker CE, 로컬 Docker Desktop 29.6 | `docs/infra/server-setup.md` |
-| 서버 OS | Ubuntu | 24.04 LTS (4 vCPU, RAM 15GiB, 디스크 309GB) | `docs/infra/server-setup.md` |
+| 구분 | 제품 | 버전 | 주요 설정 값 | 확인한 파일 |
+| --- | --- | --- | --- | --- |
+| JVM | Eclipse Temurin (OpenJDK) | 21 (빌드 `21-jdk`, 실행 `21-jre`) | `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0` (컨테이너 메모리의 75%까지 힙 사용) | `backend/Dockerfile` |
+| WAS | Spring Boot 내장 Tomcat | Spring Boot 4.1.1 | 포트 8080, 종료할 때 처리 중인 요청을 최대 20초 기다림 | `backend/build.gradle`, `application.yml` |
+| 빌드 도구 | Gradle Wrapper | 8.14.3 | | `backend/gradle/wrapper/gradle-wrapper.properties` |
+| 웹서버 | Nginx | 1.24 (서버는 Ubuntu 패키지, 로컬은 `nginx:1.24-alpine` 이미지) | 업로드 최대 2MB, `/api/` 응답 대기 60초, `/mcp` 응답 대기 1시간(버퍼링 끔) | `infra/nginx/sites-available/dev.beez.ai.kr.conf` |
+| AI 서버 | Python, FastAPI, Uvicorn | Python 3.12 | 포트 8000 (컨테이너 안에서만 열림) | `ai/Dockerfile`, `ai/requirements.lock` |
+| 프론트 빌드 | Node.js, Vite | Node 24, Vite 8 | 빌드할 때 `VITE_API_MODE=live` | `frontend/package.json` |
+| DB | PostgreSQL + pgvector | PostgreSQL 17 | DB 이름 `beez`, 포트 5432, `wal_level=logical` | `infra/compose.yaml` |
+| 파일 저장소 | SeaweedFS (S3 호환) | 4.51 | 버킷 `beez-documents`, 포트 8333 (컨테이너 안에서만 열림) | `infra/compose.yaml` |
+| 컨테이너 | Docker Engine, Docker Compose v2 | 서버 Docker CE, 로컬 Docker Desktop 29.6 | | `docs/infra/server-setup.md`, `docs/infra/docker-images.md` |
+| 서버 OS | Ubuntu | 24.04 LTS (4 vCPU, RAM 15GiB, 디스크 309GB) | 방화벽(ufw)으로 80, 443만 엶 | `docs/infra/server-setup.md` |
 
 ### 주요 라이브러리
 
@@ -34,10 +34,20 @@
 | Backend | IntelliJ IDEA | (팀 기입) |
 | Frontend, AI | Visual Studio Code | (팀 기입) |
 
+### DB 접속 정보
+
+| 항목 | 로컬 전체 실행 | `bootRun` 개발 실행 | 서버 |
+| --- | --- | --- | --- |
+| 호스트와 포트 | 컨테이너 안 `postgres:5432` (PC에서는 열지 않음) | `localhost:5432` | 컨테이너 안 `postgres:5432` (서버 밖에서는 열지 않음) |
+| DB 이름 | `beez` | `beez` | `beez` |
+| 계정 | `infra/local.env`의 `DB_USERNAME`, `DB_PASSWORD` | `beez` / `beez` (`backend/compose.yaml`) | 서버 `/opt/beez/.env.dev` |
+
+DB에 직접 접속하려면 `docker exec -it beez-postgres-1 psql -U beez -d beez`를 실행합니다.
+
 ## 1-2. PC에서 빌드하고 실행하기
 
 Docker Desktop과 Node.js 24를 설치하고, 저장소를 클론한 폴더에서 아래 두 명령을 실행합니다.
-Windows는 **Git Bash**를 쓰세요. 첫 명령은 PowerShell과 cmd에서 동작하지 않습니다.
+Windows는 Git Bash를 쓰세요. 첫 명령은 PowerShell과 cmd에서 동작하지 않습니다.
 
 ```bash
 cd frontend && npm ci && VITE_API_MODE=live npm run build && cd ..
@@ -81,23 +91,24 @@ compose의 `--build`가 backend와 ai 이미지를 직접 빌드하므로, 전�
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | 난수. backend와 ai가 서로를 확인할 때 씁니다 |
 | `PUBLIC_ORIGIN` | 필수 | | 사용자가 브라우저에 입력할 주소. 끝에 `/`를 붙이지 않습니다 (예 `https://dev.beez.ai.kr`) |
 | `BACKEND_HOST_PORT` | 필수 | | `8081`. 서버의 Nginx 설정이 이 포트로 요청을 보냅니다. 8080은 Jenkins가 쓰므로 피합니다 |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | 서버 필수 | 비밀(PASSWORD) | 가입 인증과 초대 메일을 보낼 SMTP 계정. 서버에서는 이 값이 없으면 회원가입을 할 수 없습니다. 값은 [외부 서비스 2-2](02-external-services.md#2-2-메일-smtp)를 보세요 |
 | `GMS_KEY` | | 비밀 | SSAFY GMS API 키. 비우면 AI 기능을 쓸 수 없습니다 |
 | `PLANNING_QUESTIONS_ENABLED`, `DESIGN_DRAFTS_ENABLED`, `BEE_CHAT_ENABLED` | | | `true`. 보완 질문, 설계 초안, 비비 질문을 켭니다. 적지 않으면 꺼져 있습니다 |
 | `IMPACT_LLM_MODEL` | | | `gpt-6-luna`. 변경 영향 분석을 켭니다. 비우면 꺼져 있습니다 |
-| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | | 비밀(PASSWORD) | 가입 인증과 초대 메일을 보낼 SMTP 계정. 비우면 서버에서 회원가입을 할 수 없습니다. 값은 [외부 서비스 문서](02-external-services.md#2-2-메일--smtp)를 보세요 |
+| `CONTEXT_SELECTION_ENABLED`와 `CONTEXT_SELECTION_MIN_SIMILARITY`, `_MAX_ITEMS`, `_MAX_EVIDENCE`, `_TOTAL_TIMEOUT_SECONDS` | | | 차례로 `true`, `0.3`, `10`, `8`, `30`. 에이전트가 승인된 설계를 읽어 가는 기능입니다. 다섯 줄이 모두 있어야 켜집니다 |
 
 난수는 `openssl rand -hex 24`로 만듭니다. 16진수만 쓰세요. 따옴표나 역슬래시가 들어가면 파일 저장소 설정이 깨집니다.
 
 ## 1-4. 새 서버에 배포하기
 
-우리 팀 서버는 dev 브랜치에 push하면 GitHub Actions와 Jenkins가 자동으로 배포합니다([1-5](#1-5-우리-서버의-자동-배포)).
-이 자동 배포는 팀의 GitHub 저장소 권한과 Jenkins가 있어야 하므로, 새 서버에서는 아래 순서대로 직접 배포합니다.
-서버는 Ubuntu 24.04, 도메인은 서버 IP를 가리키도록 미리 등록해 두었다고 가정합니다.
+우리 팀 서버는 dev 브랜치에 push하면 자동으로 배포됩니다([1-5](#1-5-우리-서버의-자동-배포)). 이 자동 배포는 팀의
+GitHub 저장소 권한과 Jenkins가 있어야 하므로, 새 서버에서는 아래 순서대로 직접 배포합니다.
+서버는 Ubuntu 24.04이고, 사용할 도메인이 서버 IP를 가리키도록 DNS에 등록해 두었다고 가정합니다.
 
 ### 1) 필요한 프로그램 설치
 
-Docker, Nginx, certbot을 설치하고 방화벽에서 80, 443 포트를 엽니다. 명령은
-[docs/infra/server-setup.md](../docs/infra/server-setup.md)의 3절(방화벽), 4절(Docker)을 따르세요.
+방화벽에서 80, 443 포트를 열고 Docker를 설치합니다. 명령은 [docs/infra/server-setup.md](../docs/infra/server-setup.md)의
+3절(방화벽)과 4절(Docker)에 있습니다. 그다음 Nginx와 certbot을 설치합니다.
 
 ```bash
 sudo apt-get install -y nginx certbot
@@ -105,18 +116,20 @@ sudo apt-get install -y nginx certbot
 
 ### 2) 소스 받기
 
+GitLab 저장소는 비공개라 SSAFY 계정으로 로그인해야 받을 수 있습니다.
+
 ```bash
 sudo mkdir -p /opt/beez && sudo chown "$USER" /opt/beez
-git clone <GitLab 저장소 주소> /opt/beez/src
-cd /opt/beez/src
+git clone https://lab.ssafy.com/s15-final/S15P31A108.git /opt/beez/src
 ```
 
 ### 3) env 파일 만들기
 
-아래 명령은 난수를 넣은 env 파일을 만듭니다. `PUBLIC_ORIGIN`의 도메인만 내 도메인으로 바꿔서 실행하세요.
-이미 파일이 있으면 덮어쓰지 않고 멈춥니다(DB 비밀번호를 잃지 않게 하려는 것입니다).
+아래 명령은 난수를 넣은 env 파일을 만듭니다. 첫 줄의 `D=` 뒤를 내 도메인으로 바꿔서 실행하세요.
+이미 파일이 있으면 덮어쓰지 않고 멈춥니다. 실수로 DB 비밀번호를 잃지 않게 하려는 것입니다.
 
 ```bash
+D=내도메인.com
 ( set -C; umask 027
   printf '%s\n' \
     'DB_USERNAME=beez' \
@@ -128,16 +141,26 @@ cd /opt/beez/src
     "SEAWEEDFS_BACKUP_ACCESS_KEY=$(openssl rand -hex 12)" \
     "SEAWEEDFS_BACKUP_SECRET_KEY=$(openssl rand -hex 24)" \
     "AI_INTERNAL_TOKEN=$(openssl rand -hex 32)" \
-    'PUBLIC_ORIGIN=https://내도메인' \
+    "PUBLIC_ORIGIN=https://$D" \
     'BACKEND_HOST_PORT=8081' \
     'GMS_KEY=' \
+    'MAIL_HOST=' 'MAIL_PORT=587' 'MAIL_USERNAME=' 'MAIL_PASSWORD=' 'MAIL_FROM=' \
     'PLANNING_QUESTIONS_ENABLED=true' \
     'DESIGN_DRAFTS_ENABLED=true' \
     'BEE_CHAT_ENABLED=true' \
-    'IMPACT_LLM_MODEL=gpt-6-luna' > /opt/beez/.env.dev ) && ls -l /opt/beez/.env.dev
+    'IMPACT_LLM_MODEL=gpt-6-luna' \
+    'CONTEXT_SELECTION_ENABLED=true' \
+    'CONTEXT_SELECTION_MIN_SIMILARITY=0.3' \
+    'CONTEXT_SELECTION_MAX_ITEMS=10' \
+    'CONTEXT_SELECTION_MAX_EVIDENCE=8' \
+    'CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30' > /opt/beez/.env.dev ) && ls -l /opt/beez/.env.dev
 ```
 
-그다음 편집기로 `/opt/beez/.env.dev`를 열어 `GMS_KEY=` 뒤에 키를 붙이고, 메일을 보내려면 `MAIL_*` 줄을 추가합니다.
+그다음 편집기(`nano /opt/beez/.env.dev`)로 파일을 열어 빈칸을 채웁니다.
+
+- `GMS_KEY=` 뒤에 GMS API 키를 붙입니다([외부 서비스 2-1](02-external-services.md#2-1-llm-api-ssafy-gms)).
+- `MAIL_` 다섯 줄을 채웁니다([외부 서비스 2-2](02-external-services.md#2-2-메일-smtp)). 비워 두면 회원가입을 할 수 없습니다.
+
 이 파일은 저장소나 메신저에 올리지 마세요.
 
 ### 4) 서비스 띄우기
@@ -156,56 +179,97 @@ DB 테이블은 backend가 처음 뜰 때 자동으로 만들어집니다.
 PC(Git Bash)에서 빌드해 서버로 보냅니다. 서버에 Node.js 24가 있으면 서버에서 빌드해도 됩니다.
 
 ```bash
-# PC
+# PC, 저장소 폴더에서
 cd frontend && npm ci && VITE_API_MODE=live npm run build
-scp -r dist <서버>:/tmp/beez-dist
+ssh <서버> 'rm -rf /tmp/beez-dist' && scp -r dist <서버>:/tmp/beez-dist
 # 서버
 sudo mkdir -p /var/www/beez && sudo rm -rf /var/www/beez/current && sudo mv /tmp/beez-dist /var/www/beez/current
 ```
 
-### 6) Nginx와 HTTPS 설정
+이렇게 올리면 `/var/www/beez/current`가 일반 폴더가 됩니다. 나중에 우리 팀의 자동 배포 스크립트(`deploy.sh`)로
+바꾸려면 이 폴더를 지워야 합니다. 그 스크립트는 같은 자리에 버전별 폴더를 가리키는 링크를 만들기 때문입니다.
 
-1. [docs/infra/nginx-https.md](../docs/infra/nginx-https.md) 3절 순서대로 certbot으로 인증서를 먼저 받습니다.
-   사이트 설정이 인증서 파일을 가리키므로, 순서가 바뀌면 Nginx 설정 검사가 실패합니다.
-2. 저장소의 Nginx 설정에서 `dev.beez.ai.kr`을 내 도메인으로 바꿔 설치합니다.
+### 6) Nginx 설정과 HTTPS 인증서
 
-   ```bash
-   cd /opt/beez/src/infra/nginx
-   sed -i 's/dev\.beez\.ai\.kr/내도메인/g' sites-available/dev.beez.ai.kr.conf
-   sudo install -m 644 snippets/beez-backend-proxy.conf /etc/nginx/snippets/
-   sudo install -m 644 sites-available/dev.beez.ai.kr.conf /etc/nginx/sites-available/beez.conf
-   sudo ln -sf /etc/nginx/sites-available/beez.conf /etc/nginx/sites-enabled/beez.conf
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
+443 포트 설정은 인증서 파일이 있어야 켜지므로, 인증서를 받는 임시 설정을 먼저 켜고 인증서를 받은 뒤 진짜 설정으로
+바꿉니다. 첫 줄의 `D=`와 certbot의 `<연락 메일>`을 바꿔서 차례로 실행하세요.
+
+```bash
+D=내도메인.com
+cd /opt/beez/src/infra/nginx
+
+# 공통 설정과 스니펫 설치, 우분투 기본 사이트 끄기
+sudo install -m 644 conf.d/*.conf /etc/nginx/conf.d/
+sudo install -m 644 snippets/*.conf /etc/nginx/snippets/
+sudo install -m 644 sites-available/00-default.conf /etc/nginx/sites-available/
+sudo ln -sf /etc/nginx/sites-available/00-default.conf /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# 내 도메인으로 바꾼 사이트 설정을 만들어 둡니다 (저장소 파일은 건드리지 않습니다)
+sed "s/dev\.beez\.ai\.kr/$D/g" sites-available/dev.beez.ai.kr.conf | sudo tee /etc/nginx/sites-available/beez.conf > /dev/null
+
+# 인증서 발급용 임시 설정을 켜고 인증서를 받습니다
+sudo mkdir -p /var/www/letsencrypt
+printf 'server {\n    listen 80;\n    listen [::]:80;\n    server_name %s;\n    include snippets/acme-challenge.conf;\n}\n' "$D" \
+  | sudo tee /etc/nginx/sites-enabled/beez-temp.conf > /dev/null
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot certonly --webroot -w /var/www/letsencrypt -d "$D" \
+  -m <연락 메일> --agree-tos --no-eff-email --deploy-hook "systemctl reload nginx"
+
+# 임시 설정을 지우고 진짜 설정을 켭니다
+sudo rm /etc/nginx/sites-enabled/beez-temp.conf
+sudo ln -sf /etc/nginx/sites-available/beez.conf /etc/nginx/sites-enabled/beez.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+certbot이 실패하면 도메인이 이 서버 IP를 가리키는지(`nslookup $D`)와 80 포트가 열려 있는지 확인하세요. 같은 도메인으로
+한 시간에 다섯 번 넘게 실패하면 Let's Encrypt가 잠시 발급을 막으니, 처음에는 certbot 명령 끝에 `--dry-run`을 붙여
+연습해 보는 것이 안전합니다. 자세한 설명은 [docs/infra/nginx-https.md](../docs/infra/nginx-https.md)에 있습니다.
 
 ### 7) 확인
 
 ```bash
-curl -s https://내도메인/actuator/health; echo    # {"status":"UP"} 이면 정상
+curl -s https://$D/actuator/health; echo    # {"status":"UP"} 이면 정상
 ```
 
-브라우저로 `https://내도메인`을 열어 회원가입과 로그인을 해 봅니다.
+브라우저로 `https://내도메인.com`을 열어 회원가입을 해 봅니다. 인증 메일이 오지 않으면 3)의 `MAIL_` 값을 확인하고,
+`docker compose -p beez logs backend | grep -i mail`로 오류를 찾아보세요.
 
 ## 1-5. 우리 서버의 자동 배포
 
 | 항목 | 값 |
 | --- | --- |
 | 서버 | `k15a108.p.ssafy.io` (Ubuntu 24.04), 접속 도메인 `dev.beez.ai.kr` |
-| 흐름 | dev에 push → GitHub Actions가 이미지를 빌드해 GHCR에 올림 → Jenkins가 서버에서 `infra/deploy/deploy.sh` 실행 → 새 이미지로 교체하고 프론트 파일을 바꾼 뒤 Nginx를 다시 읽음 |
 | 배포 위치 | `/opt/beez` |
-| 이미지 | `ghcr.io/s15a108/beez-backend`, `beez-ai`, `beez-frontend-dist` (태그는 커밋 SHA) |
-| 열린 포트 | 80, 443만 엽니다. backend는 서버 안에서만 접속할 수 있는 `127.0.0.1:8081`, 나머지 컨테이너는 포트를 열지 않습니다 |
+| 이미지 | GitHub 컨테이너 저장소(GHCR)의 `ghcr.io/s15a108/beez-backend`, `beez-ai`, `beez-frontend-dist` (태그는 커밋 SHA) |
+| 열린 포트 | 80, 443만 엽니다. backend는 서버 안에서만 접속할 수 있는 `127.0.0.1:8081`이고, 나머지 컨테이너는 포트를 열지 않습니다 |
+
+배포는 이렇게 진행됩니다.
+
+1. dev 브랜치에 커밋이 push됩니다.
+2. GitHub Actions(`cd.yml`)가 backend, ai, 프론트엔드 이미지를 빌드해 GHCR에 올립니다.
+3. GitHub Actions가 서버의 Jenkins에 배포를 요청합니다.
+4. Jenkins가 서버에서 `infra/deploy/deploy.sh`를 실행해 새 이미지로 컨테이너를 바꾸고, 프론트엔드 파일을 교체한 뒤
+   Nginx 설정을 다시 읽게 합니다.
 
 자세한 내용은 [docs/infra/cd.md](../docs/infra/cd.md)에 있습니다.
 
 ## 1-6. 배포할 때 주의할 점
 
-1. **필수 환경변수가 빠지면 배포가 시작되지 않습니다.** compose가 빠진 변수 이름을 알려 주니, 그 줄을 env 파일에 넣고 다시 실행하세요.
-2. **AI 기능은 env 파일에 켜는 줄이 있어야 동작합니다.** `GMS_KEY`만 넣으면 보완 질문, 설계 초안, 비비 질문, 영향 분석은 계속 실패합니다. 1-4의 3)에 켜는 줄을 넣어 두었습니다.
-3. **AI 호출 시간 제한을 늘릴 때는 순서를 지키세요.** AI 모델 호출 시간 < backend 대기 시간 < Nginx 대기 시간(60초) 순서여야 합니다. 바깥쪽이 더 짧으면 Nginx가 먼저 504 오류를 냅니다. 늘릴 때는 AI 쪽 값을 늘린 다음 backend 값을 늘립니다.
-4. **`VITE_API_MODE`는 프론트엔드를 빌드할 때 정해집니다.** 값을 바꿨다면 프론트엔드를 다시 빌드해 올려야 반영됩니다.
-5. **DB 테이블은 backend가 뜰 때 자동으로 만들어집니다.** Flyway가 `backend/src/main/resources/db/migration`(SQL)과 `backend/src/main/java/db/migration`(Java)의 V1~V52를 차례로 적용하므로, SQL을 따로 실행하지 마세요.
-6. **PostgreSQL 설정(`infra/compose.yaml`의 `command`)을 바꾸면 DB 컨테이너가 다시 만들어집니다.** 그동안 서비스가 잠시 끊기니, 팀원에게 시간을 미리 알리고 배포하세요.
+1. **PostgreSQL 설정(`infra/compose.yaml`의 `command`)을 바꾸면 DB 컨테이너가 다시 만들어집니다.** 그동안 서비스가
+   잠시 끊기니, 팀원에게 시간을 미리 알리고 배포하세요.
+2. **DB 비밀번호(`DB_PASSWORD`)는 env 파일에서만 바꾸면 안 됩니다.** DB는 처음 만들 때의 비밀번호를 계속 쓰므로,
+   env 파일만 바꾸면 backend가 DB에 접속하지 못합니다. DB 안의 비밀번호도 함께 바꾸세요.
+3. 필수 환경변수가 빠지면 compose가 빠진 변수 이름을 알려 주고 멈춥니다. 그 줄을 env 파일에 넣고 다시 실행하세요.
+4. AI 기능은 env 파일에 켜는 줄이 있어야 동작합니다. `GMS_KEY`만 넣으면 보완 질문, 설계 초안, 비비 질문, 영향 분석,
+   에이전트의 설계 읽기는 계속 실패합니다. 1-4의 3)에 켜는 줄을 모두 넣어 두었습니다.
+5. AI 응답을 기다리는 시간을 늘릴 때는 바깥쪽부터 늘리세요. 예를 들어 문서 검토 대화는 AI 모델 호출
+   `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`(50초) < backend 대기 `DOCUMENT_REVIEW_READ_TIMEOUT`(55s) < Nginx
+   `proxy_read_timeout`(60s) 순서를 지켜야 합니다. 바깥쪽이 더 짧아지는 순간 Nginx가 먼저 504 오류를 내고 backend는
+   계속 돌아 비용만 나갑니다. 그래서 늘릴 때는 Nginx, backend, AI 순서로, 줄일 때는 반대 순서로 바꿉니다.
+6. `VITE_API_MODE`는 프론트엔드를 빌드할 때 정해집니다. 값을 바꿨다면 프론트엔드를 다시 빌드해 올려야 반영됩니다.
+7. DB 테이블은 backend가 뜰 때 자동으로 만들어집니다. Flyway가 `backend/src/main/resources/db/migration`(SQL)과
+   `backend/src/main/java/db/migration`(Java)에 있는 V52까지의 마이그레이션을 차례로 적용하므로, SQL을 따로 실행하지 마세요.
 
 ## 1-7. 계정과 설정이 들어 있는 파일
 
@@ -225,5 +289,7 @@ DB 접속 정보 같은 계정과 설정이 정의된 파일입니다. 실제 �
 | `frontend/.env.example` | `VITE_API_MODE` 예시. `frontend/.env`로 복사해 씁니다 | 예시만 |
 | 서버 `/opt/beez/.env.dev` | 실제 DB, 파일 저장소, AI, 메일 비밀값 | X |
 | 서버 `/opt/beez/.env.monitoring` | 모니터링(Grafana 등) 계정 | X |
+| 서버 `/opt/beez/.cdc-secrets/database.properties` | 문서 변경 감지(CDC) 커넥터가 쓰는 DB 계정 ([docs/infra/cdc-connector.md](../docs/infra/cdc-connector.md)) | X |
+| 서버 `/opt/beez/.alertmanager-webhook-url` | Mattermost 알림을 보낼 웹훅 주소 | X |
 | 서버 `/etc/jenkins/casc.env` | Jenkins 관리자와 배포 계정 | X |
 | GitHub 저장소 설정 | 배포 토큰(`JENKINS_API_TOKEN`), GitLab 동기화 토큰(`GITLAB_SYNC_TOKEN`), 자동 병합 토큰(`PR_AUTOMERGE_TOKEN`), `VITE_API_MODE` | X |
