@@ -82,7 +82,9 @@ const STALE_REVIEW_MESSAGE =
 const DRAFT_ACCEPTED =
   '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.'
 
-// 설계 초안을 만드는 흐름 순서의 탭. 기준 설계를 발행한 뒤에는 후보 탭이 없다.
+const STARTED = '첫 기준 설계를 발행했어요.'
+
+// 설계 초안을 만드는 흐름 순서의 탭. 기준 설계를 발행한 뒤에는 후보 탭이 없고, items 탭은 '기준 설계 vN'(승인 항목 읽기 전용)이 된다.
 type PlanningTab = 'documents' | 'questions' | 'answers' | 'items'
 const TAB_LABEL: Record<PlanningTab, string> = {
   documents: '문서 후보',
@@ -180,6 +182,21 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         : false,
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
+  // 발행 뒤에는 초안이 기준으로 넘어가 비므로, 지금 기준의 승인 항목(PLN-A06 status=APPROVED)을 읽기만 한다.
+  // 작업 현황과 같은 키로 캐시를 나눠 쓴다.
+  const approved = useInfiniteQuery({
+    queryKey: ['projects', projectId, 'approved-design-items'],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      planningApi.items(projectId, {
+        status: 'APPROVED',
+        cursor: pageParam,
+        limit: 100,
+      }),
+    getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    enabled: !!baseline.data,
+  })
+  const approvedItems = approved.data?.pages.flatMap((page) => page.items) ?? []
   const versionIds = versions.map((version) => version.id)
   // 발행 조건과 스냅샷 해시는 받아 둔 전체 초안을 기준으로 한다.
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
@@ -315,7 +332,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
             design_item_version_ids: reviewed.items,
             draft_snapshot_hash: reviewed.hash!,
           }),
-        '첫 기준 설계를 발행했어요.',
+        STARTED,
       )
     } catch (cause) {
       // 일반 오류 띠 대신 서버가 알려 준 거절 이유(analysis_not_completed·document_not_approved·baseline_exists 등)를 보인다.
@@ -456,11 +473,18 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       count: pendingIn(candidateJobs(answerWork)),
       state: jobStateOf(latestJobs(answerWork)),
     },
-    // 초안은 100개씩 받는다. 더 있으면 받아 둔 수에 +를 붙인다.
-    items: {
-      count: drafts.hasNextPage ? `${items.length}+` : items.length,
-      state: undefined,
-    },
+    // 초안·승인 항목은 100개씩 받는다. 더 있으면 받아 둔 수에 +를 붙인다.
+    items: baseline.data
+      ? {
+          count: approved.hasNextPage
+            ? `${approvedItems.length}+`
+            : approvedItems.length,
+          state: undefined,
+        }
+      : {
+          count: drafts.hasNextPage ? `${items.length}+` : items.length,
+          state: undefined,
+        },
   }
   const tabs: PlanningTab[] = baseline.data
     ? ['questions', 'items']
@@ -505,6 +529,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const drafting = !baseline.isPending && !baseline.data
   // 발행 뒤 팀장 화면은 탭 위에 작업 만들기가 들어와 패널 높이를 고정하지 않는다.
   const breakdown = isLeader && !!baseline.data
+  // 이 창에서 방금 프로젝트를 시작했으면 성공 안내를 다음 할 일(작업 만들기) 카드 안에 한 덩어리로 보인다.
+  const startedHere = breakdown && action.message === STARTED
+  const baselineVersion = baseline.data?.version_no
   const panels: Record<PlanningTab, ReactNode> = {
     documents: drafting && (
       <AsyncState query={draftJobs}>
@@ -614,7 +641,21 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         )}
       </AsyncState>
     ),
-    items: (
+    items: baselineVersion ? (
+      <AsyncState query={approved}>
+        {() => (
+          <DesignItemList
+            items={approvedItems}
+            hasNextPage={approved.hasNextPage}
+            loadingNext={approved.isFetchingNextPage}
+            loadNext={() => void approved.fetchNextPage()}
+            isLeader={isLeader}
+            busy={action.busy}
+            baselineVersion={baselineVersion}
+          />
+        )}
+      </AsyncState>
+    ) : (
       <AsyncState query={drafts}>
         {() => (
           <DesignItemList
@@ -647,9 +688,17 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     // 창 높이를 채우고, 탭 안의 목록·상세가 남은 높이를 차지한다.
     <section className={cn('flex flex-col gap-4', !breakdown && PANEL_HEIGHT)}>
       {breakdown && baseline.data && (
-        <TaskBreakdown key={baseline.data.id} projectId={projectId} />
+        <TaskBreakdown
+          key={baseline.data.id}
+          projectId={projectId}
+          notice={
+            startedHere
+              ? `${STARTED} 이제 승인 설계에서 작업을 만들어 배정해요.`
+              : undefined
+          }
+        />
       )}
-      {action.message && (
+      {action.message && !startedHere && (
         <p
           role="status"
           className="rounded-lg bg-primary/10 px-3.5 py-2 text-sm"
@@ -854,7 +903,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                     : 'border-transparent font-medium text-muted-foreground hover:text-foreground',
                 )}
               >
-                {TAB_LABEL[key]}
+                {key === 'items' && baseline.data
+                  ? `기준 설계 v${baseline.data.version_no}`
+                  : TAB_LABEL[key]}
                 <span
                   className={cn(
                     'text-[13px] tabular-nums',

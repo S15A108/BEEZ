@@ -140,7 +140,7 @@ it('프로젝트 시작을 누르면 확인 창 없이 한 번만 발행한다',
   const user = renderPanel()
   const start = await startButton()
   await user.dblClick(start)
-  expect(await screen.findByText('첫 기준 설계를 발행했어요.')).toBeVisible()
+  expect(await screen.findByText(/첫 기준 설계를 발행했어요/)).toBeVisible()
   expect(publish).toHaveBeenCalledTimes(1)
   expect(publish).toHaveBeenCalledWith({
     project_id: '102',
@@ -153,6 +153,63 @@ it('프로젝트 시작을 누르면 확인 창 없이 한 번만 발행한다',
   expect(screen.queryByRole('textbox', { name: /승인/ })).toBeNull()
   expect(
     await screen.findByText(/기준 설계 v1이 발행되어 있어요/),
+  ).toBeInTheDocument()
+})
+
+// 발행 뒤에는 다음 할 일(작업 만들기)이 맨 위에 오고, 성공 안내는 그 카드 안에 함께 보인다.
+// 초안은 기준으로 넘어가 비므로 초안 탭 대신 기준 설계 v1의 승인 항목을 읽기만 한다.
+it('프로젝트를 시작하면 작업 만들기 카드에 성공 안내가 붙고 기준 설계 v1 항목을 읽기만 한다', async () => {
+  approveAllDocuments()
+  const user = renderPanel()
+  await user.click(await startButton())
+  const next = await screen.findByRole('region', {
+    name: '승인 설계에서 작업 만들기',
+  })
+  expect(
+    await within(next).findByText(
+      '첫 기준 설계를 발행했어요. 이제 승인 설계에서 작업을 만들어 배정해요.',
+    ),
+  ).toBeVisible()
+  expect(screen.getAllByText(/첫 기준 설계를 발행했어요/)).toHaveLength(1)
+  expect(
+    within(next).getByRole('button', { name: '작업 만들고 배정하기' }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: /설계 항목 초안/ })).toBeNull()
+  await openTab(user, /기준 설계 v1\s*1/)
+  expect(
+    await visiblePanel().findByRole('heading', { name: 'REQ-001' }),
+  ).toBeInTheDocument()
+  expect(visiblePanel().getByText('기준 v1 항목 1개')).toBeInTheDocument()
+  expect(
+    visiblePanel().getByText(/바꾸려면 변경 제안을 올려 주세요/),
+  ).toBeInTheDocument()
+  for (const name of ['항목 추가', '내용 수정', '발행 대상에서 제외'])
+    expect(screen.queryByRole('button', { name })).toBeNull()
+  expect(screen.queryByText(/아직 설계 항목 초안이 없어요/)).toBeNull()
+  expect(
+    screen.getByRole('button', { name: '변경 제안으로 이동' }),
+  ).toBeInTheDocument()
+})
+
+// -390 규칙 그대로: 팀원에게는 작업 만들기 없이 기준 설계를 읽기만 보인다.
+it('팀원에게는 기준이 있는 프로젝트에서 작업 만들기 없이 기준 설계 항목을 읽기만 보인다', async () => {
+  const user = renderPanel(false, '101')
+  await openTab(user, /기준 설계 v1/)
+  expect(
+    await visiblePanel().findByRole('heading', { name: 'REQ-001' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('region', { name: '승인 설계에서 작업 만들기' }),
+  ).toBeNull()
+  for (const name of [
+    '작업 만들고 배정하기',
+    '항목 추가',
+    '내용 수정',
+    '발행 대상에서 제외',
+  ])
+    expect(screen.queryByRole('button', { name })).toBeNull()
+  expect(
+    screen.getByRole('button', { name: '변경 제안으로 이동' }),
   ).toBeInTheDocument()
 })
 
@@ -181,7 +238,7 @@ it('검토한 뒤 설계 초안이 바뀌었으면 발행하지 않고 다시 �
     ).toBeVisible(),
   )
   await user.click(await startButton())
-  expect(await screen.findByText('첫 기준 설계를 발행했어요.')).toBeVisible()
+  expect(await screen.findByText(/첫 기준 설계를 발행했어요/)).toBeVisible()
   expect(publish).toHaveBeenCalledTimes(1)
   expect(publish.mock.calls[0][0].design_item_version_ids).toHaveLength(2)
 })

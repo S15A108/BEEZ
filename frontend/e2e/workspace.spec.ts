@@ -284,9 +284,22 @@ test('기획 분석에서 프로젝트 시작을 누르면 바로 기준 v1이 �
   const start = dialog.getByRole('button', { name: '프로젝트 시작' })
   await expect(start).toBeEnabled({ timeout: 15_000 })
   await start.click()
-  await expect(dialog.getByText('첫 기준 설계를 발행했어요.')).toBeVisible()
+  // 발행 뒤에는 작업 만들기가 다음 할 일로 맨 위에 오고, 성공 안내가 그 카드 안에 붙는다.
+  const next = dialog.getByRole('region', { name: '승인 설계에서 작업 만들기' })
+  await expect(next.getByText('첫 기준 설계를 발행했어요.')).toBeVisible()
+  await expect(
+    next.getByRole('button', { name: '작업 만들고 배정하기' }),
+  ).toBeVisible()
   await expect(dialog.getByText(/기준 설계 v1이 발행되어 있어요/)).toBeVisible()
   await expect(dialog.getByRole('textbox', { name: /승인/ })).toHaveCount(0)
+  // 초안 탭 대신 기준 설계 v1의 승인 항목을 읽기만 한다.
+  await dialog.getByRole('tab', { name: /기준 설계 v1/ }).click()
+  await expect(
+    dialog.getByRole('tabpanel').getByRole('heading', { name: 'REQ-001' }),
+  ).toBeVisible()
+  await expect(
+    dialog.getByRole('button', { name: /항목 추가|내용 수정/ }),
+  ).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
