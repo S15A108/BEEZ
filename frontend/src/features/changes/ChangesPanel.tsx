@@ -9,6 +9,7 @@ import {
 } from '@tanstack/react-query'
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   ChevronDown,
   CircleAlert,
@@ -702,8 +703,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         <div
           className={cn(
             'min-w-0',
+            // 상세는 흰 카드, 승인·반려는 가운데에 놓은 흰 결정 시트(머리·내용·아래 버튼 줄)다(사용자 요청 11-17).
             mode.kind === 'detail' &&
               'rounded-xl bg-card p-5 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto',
+            (mode.kind === 'approve' || mode.kind === 'reject') &&
+              'mx-auto w-full overflow-hidden rounded-2xl bg-card shadow-xs ring-1 ring-foreground/10',
+            mode.kind === 'approve' && 'max-w-3xl',
+            mode.kind === 'reject' && 'max-w-2xl',
           )}
         >
           {mode.kind === 'form' && !mode.source ? (
@@ -925,162 +931,176 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                 if (mode.kind === 'approve') {
                   const documentOnly = isDocumentOnly(current)
                   return (
-                    <div className="grid content-start gap-4">
-                      <Back onClick={() => setMode({ kind: 'detail' })}>
-                        {current.title}
-                      </Back>
-                      <h3 className="text-lg font-bold">
-                        기준 v{nextVersion} 발행을 승인할까요?
-                      </h3>
-                      <p className="text-sm font-semibold">
-                        기준 v{nextVersion}에 들어가는 것
-                      </p>
-                      {current.items.length > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          설계 항목
-                        </p>
-                      )}
-                      <ul className="grid gap-1.5 text-sm">
-                        {current.items.map((item, index) => (
-                          <li
-                            key={index}
-                            className="rounded-lg border px-3 py-2"
-                          >
-                            {operationLabel[item.operation]} ·{' '}
-                            {item.operation === 'CREATE'
-                              ? '새 항목'
-                              : `${itemKey(item.design_item_id)} 승인 v${approved.find((entry) => entry.design_item_id === item.design_item_id)?.version_no ?? '?'}`}
-                            {item.operation === 'UPDATE' && ' → 새 버전'}
-                          </li>
-                        ))}
-                      </ul>
-                      {current.documents.length > 0 && (
-                        <>
-                          <p className="text-xs text-muted-foreground">문서</p>
-                          <ul className="grid gap-1.5 text-sm">
-                            {current.documents.map((change) => {
-                              const document = documentOptions.find(
-                                (item) => item.id === change.document_id,
-                              )
-                              const next = proposedVersionNo(
-                                change.proposed_document_version_id,
-                              )
-                              const after = next ? `v${next}` : '새 버전'
-                              return (
-                                <li
-                                  key={change.document_id}
-                                  className="rounded-lg border px-3 py-2"
-                                >
-                                  {document
-                                    ? `${document.title} v${document.versionNo} → ${after}`
-                                    : `문서 → ${after}`}
-                                </li>
-                              )
-                            })}
-                          </ul>
-                        </>
-                      )}
-                      {/* 문서만 발행할 때는 새 문서 버전과 설계 항목의 영향을 구분한다. */}
-                      {(documentOnly || !preview.data) && (
-                        <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
-                          {documentOnly
-                            ? '승인하면 새 문서 버전이 공용 문서함에 발행돼요. 설계 항목과 기존 작업 상태·검증 결과는 유지돼요.'
-                            : '승인하면 이 항목을 쓰는 검증은 ‘다시 검증 필요’, 진행 중 작업은 ‘대기 · 재검증’으로 바뀌어요. 문서 원문도 함께 새 기준이 돼요.'}
-                        </p>
-                      )}
-                      {preview.isLoading && (
-                        <p
-                          role="status"
-                          className="text-sm text-muted-foreground"
-                        >
-                          승인하면 같이 바뀌는 것을 계산하는 중이에요…
-                        </p>
-                      )}
-                      {preview.data && (
-                        <ApprovalPreview
-                          preview={preview.data}
-                          changedDocuments={current.documents.length}
-                          nameOfMember={nameOfMember}
-                        />
-                      )}
-                      {preview.error && (
-                        <div
-                          role="alert"
-                          className="grid gap-2 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-                        >
-                          <p>
-                            {previewBlockedMessage ??
-                              '승인하면 같이 바뀌는 것을 불러오지 못했어요. 영향을 직접 확인한 뒤 승인해 주세요.'}
+                    <div className="grid content-start">
+                      <div className="grid gap-3 border-b px-6 py-5">
+                        <Back onClick={() => setMode({ kind: 'detail' })}>
+                          {current.title}
+                        </Back>
+                        <div className="grid gap-1.5">
+                          {/* 이 결정이 바꾸는 것: 팀의 기준 버전 */}
+                          <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-primary/20 px-2.5 py-1 text-xs font-semibold">
+                            기준 v{nextVersion - 1}
+                            <ArrowRight aria-hidden="true" className="size-3" />
+                            v{nextVersion}
+                          </span>
+                          <h3 className="text-xl font-bold">
+                            기준 v{nextVersion} 발행을 승인할까요?
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {current.key} · {current.title}
                           </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="justify-self-start"
-                            onClick={() => void preview.refetch()}
-                          >
-                            다시 불러오기
-                          </Button>
                         </div>
-                      )}
-                      {approveNotice && (
-                        <p
-                          role="alert"
-                          className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-                        >
-                          {approveNotice}
+                      </div>
+                      <div className="grid gap-4 px-6 py-5">
+                        <p className="text-sm font-semibold">
+                          기준 v{nextVersion}에 들어가는 것
                         </p>
-                      )}
-                      {overrideNeeded && (
-                        <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
-                          <strong className="text-sm">
-                            {documentOnly
-                              ? '문서 변경을 직접 확인해 주세요'
-                              : 'AI 영향 분석이 끝나지 않았어요'}
-                          </strong>
-                          <p className="text-sm leading-6">
-                            {documentOnly
-                              ? '문서 본문만 바꾸는 제안은 AI 영향 분석 대상이 아니에요. 바뀐 내용을 직접 확인하고 승인 사유를 남겨 주세요. 사유는 승인 이력에 남아요.'
-                              : '이 제안의 영향 분석이 끝나지 않았거나(실패·근거 부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못 함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향 0건으로 보지 않아요. 영향 범위를 직접 확인했다면 사유를 남기고 승인할 수 있어요. 사유는 승인 이력에 남아요.'}
+                        {current.items.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            설계 항목
                           </p>
-                          {!documentOnly && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="justify-self-start"
-                              disabled={action.busy}
-                              onClick={() =>
-                                void perform(
-                                  () =>
-                                    changesApi.retryImpact(
-                                      projectId,
-                                      current.id,
-                                    ),
-                                  IMPACT_RETRIED,
+                        )}
+                        <ul className="divide-y rounded-xl border text-sm empty:hidden">
+                          {current.items.map((item, index) => (
+                            <li key={index} className="px-3.5 py-2.5">
+                              {operationLabel[item.operation]} ·{' '}
+                              {item.operation === 'CREATE'
+                                ? '새 항목'
+                                : `${itemKey(item.design_item_id)} 승인 v${approved.find((entry) => entry.design_item_id === item.design_item_id)?.version_no ?? '?'}`}
+                              {item.operation === 'UPDATE' && ' → 새 버전'}
+                            </li>
+                          ))}
+                        </ul>
+                        {current.documents.length > 0 && (
+                          <>
+                            <p className="text-xs text-muted-foreground">
+                              문서
+                            </p>
+                            <ul className="divide-y rounded-xl border text-sm">
+                              {current.documents.map((change) => {
+                                const document = documentOptions.find(
+                                  (item) => item.id === change.document_id,
                                 )
-                              }
-                            >
-                              영향 다시 분석
-                            </Button>
-                          )}
-                          <label
-                            htmlFor="impact-override-reason"
-                            className="text-sm font-semibold"
-                          >
+                                const next = proposedVersionNo(
+                                  change.proposed_document_version_id,
+                                )
+                                const after = next ? `v${next}` : '새 버전'
+                                return (
+                                  <li
+                                    key={change.document_id}
+                                    className="px-3.5 py-2.5"
+                                  >
+                                    {document
+                                      ? `${document.title} v${document.versionNo} → ${after}`
+                                      : `문서 → ${after}`}
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </>
+                        )}
+                        {/* 문서만 발행할 때는 새 문서 버전과 설계 항목의 영향을 구분한다. */}
+                        {(documentOnly || !preview.data) && (
+                          <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
                             {documentOnly
-                              ? '문서 변경 승인 사유'
-                              : '영향 분석 없이 승인하는 사유'}
-                          </label>
-                          <Textarea
-                            id="impact-override-reason"
-                            maxLength={1000}
-                            value={approveReason}
-                            onChange={(event) =>
-                              setApproveReason(event.target.value)
-                            }
+                              ? '승인하면 새 문서 버전이 공용 문서함에 발행돼요. 설계 항목과 기존 작업 상태·검증 결과는 유지돼요.'
+                              : '승인하면 이 항목을 쓰는 검증은 ‘다시 검증 필요’, 진행 중 작업은 ‘대기 · 재검증’으로 바뀌어요. 문서 원문도 함께 새 기준이 돼요.'}
+                          </p>
+                        )}
+                        {preview.isLoading && (
+                          <p
+                            role="status"
+                            className="text-sm text-muted-foreground"
+                          >
+                            승인하면 같이 바뀌는 것을 계산하는 중이에요…
+                          </p>
+                        )}
+                        {preview.data && (
+                          <ApprovalPreview
+                            preview={preview.data}
+                            changedDocuments={current.documents.length}
+                            nameOfMember={nameOfMember}
                           />
-                        </div>
-                      )}
-                      <div className="flex justify-end gap-2">
+                        )}
+                        {preview.error && (
+                          <div
+                            role="alert"
+                            className="grid gap-2 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                          >
+                            <p>
+                              {previewBlockedMessage ??
+                                '승인하면 같이 바뀌는 것을 불러오지 못했어요. 영향을 직접 확인한 뒤 승인해 주세요.'}
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="justify-self-start"
+                              onClick={() => void preview.refetch()}
+                            >
+                              다시 불러오기
+                            </Button>
+                          </div>
+                        )}
+                        {approveNotice && (
+                          <p
+                            role="alert"
+                            className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                          >
+                            {approveNotice}
+                          </p>
+                        )}
+                        {overrideNeeded && (
+                          <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                            <strong className="text-sm">
+                              {documentOnly
+                                ? '문서 변경을 직접 확인해 주세요'
+                                : 'AI 영향 분석이 끝나지 않았어요'}
+                            </strong>
+                            <p className="text-sm leading-6">
+                              {documentOnly
+                                ? '문서 본문만 바꾸는 제안은 AI 영향 분석 대상이 아니에요. 바뀐 내용을 직접 확인하고 승인 사유를 남겨 주세요. 사유는 승인 이력에 남아요.'
+                                : '이 제안의 영향 분석이 끝나지 않았거나(실패·근거 부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못 함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향 0건으로 보지 않아요. 영향 범위를 직접 확인했다면 사유를 남기고 승인할 수 있어요. 사유는 승인 이력에 남아요.'}
+                            </p>
+                            {!documentOnly && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="justify-self-start"
+                                disabled={action.busy}
+                                onClick={() =>
+                                  void perform(
+                                    () =>
+                                      changesApi.retryImpact(
+                                        projectId,
+                                        current.id,
+                                      ),
+                                    IMPACT_RETRIED,
+                                  )
+                                }
+                              >
+                                영향 다시 분석
+                              </Button>
+                            )}
+                            <label
+                              htmlFor="impact-override-reason"
+                              className="text-sm font-semibold"
+                            >
+                              {documentOnly
+                                ? '문서 변경 승인 사유'
+                                : '영향 분석 없이 승인하는 사유'}
+                            </label>
+                            <Textarea
+                              id="impact-override-reason"
+                              maxLength={1000}
+                              value={approveReason}
+                              onChange={(event) =>
+                                setApproveReason(event.target.value)
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex justify-end gap-2 border-t bg-muted/40 px-6 py-4">
                         <Button
                           variant="outline"
                           onClick={() => setMode({ kind: 'detail' })}
@@ -1107,44 +1127,57 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                 }
                 if (mode.kind === 'reject')
                   return (
-                    <div className="grid content-start gap-4">
-                      <Back onClick={() => setMode({ kind: 'detail' })}>
-                        {current.title}
-                      </Back>
-                      <h3 className="text-lg font-bold">제안을 반려할까요?</h3>
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        반려하면 제안자가 같은 제안을 고쳐 다시 올릴 수 있어요.
-                        제안자와 검토 요청을 보낸 팀원에게 알려요.
-                      </p>
-                      <ActionForm
-                        fields={[
-                          {
-                            name: 'reason',
-                            label: '반려 사유',
-                            type: 'textarea',
-                            required: true,
-                            max: 2000,
-                            // 기준이 바뀐 제안은 돌려보내는 이유를 채워 둔다(PNL-04 수정안 기준 바뀜).
-                            value: current.requires_refresh
-                              ? '기준이 바뀌었어요. 최신 기준으로 고쳐 다시 올려 주세요.'
-                              : undefined,
-                          },
-                        ]}
-                        submitLabel="반려하기"
-                        destructive
-                        onSubmit={async (values) => {
-                          await action.run(
-                            () =>
-                              changesApi.reject(projectId, current.id, {
-                                reason: values.reason,
-                                expected_revision: current.revision,
-                                expected_snapshot_hash: current.snapshot_hash,
-                              }),
-                            '제안을 반려했어요.',
-                          )
-                          setMode({ kind: 'detail' })
-                        }}
-                      />
+                    <div className="grid content-start">
+                      <div className="grid gap-3 border-b px-6 py-5">
+                        <Back onClick={() => setMode({ kind: 'detail' })}>
+                          {current.title}
+                        </Back>
+                        <div className="grid gap-1.5">
+                          <h3 className="text-xl font-bold">
+                            제안을 반려할까요?
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {current.key} · {current.title}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid gap-4 px-6 py-5">
+                        <p className="text-sm leading-6 text-balance break-keep text-muted-foreground">
+                          반려하면 제안자가 같은 제안을 고쳐 다시 올릴 수
+                          있어요. 제안자와 검토 요청을 보낸 팀원에게 알려요.
+                        </p>
+                        <ActionForm
+                          fields={[
+                            {
+                              name: 'reason',
+                              label: '반려 사유',
+                              type: 'textarea',
+                              required: true,
+                              max: 2000,
+                              // 기준이 바뀐 제안은 돌려보내는 이유를 채워 둔다(PNL-04 수정안 기준 바뀜).
+                              value: current.requires_refresh
+                                ? '기준이 바뀌었어요. 최신 기준으로 고쳐 다시 올려 주세요.'
+                                : undefined,
+                            },
+                          ]}
+                          submitLabel="반려하기"
+                          destructive
+                          // 승인 화면처럼 '취소'로 상세에 돌아간다(사용자 요청 11-17).
+                          onCancel={() => setMode({ kind: 'detail' })}
+                          onSubmit={async (values) => {
+                            await action.run(
+                              () =>
+                                changesApi.reject(projectId, current.id, {
+                                  reason: values.reason,
+                                  expected_revision: current.revision,
+                                  expected_snapshot_hash: current.snapshot_hash,
+                                }),
+                              '제안을 반려했어요.',
+                            )
+                            setMode({ kind: 'detail' })
+                          }}
+                        />
+                      </div>
                     </div>
                   )
                 const baseVersion = current.requires_refresh
