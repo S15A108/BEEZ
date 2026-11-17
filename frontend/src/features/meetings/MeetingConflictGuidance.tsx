@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { MeetingConflictGuidance as Guidance } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -24,7 +25,8 @@ export function MeetingConflictGuidance({
   documentTitleOf: (id: string) => string
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [open, setOpen] = useState(false)
+  // 처음부터 펼쳐 둔다(사용자 요청 11-17, S15P31A108-457). 접으면 '정할 것' 한 줄만 남는다.
+  const [open, setOpen] = useState(true)
   const detailId = useId()
   const [first, second] = guidance?.tasks ?? []
   const hasComparison =
@@ -56,13 +58,17 @@ export function MeetingConflictGuidance({
         // 넓은 화면에서 펼친 안내가 길면 회의 대화 칸과 남는 높이를 나누고 안에서 스크롤한다(S15P31A108-438). 짧으면 제 높이만 쓴다.
         // 창이 낮아도 '정할 것' 줄과 안내 몇 줄(128px)은 남기고, 그래도 모자라면 회의실 창이 스크롤한다.
         open &&
+          hasDetail &&
           'lg:max-h-max lg:min-h-32 lg:flex-1 lg:content-start lg:overflow-y-auto',
       )}
     >
-      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <strong className="shrink-0">정할 것</strong>
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        {/* '정할 것'은 '작업 충돌' 칩 같은 알약으로 감싼다(S15P31A108-457). */}
+        <strong className="inline-flex h-[22px] shrink-0 items-center rounded-full border border-[#f1d67a] bg-[#fdf0c8] px-2 text-xs font-semibold text-[#6e5200]">
+          정할 것
+        </strong>
         <span className="min-w-0 flex-1 basis-48">{summary}</span>
-        <span className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
+        <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           {taskIds.map((id) => (
             <button
               key={id}
@@ -77,19 +83,23 @@ export function MeetingConflictGuidance({
             <span key={key}>{key}</span>
           ))}
           {hasDetail && (
-            <button
+            // 펼치기·접기는 글자 대신 상자 버튼으로 눈에 띄게 한다(S15P31A108-457).
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               aria-expanded={open}
               aria-controls={detailId}
-              className="font-semibold text-[#8a6a00]"
+              className="bg-white"
               onClick={() => setOpen((value) => !value)}
             >
+              {open ? <ChevronUp /> : <ChevronDown />}
               {open ? '접기' : '펼치기'}
-            </button>
+            </Button>
           )}
         </span>
       </div>
-      {open && (
+      {open && hasDetail && (
         <section
           id={detailId}
           aria-label="비비의 충돌 안내"
