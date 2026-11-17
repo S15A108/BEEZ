@@ -311,6 +311,39 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
   ).toBeVisible()
 })
 
+// PR #306 재검토(S15P31A108-438): 낮은 창에서 비비 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 납작해지지 않고
+// (초안은 버튼과 초안 몇 줄, 안건은 '정할 것' 줄과 안내 몇 줄), 모자라면 창이 스크롤해 '접기'를 다시 누를 수 있다.
+test('1024×768에서 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 보이고 다시 접을 수 있다', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '회의실', exact: true }).click()
+  const log = page.getByRole('log', { name: '회의 대화' })
+  await page
+    .getByRole('button', { name: '비비에게 정리 요청', exact: true })
+    .click()
+  await expect(log.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
+  await page.getByRole('button', { name: '회의 수정 초안 만들기' }).click()
+  const fold = page.getByRole('button', { name: '회의 수정 초안 접기' })
+  const draft = fold.locator('..')
+  const agenda = page.getByRole('region', { name: '안건' })
+  await agenda.getByRole('button', { name: '펼치기' }).click()
+  await expect(agenda.getByRole('button', { name: '접기' })).toBeVisible()
+  const draftBox = await draft.boundingBox()
+  const foldBox = await fold.boundingBox()
+  const agendaBox = await agenda.boundingBox()
+  expect(draftBox!.height).toBeGreaterThanOrEqual(150)
+  expect(foldBox!.y + foldBox!.height).toBeLessThanOrEqual(
+    draftBox!.y + draftBox!.height,
+  )
+  expect(agendaBox!.height).toBeGreaterThanOrEqual(120)
+  await fold.click()
+  await expect(
+    page.getByRole('button', { name: '회의 수정 초안 만들기' }),
+  ).toBeVisible()
+})
+
 // 이름표(HTML 버튼)는 캔버스 위에 겹쳐 있다. 이름표 위에서 굴린 휠과 이름표에서 시작한 끌기도 고리를 돌리고 페이지는
 // 스크롤하지 않는다. 끌지 않고 누르면 이름표가 그대로 연다(preview 확인에서 찾은 버그, 2026-11-03).
 test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르면 연다', async ({

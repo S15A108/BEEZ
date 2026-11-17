@@ -54,7 +54,9 @@ export function MeetingConflictGuidance({
       className={cn(
         'grid gap-3 rounded-xl border border-[#f3e2a6] bg-[#fff8e0] px-3.5 py-2.5 text-[13px]',
         // 넓은 화면에서 펼친 안내가 길면 회의 대화 칸과 남는 높이를 나누고 안에서 스크롤한다(S15P31A108-438). 짧으면 제 높이만 쓴다.
-        open && 'lg:max-h-max lg:flex-1 lg:content-start lg:overflow-y-auto',
+        // 창이 낮아도 '정할 것' 줄과 안내 몇 줄(128px)은 남기고, 그래도 모자라면 회의실 창이 스크롤한다.
+        open &&
+          'lg:max-h-max lg:min-h-32 lg:flex-1 lg:content-start lg:overflow-y-auto',
       )}
     >
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">

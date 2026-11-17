@@ -27,6 +27,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
@@ -793,11 +798,12 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           participant?.status === 'JOINED' &&
                           !closedMeeting && (
                             // 펼친 수정 초안도 안건처럼 대화 칸과 남는 높이를 나눈다. 버튼 초점 테두리가 잘리지 않게 안쪽 여백을 둔다.
+                            // 창이 낮아도 버튼과 초안 몇 줄(160px)은 남기고, 그래도 모자라면 창이 스크롤한다(PR #306 재검토 11-17).
                             <div
                               className={cn(
                                 'grid gap-2',
                                 showRevision &&
-                                  'lg:-m-1 lg:max-h-max lg:flex-1 lg:content-start lg:overflow-y-auto lg:p-1',
+                                  'lg:-m-1 lg:max-h-max lg:min-h-40 lg:flex-1 lg:content-start lg:overflow-y-auto lg:p-1',
                               )}
                             >
                               <Button
@@ -1091,14 +1097,14 @@ function PersonChip({
   status?: string
   children?: ReactNode
 }) {
-  // 칩이 제목 줄에 들어가도록 역할은 글자로 펼치지 않고 마우스를 올리면 보인다. 화면 읽기 프로그램은 그대로 읽는다.
-  // 이 회의의 작업과 담당자는 안건의 작업 버튼과 '관련자' 창에도 있다. 참여 상태는 다른 곳에 없어 칩에 남긴다(리뷰 11-16).
+  // 칩이 제목 줄에 들어가도록 역할은 글자로 펼치지 않고, 마우스를 올리거나 키보드로 칩에 초점을 두면 툴팁으로 보인다.
+  // 화면 읽기 프로그램은 sr-only 글자로 읽는다. 참여 상태는 다른 곳에 없어 칩에 글자로 남긴다(리뷰 11-16).
   const detail = [role, status].filter(Boolean).join(' · ')
-  return (
+  const chip = (
     <span
-      title={detail ? `${name} · ${detail}` : undefined}
+      tabIndex={detail ? 0 : undefined}
       className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1',
+        'inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring',
         children ? 'pr-1.5' : 'pr-3',
         line,
       )}
@@ -1111,6 +1117,15 @@ function PersonChip({
       )}
       {children}
     </span>
+  )
+  if (!detail) return chip
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{chip}</TooltipTrigger>
+      <TooltipContent>
+        {name} · {detail}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

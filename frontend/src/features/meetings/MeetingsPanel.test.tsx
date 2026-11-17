@@ -849,15 +849,40 @@ it('참여자는 안건보다 앞 제목 줄에 있고, 펼친 안건은 대화 
   expect(after(title, people)).toBe(true)
   expect(after(people, agenda)).toBe(true)
   expect(after(agenda, log)).toBe(true)
-  // 역할은 칩에 펼치지 않고 마우스를 올리면 보인다.
-  expect(
-    await within(people).findByTitle('이팀장 · 팀장 · TASK-001'),
-  ).toBeInTheDocument()
-  // 접은 '정할 것' 한 줄은 줄어들지 않고, 펼치면 대화 칸과 높이를 나눈다.
+  // 접은 '정할 것' 한 줄은 줄어들지 않고, 펼치면 대화 칸과 높이를 나누되 최소 높이를 지킨다(PR #306 재검토).
   expect(agenda).not.toHaveClass('lg:flex-1')
   await user.click(within(agenda).getByRole('button', { name: '펼치기' }))
-  expect(agenda).toHaveClass('lg:flex-1', 'lg:max-h-max', 'lg:overflow-y-auto')
+  expect(agenda).toHaveClass(
+    'lg:flex-1',
+    'lg:max-h-max',
+    'lg:min-h-32',
+    'lg:overflow-y-auto',
+  )
   expect(log).toHaveClass('flex-1', 'lg:min-h-28')
+})
+
+// PR #306 재검토: 역할·작업은 칩에 펼치지 않지만 마우스와 키보드 초점 모두로 툴팁을 열어 볼 수 있다.
+it('참여자 칩에 마우스를 올리거나 키보드로 초점을 두면 역할과 작업을 툴팁으로 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  const people = await screen.findByRole('group', { name: '참여자' })
+  await within(people).findByText('TASK-002')
+  // Tab으로 김동료 칩까지 간다(초점이 body면 body 글자에 이름이 섞여 있어 건너뛴다).
+  const onChip = () =>
+    document.activeElement !== document.body &&
+    !!document.activeElement?.textContent?.includes('김동료')
+  for (let step = 0; step < 40 && !onChip(); step++) await user.tab()
+  expect(onChip()).toBe(true)
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    '김동료 · TASK-002',
+  )
+  // jsdom은 닫힘 애니메이션이 끝나지 않아 앞 툴팁이 남을 수 있어, 열린 툴팁들 중에서 찾는다.
+  await user.hover(within(people).getByText('이팀장'))
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('tooltip').map((tip) => tip.textContent),
+    ).toContain('이팀장 · 팀장 · TASK-001'),
+  )
 })
 
 // PR #306 리뷰: 역할은 툴팁으로 접어도, 다른 곳에 없는 참여 상태(참여 요청·불참)는 칩에 글자로 남긴다.
