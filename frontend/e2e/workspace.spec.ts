@@ -248,6 +248,48 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
   expect(errors).toEqual([])
 })
 
+// S15P31A108-460: 문서 4종이 승인되면 기획 분석의 '프로젝트 시작' 한 번으로 기준 v1을 발행한다('승인' 입력 창 없음).
+test('기획 분석에서 프로젝트 시작을 누르면 바로 기준 v1이 생긴다', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await login(page)
+  // 예시 프로젝트 102의 문서 4종을 팀장 승인 상태로 둔다(브라우저 예시 저장소).
+  await page.evaluate(() => {
+    const key = 'beez.mock.api.v13'
+    const database = JSON.parse(localStorage.getItem(key)!)
+    const project = database.projects.find(
+      (item: { project: { id: string } }) => item.project.id === '102',
+    )
+    for (const version of project.versions) version.status = 'APPROVED'
+    for (const document of project.documents) {
+      document.approved_version = project.versions.find(
+        (version: { document_id: string }) =>
+          version.document_id === document.id,
+      )
+      delete document.latest_draft
+    }
+    for (const copy of project.working_copies) copy.status = 'APPROVED'
+    localStorage.setItem(key, JSON.stringify(database))
+  })
+  await page.goto('/projects/102')
+  await expect(page.locator('canvas')).toBeVisible()
+  await page.evaluate(async () => {
+    const path = '/src/stores/workspaceStore.ts'
+    const store = await import(/* @vite-ignore */ path)
+    store.useWorkspaceStore.getState().openPane('planning')
+  })
+  const dialog = page.getByRole('dialog')
+  const start = dialog.getByRole('button', { name: '프로젝트 시작' })
+  await expect(start).toBeEnabled({ timeout: 15_000 })
+  await start.click()
+  await expect(dialog.getByText('첫 기준 설계를 발행했어요.')).toBeVisible()
+  await expect(dialog.getByText(/기준 설계 v1이 발행되어 있어요/)).toBeVisible()
+  await expect(dialog.getByRole('textbox', { name: /승인/ })).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
 test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 끝내면 변경 제안이 올라간다', async ({
   page,
 }) => {
