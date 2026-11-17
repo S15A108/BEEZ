@@ -28,7 +28,11 @@ import {
   type BibiActivity,
 } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
-import { officeLanding, officeWalkable } from './office/office-navigation'
+import {
+  enterTarget,
+  officeLanding,
+  officeWalkable,
+} from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
 import { navNearest, navOf, navRoute } from './office/office-nav'
@@ -142,6 +146,8 @@ function OfficeRuntime(
   const lastFloor = useRef<typeof floor | null>(null)
   const clearInput = useRef(() => {})
   const hint = useRef<string | null>(null)
+  // 이번 프레임에 그린 사람들의 좌표(시뮬레이션 결과). Enter 대상도 이 좌표로 고른다.
+  const present = useRef<readonly { id: string; x: number; y: number }[]>([])
   useEffect(() => {
     latest.current = { props, floor, actors, work, phase }
   }, [props, floor, actors, work, phase])
@@ -343,17 +349,9 @@ function OfficeRuntime(
         // 가리킨 대상이 없으면 단축 바의 '비비 Enter'대로 비비를 연다.
         else latest.current.props.onAgentSelect('bibi')
       } else {
-        const nearest = latest.current.actors
-          .map((actor) => ({
-            actor,
-            distance: Math.hypot(
-              actor.x - player.current.x,
-              actor.y - player.current.y,
-            ),
-          }))
-          .sort((a, b) => a.distance - b.distance)[0]
+        // 사람들이 출발 자리를 떠나 걸으므로 화면에 그린 지금 좌표로 고른다.
         latest.current.props.onAgentSelect(
-          nearest && nearest.distance < 100 ? nearest.actor.id : 'bibi',
+          enterTarget(present.current, player.current) ?? 'bibi',
         )
       }
     }
@@ -494,6 +492,7 @@ function OfficeRuntime(
       enabled: state.phase >= 3,
       caller: player.current,
     })
+    present.current = residents
     // 그 자리가 막혔거나 누가 서 있으면 가장 가까운 빈 칸에 선다.
     if (returned && state.phase >= 3) {
       const landing = officeLanding(state.floor, player.current, residents)

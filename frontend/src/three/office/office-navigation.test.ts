@@ -2,8 +2,11 @@ import { expect, it } from 'vitest'
 import { ALL_KEYS, makeBuilding } from './building'
 import { makeDreamFloor } from './dream-floor'
 import { moveContinuous } from './motion'
-import { PERSONAL_SPACE } from './office-life'
-import { officeLanding, officeWalkable } from './office-navigation'
+import { officeActors } from './office-actors'
+import { OfficeLifeSimulation, PERSONAL_SPACE } from './office-life'
+import { enterTarget, officeLanding, officeWalkable } from './office-navigation'
+import { officeHomeSeats } from './office-work'
+import { officeSceneAgents } from '../sceneData'
 
 it.each([3, 4])(
   '준비 단계 %i에서도 가구와 숨겨진 바닥을 피해 걸을 수 있는 곳에 등장한다',
@@ -58,4 +61,67 @@ it('돌아올 자리에 다른 사람이 서 있으면 그 사람과 떨어진 �
   const away = Math.hypot(landing.x - spot.x, landing.y - spot.y)
   expect(away).toBeGreaterThanOrEqual(PERSONAL_SPACE)
   expect(away).toBeLessThan(2 * 32)
+})
+
+// PR #319 리뷰: 팀원과 대기 에이전트가 출발 자리를 떠나 걷는데(D37) 3인칭 Enter는 출발 좌표로 대상을 골라, 걸어간
+// 에이전트 곁에서 Enter를 누르면 비비가, 빈 출발 자리에서는 이미 떠난 사람이 골라졌다.
+it('3인칭 Enter는 출발 자리가 아니라 지금 걷고 있는 좌표로 가장 가까운 사람을 고른다', () => {
+  const floor = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'glass', null, {}).floors[1],
+    4,
+  )
+  const agents = officeSceneAgents([
+    { id: 'bibi', name: '비비', kind: 'lead' },
+    { id: 'member:21', name: '나', kind: 'human' },
+    { id: 'member:23', name: '이동료', kind: 'agent' },
+    {
+      id: 'agent:23',
+      name: '이동료의 에이전트',
+      kind: 'agent',
+      owner: '23',
+      status: 'online',
+    },
+  ])
+  const actors = officeActors(
+    floor,
+    agents,
+    4,
+    'member:21',
+    officeHomeSeats(floor, agents),
+  )
+  const start = actors.find((actor) => actor.id === 'agent:23')!
+  const simulation = new OfficeLifeSimulation('enter-target')
+  let residents = simulation.step(floor, actors, 0.05)
+  const now = () => residents.find((actor) => actor.id === 'agent:23')!
+  // 에이전트가 출발 자리에서 Enter 거리(100px)보다 멀리 걸어갈 때까지 돌린다(최대 1분).
+  for (
+    let frame = 0;
+    frame < 1200 && Math.hypot(now().x - start.x, now().y - start.y) < 140;
+    frame++
+  )
+    residents = simulation.step(floor, actors, 0.05)
+  const agent = now()
+  expect(Math.hypot(agent.x - start.x, agent.y - start.y)).toBeGreaterThan(140)
+
+  // 에이전트 40px 곁의 걸을 수 있는 곳에 서서 Enter를 누른다.
+  const beside = Array.from({ length: 16 }, (_, index) => ({
+    x: agent.x + 40 * Math.cos((index * Math.PI) / 8),
+    y: agent.y + 40 * Math.sin((index * Math.PI) / 8),
+  })).find((point) => officeWalkable(floor, point.x, point.y))!
+  expect(beside).toBeDefined()
+  expect(enterTarget(residents, beside)).toBe('agent:23')
+  // 출발 좌표로 고르면 걸어간 에이전트를 놓친다(고치기 전 동작).
+  expect(enterTarget(actors, beside)).not.toBe('agent:23')
+  // 빈 출발 자리에서는 이미 떠난 에이전트를 고르지 않는다.
+  expect(enterTarget(actors, start)).toBe('agent:23')
+  expect(enterTarget(residents, start)).not.toBe('agent:23')
+})
+
+it('Enter 거리 안에 아무도 없으면 대상을 고르지 않는다', () => {
+  const people = [
+    { id: 'a', x: 0, y: 0 },
+    { id: 'b', x: 60, y: 0 },
+  ]
+  expect(enterTarget(people, { x: 50, y: 0 })).toBe('b')
+  expect(enterTarget(people, { x: 300, y: 0 })).toBeUndefined()
 })

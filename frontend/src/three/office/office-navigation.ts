@@ -39,3 +39,24 @@ export function officeLanding(
   }
   return nearest
 }
+
+/**
+ * 3인칭 Enter로 고를 대상: `from`에서 `reach`(px) 안의 가장 가까운 사람. 사람들은 돌아다니므로(D37) 출발 자리가
+ * 아니라 이번 프레임에 그린 좌표(`OfficeLifeSimulation.step`의 결과)를 넘긴다.
+ */
+export function enterTarget(
+  actors: readonly { id: string; x: number; y: number }[],
+  from: Point,
+  reach = 100,
+): string | undefined {
+  let best: string | undefined
+  let distance = reach
+  for (const actor of actors) {
+    const next = Math.hypot(actor.x - from.x, actor.y - from.y)
+    if (next < distance) {
+      best = actor.id
+      distance = next
+    }
+  }
+  return best
+}
