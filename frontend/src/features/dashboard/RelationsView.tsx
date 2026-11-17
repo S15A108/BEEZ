@@ -288,8 +288,9 @@ export function RelationsView({
                                     : '검토할 후보 · 확정 아님'}
                                 </span>
                                 {/* API 없음: 비비가 이 후보를 본 이유는 관계 응답(MON-A03)에 아직 없다. */}
-                                {edge.confirmed ? (
-                                  nodeKind(toType).link && (
+                                {/* 후보 줄에도 이동 버튼을 둔다. 그래프 상자는 마우스로만 눌려 키보드로 후보 대상을 여는 길이 여기뿐이다(PR #327 리뷰). */}
+                                <span className="flex items-center justify-end gap-2">
+                                  {nodeKind(toType).link && (
                                     <button
                                       type="button"
                                       className="text-xs font-semibold whitespace-nowrap hover:underline"
@@ -297,17 +298,18 @@ export function RelationsView({
                                     >
                                       {nodeKind(toType).link} ›
                                     </button>
-                                  )
-                                ) : (
-                                  <Button
-                                    size="xs"
-                                    variant="outline"
-                                    title="계획에 근거 설계로 넣으면 확정돼요"
-                                    onClick={() => openPane('tasks')}
-                                  >
-                                    작업 계획 등록
-                                  </Button>
-                                )}
+                                  )}
+                                  {!edge.confirmed && (
+                                    <Button
+                                      size="xs"
+                                      variant="outline"
+                                      title="계획에 근거 설계로 넣으면 확정돼요"
+                                      onClick={() => openPane('tasks')}
+                                    >
+                                      작업 계획 등록
+                                    </Button>
+                                  )}
+                                </span>
                               </li>
                             )
                           })}

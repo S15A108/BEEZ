@@ -53,6 +53,32 @@ it('왼쪽에서 고른 작업 기준으로 확인된 관계와 검토할 후보
   ).toHaveTextContent('검토할 후보 · 확정 아님')
 })
 
+// PR #327 리뷰: 펼침 목록을 빼서 후보 대상은 마우스로 그래프 상자를 누를 때만 열렸다. 후보 줄에도 이동 버튼을 둔다.
+it('검토할 후보 줄에서도 대상 설계를 열 수 있다', async () => {
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RelationsView projectId="101" />
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  const list = await screen.findByRole('region', { name: '관계 목록' })
+  const candidate = (
+    await within(list).findByText(/프로젝트 목록 빈 화면 안내 → REQ-001/)
+  ).closest('li')!
+  expect(
+    within(candidate).getByRole('button', { name: '작업 계획 등록' }),
+  ).toBeInTheDocument()
+  await user.click(
+    within(candidate).getByRole('button', { name: '설계 보기 ›' }),
+  )
+  expect(useWorkspaceStore.getState().pane).toBe('planning')
+})
+
 it('위쪽에 고른 작업의 제목과 상태를 보여 주고 작업 현황으로 보낸다', async () => {
   const user = userEvent.setup()
   const { items } = await tasksApi.list('101', { limit: 100 })
