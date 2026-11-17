@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 import { useIsMutating } from '@tanstack/react-query'
 import { ChevronLeft, CircleCheckBig, XIcon } from 'lucide-react'
 import { useSession } from '@/features/auth/useSession'
@@ -14,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { AccountPassword } from './AccountPassword'
 import { AccountProfile } from './AccountProfile'
 import { AccountWithdraw } from './AccountWithdraw'
-import { useAccountDialog } from './useAccountDialog'
+import { ACCOUNT_MUTATION_KEY, useAccountDialog } from './useAccountDialog'
 import type { AccountView } from './useAccountDialog'
 
 const titles: Record<AccountView, string> = {
@@ -44,10 +45,13 @@ function AccountDialogBody({
   back,
   close,
 }: Omit<ReturnType<typeof useAccountDialog>, 'view'> & { view: AccountView }) {
-  // 저장·비밀번호 변경·탈퇴 요청 중에는 닫지도, 하위 화면을 떠나지도 않는다.
-  const busy = useIsMutating() > 0
+  // 이 창의 요청(저장·토큰 폐기·비밀번호 변경·탈퇴) 중에는 닫지도, 하위 화면을 떠나지도 않는다.
+  // 앱의 다른 요청은 세지 않는다(PR #316 리뷰).
+  const busy = useIsMutating({ mutationKey: ACCOUNT_MUTATION_KEY }) > 0
+  const navigate = useNavigate()
   const dirty = useRef(false)
-  const [confirmClose, setConfirmClose] = useState(false)
+  // 고치던 프로필을 버릴지 묻는 중이면 그 뒤에 할 일: 창 닫기(true) 또는 창 안 링크의 주소로 옮기기.
+  const [confirmClose, setConfirmClose] = useState<boolean | string>(false)
   const [toast, setToast] = useState('')
   const sub = view !== 'profile'
   // 하위 화면으로 가거나 돌아오면 누른 버튼이 가려지므로 포커스를 창 제목으로 옮긴다.
@@ -107,7 +111,16 @@ function AccountDialogBody({
         <XIcon />
         <span className="sr-only">닫기</span>
       </Button>
-      <div className="overflow-y-auto px-8 pt-1 pb-8">
+      <div
+        className="overflow-y-auto px-8 pt-1 pb-8"
+        // 창 안 링크(토큰의 프로젝트, 탈퇴의 '팀장 위임'·'프로젝트 삭제')로 떠날 때도 고치던 프로필이면 X·Esc처럼 묻는다(PR #316 리뷰).
+        onClickCapture={(event) => {
+          const link = (event.target as HTMLElement).closest('a[href]')
+          if (!link || !dirty.current) return
+          event.preventDefault()
+          setConfirmClose(link.getAttribute('href') ?? true)
+        }}
+      >
         <div className="mx-auto grid max-w-[720px] gap-5">
           {toast && !sub && (
             <p
@@ -146,7 +159,7 @@ function AccountDialogBody({
         </div>
       </div>
       {confirmClose && (
-        <Dialog open onOpenChange={(next) => setConfirmClose(next)}>
+        <Dialog open onOpenChange={(next) => !next && setConfirmClose(false)}>
           <DialogContent className="sm:max-w-[420px]">
             <DialogHeader>
               <DialogTitle>고치던 프로필을 닫을까요?</DialogTitle>
@@ -162,7 +175,8 @@ function AccountDialogBody({
                 variant="destructive"
                 onClick={() => {
                   setConfirmClose(false)
-                  close()
+                  if (typeof confirmClose === 'string') navigate(confirmClose)
+                  else close()
                 }}
               >
                 버리고 닫기

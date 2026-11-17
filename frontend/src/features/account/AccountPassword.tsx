@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { authApi } from '@/api/services'
 import { passwordRule } from '@/features/auth/passwordRule'
 import { ActionForm } from '@/components/ActionForm'
+import { ACCOUNT_MUTATION_KEY } from './useAccountDialog'
 
 // 회원 설정 창(D48) 안의 비밀번호 변경(캔버스 SCR-05-v2-password). 바꾸거나 취소하면 회원 설정으로 돌아간다.
 export function AccountPassword({
@@ -14,6 +15,7 @@ export function AccountPassword({
   const queryClient = useQueryClient()
   // 요청 중에는 회원 설정 창이 닫히지 않게 mutation으로 센다.
   const change = useMutation({
+    mutationKey: ACCOUNT_MUTATION_KEY,
     mutationFn: (input: Parameters<typeof authApi.changePassword>[0]) =>
       authApi.changePassword(input),
   })

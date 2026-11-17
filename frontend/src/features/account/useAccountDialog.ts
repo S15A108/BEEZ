@@ -3,6 +3,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router'
 export type AccountView = 'profile' | 'password' | 'withdraw'
 
 const PARAM = 'account'
+/** 회원 설정 창의 요청(프로필 저장·토큰 폐기·비밀번호 변경·탈퇴). 이 요청이 도는 동안만 창을 닫지 않는다. */
+export const ACCOUNT_MUTATION_KEY = ['account-dialog']
 const views: readonly string[] = ['profile', 'password', 'withdraw']
 
 // 회원 설정 창(D48)은 지금 주소의 ?account=에 상태를 둔다. 나의 도시든 사무실이든 그 화면과 경로를 두고 위에 뜨며,

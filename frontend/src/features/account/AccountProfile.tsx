@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { characterOf, characters } from '@/lib/characters'
 import { formatDate, formatDay } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
+import { ACCOUNT_MUTATION_KEY } from './useAccountDialog'
 
 const profileSchema = z.object({
   name: z
@@ -147,6 +148,7 @@ export function AccountProfile({
   const [revoking, setRevoking] = useState<string | null>(null)
   const [avatar, setAvatar] = useState(session.data?.avatar)
   const mutation = useMutation({
+    mutationKey: ACCOUNT_MUTATION_KEY,
     mutationFn: (action: () => Promise<unknown>) => action(),
     onSuccess: async () => {
       await Promise.all([

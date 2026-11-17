@@ -9,6 +9,7 @@ import type { BlockedProject } from '@/features/auth/schemas'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 import { Button } from '@/components/ui/button'
+import { ACCOUNT_MUTATION_KEY } from './useAccountDialog'
 
 const checkKey = ['projects', 'withdrawal-check']
 type Check = { blockers: BlockedProject[]; solo: Project[] }
@@ -24,6 +25,7 @@ export function AccountWithdraw({ onCancel }: { onCancel: () => void }) {
   const queryClient = useQueryClient()
   // 요청 중에는 회원 설정 창이 닫히지 않게 mutation으로 센다.
   const withdraw = useMutation({
+    mutationKey: ACCOUNT_MUTATION_KEY,
     mutationFn: (input: Parameters<typeof authApi.withdraw>[0]) =>
       authApi.withdraw(input),
   })

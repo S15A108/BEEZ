@@ -13,7 +13,7 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { AccountDialog } from './AccountDialog'
-import { useAccountDialog } from './useAccountDialog'
+import { ACCOUNT_MUTATION_KEY, useAccountDialog } from './useAccountDialog'
 
 // D48: 회원 설정은 페이지가 아니라 지금 화면 위에 뜨는 창이다. 상태는 주소의 ?account=에 있다.
 let restore: () => void
@@ -124,18 +124,54 @@ it('프로필을 고치던 중에 닫으면 한 번 묻고, 계속 고치면 그
   expect(address()).toHaveTextContent(/^주소 \/$/)
 })
 
-it('요청을 처리하는 중에는 X와 Esc로 닫히지 않는다', async () => {
-  const { client, user } = renderAt('/?account=profile')
-  await screen.findByRole('dialog', { name: '회원 설정' })
+// 끝나지 않는 요청을 흉내 낸다. 회원 설정 창의 요청인지는 mutationKey로 가린다.
+function startPendingRequest(
+  client: QueryClient,
+  mutationKey?: readonly string[],
+) {
   act(() => {
     void client
       .getMutationCache()
-      .build(client, { mutationFn: () => new Promise(() => undefined) })
+      .build(client, {
+        mutationKey,
+        mutationFn: () => new Promise(() => undefined),
+      })
       .execute(undefined)
   })
+}
+
+it('이 창의 요청을 처리하는 중에는 X와 Esc로 닫히지 않는다', async () => {
+  const { client, user } = renderAt('/?account=profile')
+  await screen.findByRole('dialog', { name: '회원 설정' })
+  startPendingRequest(client, ACCOUNT_MUTATION_KEY)
   await waitFor(() =>
     expect(screen.getByRole('button', { name: '닫기' })).toBeDisabled(),
   )
   await user.keyboard('{Escape}')
   expect(dialog()).toBeInTheDocument()
+})
+
+// PR #316 리뷰: 앱의 다른 요청이 도는 동안까지 창을 잠그지 않는다.
+it('창과 상관없는 요청이 돌고 있어도 X로 닫힌다', async () => {
+  const { client, user } = renderAt('/?account=profile')
+  await screen.findByRole('dialog', { name: '회원 설정' })
+  startPendingRequest(client)
+  await user.click(screen.getByRole('button', { name: '닫기' }))
+  expect(dialog()).not.toBeInTheDocument()
+})
+
+// PR #316 리뷰: 창 안 링크로 떠날 때도 고치던 프로필이면 X·Esc처럼 묻는다.
+it("프로필을 고치던 중에 탈퇴 화면의 '팀장 위임'을 누르면 묻고, 버리면 그 주소로 간다", async () => {
+  const { user } = renderAt('/?account=profile')
+  await user.click(await screen.findByRole('radio', { name: '로봇' }))
+  await user.click(screen.getByRole('button', { name: '회원 탈퇴' }))
+  const [handover] = await screen.findAllByRole('link', { name: '팀장 위임' })
+  await user.click(handover)
+  expect(
+    await screen.findByRole('dialog', { name: '고치던 프로필을 닫을까요?' }),
+  ).toBeVisible()
+  expect(address()).toHaveTextContent('?account=withdraw')
+  await user.click(screen.getByRole('button', { name: '버리고 닫기' }))
+  expect(address()).toHaveTextContent(/^주소 \/projects\/101\?settings=team$/)
+  expect(dialog()).not.toBeInTheDocument()
 })
