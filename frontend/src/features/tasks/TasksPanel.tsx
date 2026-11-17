@@ -555,7 +555,7 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
           {action.error}
         </p>
       )}
-      <div className="grid gap-6 lg:grid-cols-[.65fr_1.35fr]">
+      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start">
         <Card>
           <CardHeader>
             <CardTitle className="flex gap-1" role="tablist">

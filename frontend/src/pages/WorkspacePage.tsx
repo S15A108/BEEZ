@@ -9,7 +9,21 @@ import {
 } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
-import { Footprints, XIcon } from 'lucide-react'
+import type { ComponentType } from 'react'
+import {
+  Bell,
+  BookOpen,
+  ChartNoAxesCombined,
+  CheckCheck,
+  FileText,
+  Footprints,
+  GitBranch,
+  Lightbulb,
+  Network,
+  Users,
+  XIcon,
+} from 'lucide-react'
+import { BibiFace } from '@/components/BibiFace'
 import type { SceneAgent, SceneTask } from '@/three/types'
 import { idSchema } from '@/api/contracts/common'
 import { getApiErrorStatus, isMissingApi } from '@/api/error'
@@ -73,6 +87,21 @@ const paneTitles: Record<Exclude<WorkspacePane, 'settings'>, string> = {
   chat: '비비',
   context: '작업 맥락',
 }
+// 업무 창 머리의 메뉴 그림. 1~6은 단축 바 칸과 같은 그림이라 단축 바가 숨어도 어느 메뉴인지 이어진다.
+const paneIcons: Partial<
+  Record<WorkspacePane, ComponentType<{ className?: string }>>
+> = {
+  documents: FileText,
+  planning: Lightbulb,
+  changes: GitBranch,
+  meetings: Users,
+  tasks: CheckCheck,
+  relations: Network,
+  dashboard: ChartNoAxesCombined,
+  inbox: Bell,
+  chat: BibiFace,
+  context: BookOpen,
+}
 
 function Workspace({ projectId }: { projectId: string }) {
   const sceneHost = useRef<HTMLElement>(null)
@@ -91,12 +120,15 @@ function Workspace({ projectId }: { projectId: string }) {
   // 업무 창별 스크롤 위치. 다른 메뉴를 갔다 오거나 닫았다 열어도 보던 곳부터 보인다(S15P31A108-431).
   // Workspace는 프로젝트 id로 다시 마운트되므로 프로젝트를 떠나면 비워진다.
   const scrolls = useRef(new Map<WorkspacePane, number>())
+  const body = useRef<HTMLDivElement | null>(null)
   const restoreScroll = useCallback(
     (element: HTMLDivElement | null) => {
+      body.current = element
       if (element && pane) element.scrollTop = scrolls.current.get(pane) ?? 0
     },
     [pane],
   )
+  const PaneIcon = pane ? paneIcons[pane] : undefined
   useClearPaneOnLeave()
   const officeTime = useOfficeTime()
   // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
@@ -353,40 +385,73 @@ function Workspace({ projectId }: { projectId: string }) {
                 onInteractOutside={(event) => {
                   if (pendingMutations) event.preventDefault()
                 }}
+                // 창을 열면 머리 줄의 닫기 버튼이 아니라 본문의 첫 입력칸·버튼(문서함 검색 등)에 포커스를 준다.
+                onOpenAutoFocus={(event) => {
+                  const first = body.current?.querySelector<HTMLElement>(
+                    'input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+                  )
+                  if (!first) return
+                  event.preventDefault()
+                  first.focus()
+                }}
               >
-                <DialogHeader className="min-h-14 flex-row flex-wrap items-center gap-x-3 gap-y-2 border-b py-2.5 pr-15 pl-5 sm:pr-18 sm:pl-8">
-                  {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
-                  <DialogTitle className="shrink-0 text-lg font-semibold">
-                    {pane && pane !== 'settings' ? paneTitles[pane] : ''}
-                  </DialogTitle>
-                  {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). */}
-                  <DialogDescription
-                    className={
-                      pane === 'documents'
-                        ? 'sr-only'
-                        : 'mr-auto min-w-0 truncate'
-                    }
-                  >
-                    {data.project.name}
-                    {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
-                    {pane === 'meetings'
-                      ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
-                      : data.project.current_baseline &&
-                        ` · 기준 v${data.project.current_baseline.version_no}`}
-                  </DialogDescription>
-                  {/* 창별 머리 버튼 자리(작업 현황의 '+ 작업 계획', 문서 읽기의 제목·탭·버튼 줄) */}
-                  <div
-                    ref={setHeaderSlot}
-                    className="flex min-w-0 flex-1 items-center justify-end gap-2 empty:hidden"
-                  />
-                  {/* 단축 바 번호는 창 안에서 뜻이 안 보여 빼고 Esc만 안내한다(사용자 결정 11-16). 열린 창의 번호 키를
-                      다시 누르면 닫히는 동작은 단축 바 칸을 다시 누르는 것과 같아 그대로 둔다. */}
-                  <span className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted-foreground">
-                    <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
-                      Esc
-                    </kbd>
-                    로 닫기
-                  </span>
+                {/* 머리 줄은 흰 띠로 본문과 나누고, 안쪽은 본문과 같은 가운데 기둥에 맞춘다.
+                    메뉴 아이콘(단축 바와 같은 그림)·제목·부제목 두 줄, 오른쪽에 창별 버튼·Esc 안내·닫기. */}
+                <DialogHeader className="border-b bg-card">
+                  <div className="mx-auto flex min-h-16 w-full max-w-[1264px] flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 sm:px-8">
+                    {PaneIcon && (
+                      <span
+                        aria-hidden="true"
+                        className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-primary/20 text-foreground"
+                      >
+                        <PaneIcon className="size-[18px]" />
+                      </span>
+                    )}
+                    <div className="mr-auto min-w-0">
+                      {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
+                      <DialogTitle className="text-lg leading-6 font-semibold">
+                        {pane && pane !== 'settings' ? paneTitles[pane] : ''}
+                      </DialogTitle>
+                      {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). */}
+                      <DialogDescription
+                        className={
+                          pane === 'documents'
+                            ? 'sr-only'
+                            : 'truncate text-xs leading-4'
+                        }
+                      >
+                        {data.project.name}
+                        {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
+                        {pane === 'meetings'
+                          ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
+                          : data.project.current_baseline &&
+                            ` · 기준 v${data.project.current_baseline.version_no}`}
+                      </DialogDescription>
+                    </div>
+                    {/* 창별 머리 버튼 자리(작업 현황의 '+ 작업 계획', 캔버스 PNL-05-v2-tasks) */}
+                    <div
+                      ref={setHeaderSlot}
+                      className="flex items-center gap-2 empty:hidden"
+                    />
+                    {/* 단축 바 번호는 창 안에서 뜻이 안 보여 빼고 Esc만 안내한다(사용자 결정 11-16). 열린 창의 번호 키를
+                        다시 누르면 닫히는 동작은 단축 바 칸을 다시 누르는 것과 같아 그대로 둔다. */}
+                    <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground max-sm:hidden">
+                      <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
+                        Esc
+                      </kbd>
+                      로 닫기
+                    </span>
+                    <DialogClose asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="-mr-1.5 shrink-0"
+                      >
+                        <XIcon />
+                        <span className="sr-only">닫기</span>
+                      </Button>
+                    </DialogClose>
+                  </div>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>
                   {/* 본문 스크롤. 안쪽 여백(p-5 sm:p-8)은 예전 창과 같다. 패널이 이 여백에 맞춰 밖으로 넓히거나
@@ -403,7 +468,8 @@ function Workspace({ projectId }: { projectId: string }) {
                   >
                     <PaneSheetHost
                       // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
-                      className="flex min-w-0 flex-1 flex-col"
+                      // 넓은 화면에서 목록·카드가 끝에서 끝까지 늘어나지 않게 1200px 가운데 기둥으로 묶는다.
+                      className="mx-auto flex w-full max-w-[1200px] min-w-0 flex-1 flex-col"
                     >
                       {pane === 'documents' && (
                         <DocumentsPanel {...panelProps} />
@@ -439,18 +505,6 @@ function Workspace({ projectId }: { projectId: string }) {
                     </PaneSheetHost>
                   </div>
                 </PaneHeaderSlot>
-                {/* 닫기 버튼은 본문 뒤에 두어 창을 열 때 본문 첫 입력칸(문서함 검색 등)에 포커스가 가게 하고,
-                    자리만 머리 줄 오른쪽 끝(머리 줄 오른쪽 여백)에 둔다. */}
-                <DialogClose asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="absolute top-3.5 right-5 sm:right-8"
-                  >
-                    <XIcon />
-                    <span className="sr-only">닫기</span>
-                  </Button>
-                </DialogClose>
               </DialogContent>
             </Dialog>
           </main>

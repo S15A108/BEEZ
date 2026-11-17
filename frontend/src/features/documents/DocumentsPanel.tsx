@@ -23,7 +23,6 @@ import { readAllPages } from '@/api/readAllPages'
 import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
 import { MarkdownView } from '@/components/MarkdownView'
-import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
 import { Toast } from '@/components/Toast'
@@ -1309,29 +1308,29 @@ function DocumentDetail({
       URL.revokeObjectURL(url)
     }, '원본 파일을 내려받았어요.')
   }
-  const segClass = (on: boolean) =>
+  const tabClass = (on: boolean) =>
     cn(
-      'h-7 rounded-md px-2.5 text-[13px] whitespace-nowrap',
+      '-mb-px h-10 border-b-2 px-0.5 text-sm',
       on
-        ? 'bg-background font-semibold shadow-xs'
-        : 'text-muted-foreground hover:text-foreground',
+        ? 'border-primary font-semibold'
+        : 'border-transparent text-muted-foreground hover:text-foreground',
     )
-  // 돌아가기·제목·탭·버전·버튼을 창 머리 한 줄에 모으고 본문은 창의 스크롤 하나로 읽는다(디자인 검수 F04).
+  // 문서 머리(돌아가기·제목·버튼 줄과 탭·버전 줄)는 본문 위에 붙여 두고 본문은 창의 스크롤 하나로 읽는다(디자인 검수 F04).
+  // 창 본문의 안쪽 여백만큼(-top-5 sm:-top-8) 올려 붙여, 문서를 내려도 창 머리 바로 아래에 제목과 돌아가기가 남는다.
   const shown = unresolved ? undefined : document.data
   const header = (
-    <PaneHeaderAction>
-      {/* 한 줄에 다 들어가면 제목이 남는 폭을 쓰고, 모자라면 버튼 묶음을 다음 줄로 내린다. 줄을 나눌 때 제목 자리는 8rem으로 센다. */}
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
+    <div className="sticky -top-5 z-10 -mt-5 grid gap-2 border-b bg-background pt-5 sm:-top-8 sm:-mt-8 sm:pt-8">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {back}
         {shown && (
           <>
             <span aria-hidden="true" className="h-6 w-px shrink-0 bg-border" />
             <KindTile kind={shown.document.kind} />
             <div
-              className="min-w-0 flex-[1_1_8rem]"
+              className="min-w-0 flex-[1_1_12rem]"
               title={`${shown.document.title} v${shown.version.version_no}`}
             >
-              <h3 className="truncate text-sm leading-5 font-semibold">
+              <h3 className="truncate text-base leading-6 font-semibold">
                 {shown.document.title} v{shown.version.version_no}
               </h3>
               <p className="truncate text-xs leading-4 text-muted-foreground">
@@ -1342,53 +1341,6 @@ function DocumentDetail({
                 · {stamp(shown.version.created_at)}
               </p>
             </div>
-            <div
-              role="tablist"
-              aria-label="문서 보기"
-              className="flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'content'}
-                className={segClass(tab === 'content')}
-                onClick={() => setTab('content')}
-              >
-                문서 내용
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'history'}
-                className={segClass(tab === 'history')}
-                onClick={() => setTab('history')}
-              >
-                버전 이력 {versions.data?.items.length ?? ''}
-              </button>
-            </div>
-            {tab === 'content' && (
-              <div className="w-36 shrink-0">
-                <NativeSelect
-                  size="sm"
-                  aria-label="열람할 버전"
-                  value={String(shown.version.version_no)}
-                  onChange={(event) => setVersionNo(Number(event.target.value))}
-                >
-                  {(versions.data?.items ?? [shown.version]).map((version) => (
-                    <NativeSelectOption
-                      key={version.id}
-                      value={String(version.version_no)}
-                    >
-                      v{version.version_no} ·{' '}
-                      {versionStatusLabel(version.status)}
-                      {version.id === shown.document.approved_version?.id
-                        ? ' (기준)'
-                        : ''}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </div>
-            )}
             <div className="ml-auto flex shrink-0 gap-2">
               <Button
                 variant="outline"
@@ -1425,12 +1377,59 @@ function DocumentDetail({
           </>
         )}
       </div>
-    </PaneHeaderAction>
+      {shown && (
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+          <div role="tablist" aria-label="문서 보기" className="flex gap-5">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'content'}
+              className={tabClass(tab === 'content')}
+              onClick={() => setTab('content')}
+            >
+              문서 내용
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'history'}
+              className={tabClass(tab === 'history')}
+              onClick={() => setTab('history')}
+            >
+              버전 이력 {versions.data?.items.length ?? ''}
+            </button>
+          </div>
+          {tab === 'content' && (
+            <div className="w-44 pb-1.5">
+              <NativeSelect
+                size="sm"
+                aria-label="열람할 버전"
+                value={String(shown.version.version_no)}
+                onChange={(event) => setVersionNo(Number(event.target.value))}
+              >
+                {(versions.data?.items ?? [shown.version]).map((version) => (
+                  <NativeSelectOption
+                    key={version.id}
+                    value={String(version.version_no)}
+                  >
+                    v{version.version_no} · {versionStatusLabel(version.status)}
+                    {version.id === shown.document.approved_version?.id
+                      ? ' (기준)'
+                      : ''}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
+  // 문서 읽기는 넓은 창에서도 읽기 좋은 폭의 가운데 기둥으로 둔다.
   if (unresolved)
     // 이력을 읽는 중이면 불러오는 중, 실패하면 오류와 다시 불러오기를 AsyncState가 보인다.
     return (
-      <div className="grid min-w-0 gap-4">
+      <div className="mx-auto grid w-full max-w-[920px] min-w-0 gap-4">
         {header}
         {versions.isSuccess ? (
           <p
@@ -1447,7 +1446,7 @@ function DocumentDetail({
       </div>
     )
   return (
-    <div className="grid min-w-0 gap-4">
+    <div className="mx-auto grid w-full max-w-[920px] min-w-0 gap-4">
       {header}
       <AsyncState query={document}>
         {(data) => {
