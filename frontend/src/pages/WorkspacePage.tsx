@@ -72,6 +72,7 @@ import {
   useWorkspaceStore,
 } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
+import { restoreScrollWhenReady } from '@/lib/restoreScroll'
 import NotFoundPage from './NotFoundPage'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
@@ -125,13 +126,16 @@ function Workspace({ projectId }: { projectId: string }) {
   const scrolls = useRef(new Map<WorkspacePane, number>())
   const body = useRef<HTMLDivElement | null>(null)
   // 창 본문이 붙을 때(창을 열거나 숫자 키로 메뉴를 바꿀 때마다) 스크롤을 되살리고, 그 창의 첫 글자 입력칸에 커서를 둔다.
-  // 공용 문서함·변경 제안·설계 관계·작업 현황은 검색칸, 회의실은 대화 입력칸이다. 목록을 받은 뒤에 칸이 생기면
-  // 3초까지 지켜보다가 둔다. 창 내용은 포털로 한 박자 늦게 붙어서 effect가 아니라 ref에서 시작한다.
+  // 공용 문서함·변경 제안·설계 관계·작업 현황은 검색칸, 회의실은 대화 입력칸이다. 문서·목록을 받은 뒤에 본문이 길어지거나
+  // 칸이 생기면 3초까지 지켜보다가 적용한다. 창 내용은 포털로 한 박자 늦게 붙어서 effect가 아니라 ref에서 시작한다.
   const attachBody = useCallback(
     (element: HTMLDivElement | null) => {
       body.current = element
       if (!element || !pane) return
-      element.scrollTop = scrolls.current.get(pane) ?? 0
+      const stopScroll = restoreScrollWhenReady(
+        element,
+        scrolls.current.get(pane) ?? 0,
+      )
       const place = () => {
         const active = document.activeElement
         if (active instanceof HTMLElement && active.matches(textField))
@@ -140,13 +144,14 @@ function Workspace({ projectId }: { projectId: string }) {
         field?.focus({ preventScroll: true })
         return !!field
       }
-      if (place()) return
       const observer = new MutationObserver(() => {
         if (place()) observer.disconnect()
       })
-      observer.observe(element, { childList: true, subtree: true })
+      if (!place())
+        observer.observe(element, { childList: true, subtree: true })
       const stop = setTimeout(() => observer.disconnect(), 3000)
       return () => {
+        stopScroll()
         observer.disconnect()
         clearTimeout(stop)
         body.current = null
