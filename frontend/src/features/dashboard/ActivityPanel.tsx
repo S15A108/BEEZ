@@ -77,13 +77,14 @@ const agentWorkQuery = (projectId: string, cursor?: string) => ({
 // 단축 바 5번(설계 관계)과 6번(대시보드)이 같이 쓴다.
 export function ActivityPanel({
   projectId,
+  isLeader = false,
   view = 'dashboard',
   hasBaseline,
 }: {
   projectId: string
   isLeader?: boolean
   view?: 'dashboard' | 'relations'
-  /** 기준 설계가 발행됐는지. 설계 관계 빈 화면 안내에 쓴다. */
+  /** 기준 설계가 발행됐는지. 설계 관계 빈 화면 안내와 시작 전 한눈에 보기에 쓴다. 모르면(undefined) 시작한 것으로 본다. */
   hasBaseline?: boolean
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -251,6 +252,8 @@ export function ActivityPanel({
           membersStatus={members.data ? 'success' : members.status}
           actorName={actorName}
           periodName={periodNameOf(period)}
+          started={hasBaseline !== false}
+          isLeader={isLeader}
         />
       )}
       {tab === 'timeline' && (

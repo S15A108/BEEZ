@@ -60,7 +60,8 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /* 따뜻한 회갈색(#706c60). 앱의 가장 짙은 베이지·노란 바탕(#f0eee8)에서도 4.5:1 이상이다(S15P31A108-440). */
+  --muted-foreground: oklch(0.53 0.018 90);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
