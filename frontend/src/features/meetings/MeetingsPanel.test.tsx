@@ -1095,3 +1095,42 @@ it('정리 요청 버튼은 제목 줄에 있고 참여자는 그 아래 줄이�
     screen.queryByText(/비비가 엶|비비가 열었어요/),
   ).not.toBeInTheDocument()
 })
+
+// PR #328 리뷰 P2: 새 대화가 없어도 정리 뒤 다른 제안이 문서 기준을 발행하면 서버가 끝내기를 409 summary_outdated 로 거절한다.
+// 그 정리는 '준비 완료'에서 빠져, 제목 줄에 '비비 정리 보기' 대신 '비비에게 정리 요청'이 다시 나오고 정리를 다시 받을 수 있다.
+it('기준이 바뀌어 끝내기가 거절된 정리는 새 대화가 없어도 다시 정리를 요청할 수 있다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
+  const close = vi
+    .spyOn(meetingsApi, 'close')
+    .mockRejectedValueOnce(apiError(409, 'summary_outdated'))
+  const summarize = vi.spyOn(meetingsApi, 'summarize')
+  await user.click(screen.getByRole('button', { name: '변경 제안' }))
+  expect(
+    await screen.findByText(/정리한 뒤에 새 기록이 생겼거나 기준이 바뀌었어요/),
+  ).toBeInTheDocument()
+  expect(close).toHaveBeenCalledTimes(1)
+  // 새 대화는 없다. 대화 단계로 돌아오고 거절된 정리로는 다시 갈 수 없다.
+  expect(
+    await screen.findByRole('log', { name: '회의 대화' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '비비 정리 보기' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(/정리한 뒤에 기준이 바뀌어 이 정리로는 끝낼 수 없어요/),
+  ).toBeInTheDocument()
+  const request = screen.getByRole('button', { name: '비비에게 정리 요청' })
+  expect(request).toBeEnabled()
+  await user.click(request)
+  await waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+  // 새 정리는 다시 '준비 완료'라 정리 단계로 넘어가고 끝낼 수 있다.
+  expect(
+    await screen.findByRole('heading', { name: '비비 정리' }),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
+  expect(screen.getByRole('button', { name: '변경 제안' })).toBeEnabled()
+  vi.restoreAllMocks()
+})

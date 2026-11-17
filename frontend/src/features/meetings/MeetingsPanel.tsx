@@ -100,6 +100,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   } | null>(null)
   // 목록 필터. 고르지 않으면 선택한 회의가 있는 쪽을 보인다.
   const [listFilter, setListFilter] = useState<'open' | 'closed' | null>(null)
+  // 서버가 끝내기를 409 summary_outdated 로 거절한 정리. 새 대화 없이도 다른 제안이 문서 기준을 발행하면 거절된다(PR #328 리뷰 P2).
+  const [rejectedSummaryId, setRejectedSummaryId] = useState<string | null>(
+    null,
+  )
   const [showRevision, setShowRevision] = useState(false)
   // 회의 정리·끝내기 오류는 회의가 열린 채 어떻게 이어 가면 되는지를 알려 준다(meetingErrors.ts).
   const [notice, setNotice] = useState<{ text: string; id: number } | null>(
@@ -207,8 +211,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     (item) => item.member_id === me?.id,
   )
   const closedMeeting = detail.data?.status === 'CLOSED'
-  // 끝낼 수 있는 정리: 최신 정리이고 그 뒤에 새 대화가 없다.
-  const summaryReady = !!summary && !talkedAfterSummary
+  // 서버가 이 정리로는 끝낼 수 없다고 거절했다(정리 뒤 새 기록, 또는 정리 뒤 문서 기준이 바뀜). 다시 정리해야 한다.
+  const summaryRejected = !!summary && summary.id === rejectedSummaryId
+  // 끝낼 수 있는 정리: 최신 정리이고, 그 뒤에 새 대화가 없고, 서버가 거절하지 않았다.
+  const summaryReady = !!summary && !talkedAfterSummary && !summaryRejected
   // 지금 정리로 만든 회의 수정 초안이 있으면 수정 초안 단계까지 왔다고 본다(MeetingRevisionDraft와 같은 캐시).
   const savedDraft = useQuery({
     queryKey: [
@@ -346,7 +352,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       } catch (error) {
         const code = getApiErrorCode(error)
         // 오래된 정리로는 끝낼 수 없다. 대화로 돌아가 정리를 다시 요청하게 한다. 이미 끝난 회의면 결과로 간다.
-        if (code === staleSummaryCode) setStepView({ meetingId, step: 0 })
+        if (code === staleSummaryCode) {
+          // 그 정리를 '준비 완료'에서 빼서 대화 단계에 '비비에게 정리 요청'이 다시 나오게 한다.
+          setRejectedSummaryId(summaryId)
+          setStepView({ meetingId, step: 0 })
+        }
         if (code === closedMeetingCode) setStepView(null)
         throw error
       }
@@ -519,9 +529,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                       ? '비비 정리가 있어야 회의를 끝낼 수 있어요. 대화에서 비비에게 정리를 먼저 요청해 주세요.'
                       : talkedAfterSummary
                         ? '정리한 뒤에 새 대화가 있어요. 비비에게 정리를 다시 요청해 주세요.'
-                        : hasDocumentChanges
-                          ? '정리에 바뀔 문서가 있어 끝내면 변경 제안이 올라가요. 바꾸지 않으려면 비비 정리 수정에서 바뀔 문서를 빼 달라고 말해 주세요.'
-                          : ''
+                        : summaryRejected
+                          ? '정리한 뒤에 기준이 바뀌어 이 정리로는 끝낼 수 없어요. 비비에게 정리를 다시 요청해 주세요.'
+                          : hasDocumentChanges
+                            ? '정리에 바뀔 문서가 있어 끝내면 변경 제안이 올라가요. 바꾸지 않으려면 비비 정리 수정에서 바뀔 문서를 빼 달라고 말해 주세요.'
+                            : ''
                     const summaryMissing = (
                       <p className="text-[13px] text-muted-foreground">
                         {summaryQuery.isError
@@ -941,12 +953,15 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   </p>
                                 ) : joined ? (
                                   <div className="grid gap-1.5">
-                                    {isLeader && talkedAfterSummary && (
-                                      <p className="text-xs text-[#8a6a00]">
-                                        정리한 뒤에 새 대화가 있어요. 끝내기
-                                        전에 비비에게 정리를 다시 요청해 주세요.
-                                      </p>
-                                    )}
+                                    {isLeader &&
+                                      (talkedAfterSummary ||
+                                        summaryRejected) && (
+                                        <p className="text-xs text-[#8a6a00]">
+                                          {talkedAfterSummary
+                                            ? '정리한 뒤에 새 대화가 있어요. 끝내기 전에 비비에게 정리를 다시 요청해 주세요.'
+                                            : '정리한 뒤에 기준이 바뀌어 이 정리로는 끝낼 수 없어요. 비비에게 정리를 다시 요청해 주세요.'}
+                                        </p>
+                                      )}
                                     <InlineMessage
                                       key={`message-${meeting.id}`}
                                       label="메시지"
