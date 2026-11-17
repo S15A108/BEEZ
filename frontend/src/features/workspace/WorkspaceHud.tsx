@@ -104,8 +104,8 @@ const notices: Record<
     member: '팀장이 프로젝트를 시작하면 알려 드려요.',
   },
   3: {
-    title: '기준 v1이 생겼어요 · 프로젝트가 시작됐어요',
-    text: '팀장이 프로젝트를 시작해 기준 v1이 생겼어요. 이제 변경 제안, 회의실, 작업 현황, 설계 관계를 쓸 수 있어요. 문서 수정도 이제 변경 제안으로 해요.',
+    title: '설계 기준 v1이 생겼어요 · 프로젝트가 시작됐어요',
+    text: '팀장이 프로젝트를 시작해 설계 기준 v1이 생겼어요. 이제 변경 제안, 회의실, 작업 현황, 설계 관계를 쓸 수 있어요. 문서 수정도 이제 변경 제안으로 해요.',
   },
 }
 
@@ -425,7 +425,7 @@ export function WorkspaceHud({
       action: { label: '설정에서 연결하기', pane: 'settings', focus: 'agent' },
     },
     {
-      title: '기준 문서 v1 읽기',
+      title: '현재 승인 문서 읽기',
       detail: started
         ? '팀장이 승인한 문서 4종을 확인해요.'
         : '팀장이 프로젝트를 시작하면 열려요.',
@@ -628,7 +628,7 @@ export function WorkspaceHud({
         detail: reviewSummary,
         preview,
         note: reviewImpact.data
-          ? `영향 작업 ${reviewImpact.data.explicit.length} · 승인하면 기준 v${(project.current_baseline?.version_no ?? 0) + 1}`
+          ? `영향 작업 ${reviewImpact.data.explicit.length} · 승인하면 설계 기준 v${(project.current_baseline?.version_no ?? 0) + 1}`
           : undefined,
         action: '검토하러 가기',
         open: () => openPane('changes', firstReview?.id),
@@ -715,7 +715,7 @@ export function WorkspaceHud({
                 : ['팀원', me?.domain].filter(Boolean).join(' · ')}{' '}
               ·{' '}
               {project.current_baseline
-                ? `기준 v${project.current_baseline.version_no}`
+                ? `설계 기준 v${project.current_baseline.version_no}`
                 : started
                   ? '시작됨'
                   : !allUploaded
@@ -1016,7 +1016,7 @@ export function WorkspaceHud({
                               </Button>
                             )}
                             {!isLeader &&
-                              step.title === '기준 문서 v1 읽기' && (
+                              step.title === '현재 승인 문서 읽기' && (
                                 <Button
                                   size="xs"
                                   variant="outline"

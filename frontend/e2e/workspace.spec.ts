@@ -340,7 +340,7 @@ test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카�
   await expect(tooltip).toHaveCount(0)
 
   await running.hover()
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   await expect(tooltip).toContainText('팀장')
   await expect(tooltip).toContainText('검토할 변경')
   await expect(tooltip).toContainText('승인 문서')
@@ -378,7 +378,7 @@ test('지도 이름표에 올리면 호버 카드가 제목 아래 고정 자리
   await expect(tag).toBeVisible()
   await expect(tag).toHaveAccessibleName(/안 읽은 알림 2건/)
   await tag.hover()
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   const box = (await page
     .getByRole('region', { name: '내 프로젝트 도시' })
     .boundingBox())!
@@ -391,7 +391,7 @@ test('지도 이름표에 올리면 호버 카드가 제목 아래 고정 자리
   // 이름표 아래 건물에 올려도 같은 카드가 열린다.
   const at = (await tag.boundingBox())!
   await page.mouse.move(at.x + at.width / 2, at.y + at.height + 40)
-  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('진행 중 · 설계 기준 v1')
   await page.mouse.move(0, 0)
   await expect(tooltip).toHaveCount(0)
   await tag.focus()

@@ -132,7 +132,7 @@ export function ProjectHoverCard({
             )}
           />
           {project.current_baseline
-            ? `진행 중 · 기준 v${project.current_baseline.version_no}`
+            ? `진행 중 · 설계 기준 v${project.current_baseline.version_no}`
             : '시작 준비 중'}
         </span>
         <span
