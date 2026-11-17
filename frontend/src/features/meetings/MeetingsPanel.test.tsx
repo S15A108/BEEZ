@@ -38,7 +38,7 @@ afterEach(() => {
 })
 
 function renderPanel(isLeader: boolean) {
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <MeetingsPanel projectId="101" isLeader={isLeader} />
@@ -122,9 +122,7 @@ it('팀장은 메시지를 보내고 비비 정리를 받으면 정리 단계로
   const draft = screen.getByRole('region', { name: '바뀔 문서' })
   expect(within(draft).getByText('지금')).toBeInTheDocument()
   expect(within(draft).getByText('바뀐 뒤')).toBeInTheDocument()
-  expect(
-    screen.getByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
-  ).toBeEnabled()
+  expect(screen.getByRole('button', { name: '변경 제안' })).toBeEnabled()
 })
 
 // 고칠 점이 입력돼 있어도 다음 단계로 넘어가면 수정 요청을 전송하지 않는다.
@@ -204,30 +202,38 @@ it('팀장은 정리 뒤에도 합의를 대화로 남기고 그 기록까지 �
 })
 
 // MTG-A13: 최신 정리로 회의를 끝내고 변경 제안을 만든다. 끝난 회의는 읽기만 하고 제안을 연다.
-it('회의를 끝내면 변경 제안이 만들어지고 끝난 회의로 옮겨지며 제안을 열 수 있다', async () => {
+it('변경 제안을 누르면 회의를 끝내고 만든 제안을 변경 제안 창에서 열며, 돌아오면 끝난 회의로 보인다', async () => {
   const user = userEvent.setup()
-  renderPanel(true)
+  const view = renderPanel(true)
   await requestSummary(user)
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
-  // 알릴 사람을 끝내기 전에 보인다.
+  // 알릴 사람과, 누르면 회의가 끝난다는 것을 누르기 전에 보인다.
   expect(screen.getByText(/김동료에게 변경 제안을 알려요/)).toBeInTheDocument()
-  await user.click(
-    screen.getByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
-  )
-  const result = await screen.findByRole('region', { name: '회의 끝낸 결과' })
-  expect(result).toHaveTextContent('변경 제안을 올렸어요')
-  expect(result).toHaveTextContent('김동료')
-  expect(onStep['변경 제안']()).toBeInTheDocument()
-  // 목록은 끝난 회의 쪽으로 바뀌어 방금 끝낸 회의가 보인다.
-  expect(screen.getByRole('button', { name: /^끝남/ })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
-  // 끝낸 직후 '회의를 끝냈어요' 알림은 띄우지 않는다. 변경 제안으로 가는 버튼은 결과의 '변경 제안에서 보기' 하나뿐이다.
-  expect(screen.queryByText('회의를 끝냈어요.')).not.toBeInTheDocument()
   expect(
-    screen.queryByRole('button', { name: '변경 제안 열기' }),
-  ).not.toBeInTheDocument()
+    screen.getByText('누르면 변경 제안을 올리고 회의를 끝내요'),
+  ).toBeInTheDocument()
+  // 뒤로·다음 할 일은 위쪽 줄 하나뿐이다(사용자 요청 11-17).
+  expect(screen.getAllByRole('button', { name: '뒤로 가기' })).toHaveLength(1)
+  const close = vi.spyOn(meetingsApi, 'close')
+  await user.click(screen.getByRole('button', { name: '변경 제안' }))
+  // MTG-A13 응답의 제안을 변경 제안 창에서 골라 둔 채 연다(알림·링크와 같은 openPane + focus id).
+  await waitFor(() => expect(useWorkspaceStore.getState().pane).toBe('changes'))
+  const result = await close.mock.results[0].value
+  expect(result.change_proposal_id).toBeTruthy()
+  expect(useWorkspaceStore.getState().focusId).toBe(result.change_proposal_id)
+  // 회의실로 돌아오면(창을 다시 열면) 끝난 회의는 '끝남'에서 보인다.
+  view.unmount()
+  act(() => useWorkspaceStore.getState().openPane('meetings'))
+  renderPanel(true)
+  await screen.findByRole('heading', { level: 3 })
+  await user.click(screen.getByRole('button', { name: /^끝남/ }))
+  const closedList = screen.getByRole('list', { name: '끝난 회의' })
+  await user.click(
+    within(closedList).getByRole('button', { name: /초대 안내 문구 검토/ }),
+  )
+  expect(
+    await screen.findByRole('region', { name: '회의 끝낸 결과' }),
+  ).toHaveTextContent('변경 제안을 올렸어요')
   // 끝난 회의 기록은 읽기만 한다.
   await user.click(screen.getByRole('button', { name: '회의 기록 보기' }))
   expect(
@@ -242,8 +248,11 @@ it('회의를 끝내면 변경 제안이 만들어지고 끝난 회의로 옮겨
   ).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /결과 보기/ }))
   await user.click(screen.getByRole('button', { name: '변경 제안에서 보기' }))
-  expect(useWorkspaceStore.getState().pane).toBe('changes')
-  expect(useWorkspaceStore.getState().focusId).toBeTruthy()
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'changes',
+    focusId: result.change_proposal_id,
+  })
+  vi.restoreAllMocks()
 })
 
 it('바꿀 문서가 없는 정리로 회의를 닫을 때 변경 제안을 예고하지 않고, 더보기에서 변경 없이 끝낼 수 있다', async () => {
@@ -268,20 +277,22 @@ it('바꿀 문서가 없는 정리로 회의를 닫을 때 변경 제안을 예�
     screen.getByText('확인한 정리를 기록에 남기고 회의를 닫아요.'),
   ).toBeInTheDocument()
   expect(
-    screen.queryByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
+    screen.queryByRole('button', { name: '변경 제안' }),
   ).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: '회의 끝내기' })).toBeEnabled()
+  expect(screen.getByText('누르면 회의를 끝내요')).toBeInTheDocument()
   // 회의 중단(더보기): 바뀔 문서 없는 최신 정리면 변경 제안 없이 끝낸다.
   const close = vi.spyOn(meetingsApi, 'close')
   await user.click(screen.getByRole('button', { name: '회의 더보기' }))
   await user.click(
     await screen.findByRole('button', { name: '변경 없이 끝내기' }),
   )
-  await screen.findByRole('region', { name: '회의 끝낸 결과' })
-  // 예시 서버는 자기 정리(바뀔 문서 있음)로 끝내므로, 여기서는 지금 정리로 끝내기를 불렀는지까지 본다.
-  expect(close).toHaveBeenCalledWith('101', '901', {
-    summary_id: expect.any(String),
-  })
+  // 예시 서버는 자기 정리(바뀔 문서 있음)로 끝내 제안을 만들므로, 여기서는 지금 정리로 끝내기를 불렀는지까지 본다.
+  await waitFor(() =>
+    expect(close).toHaveBeenCalledWith('101', '901', {
+      summary_id: expect.any(String),
+    }),
+  )
 })
 
 // 정리 뒤에 새 대화가 있으면 서버가 409 summary_outdated 로 막는다. 회의는 열린 채 정리를 다시 요청하게 한다.
@@ -291,9 +302,7 @@ it('정리 뒤에 새 대화가 있으면 끝내지 못하고 정리를 다시 �
   await requestSummary(user)
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
   await meetingsApi.addEntry('101', '901', { text: '만료는 14일로 바꿔요.' })
-  await user.click(
-    screen.getByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
-  )
+  await user.click(screen.getByRole('button', { name: '변경 제안' }))
   expect(
     await screen.findByText(/정리한 뒤에 새 기록이 생겼거나/),
   ).toBeInTheDocument()
@@ -330,9 +339,7 @@ it('새로 고쳐도 최신 정리를 서버에서 다시 받아 수정 요청�
     screen.getByRole('textbox', { name: '비비에게 고칠 점' }),
   ).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
-  expect(
-    screen.getByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
-  ).toBeEnabled()
+  expect(screen.getByRole('button', { name: '변경 제안' })).toBeEnabled()
 })
 
 it('정리 전에는 다음 단계로 갈 수 없고, 정리한 뒤에는 버튼으로 지난 단계를 오간다', async () => {
@@ -480,7 +487,7 @@ it('회의 수정 초안은 위에서 요청한 정리를 그대로 쓰고 다�
     within(draft).queryByRole('button', { name: /정리 만들기|다시 정리/ }),
   ).toBeNull()
   // 정리로 돌아가 다시 정리하면 수정 초안도 새 정리를 보고, '정리 이후 새 기록' 안내가 뜨지 않는다.
-  await user.click(screen.getByRole('button', { name: '정리로 돌아가기' }))
+  await user.click(screen.getByRole('button', { name: '뒤로 가기' }))
   await user.type(
     screen.getByRole('textbox', { name: '비비에게 고칠 점' }),
     '할 일을 둘로 나눠 주세요.',
@@ -570,15 +577,13 @@ it('수정 초안을 보는 중에 새 대화가 생기면 대화 단계로 돌�
     await screen.findByText(/정리한 뒤에 새 대화가 있어요/),
   ).toBeInTheDocument()
   expect(
-    screen.queryByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
+    screen.queryByRole('button', { name: '변경 제안' }),
   ).not.toBeInTheDocument()
   // 정리를 다시 요청하면 정리 단계로 넘어가고 다시 끝낼 수 있다
   await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
   await screen.findByRole('region', { name: '비비 정리 수정' })
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
-  expect(
-    screen.getByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
-  ).toBeEnabled()
+  expect(screen.getByRole('button', { name: '변경 제안' })).toBeEnabled()
 })
 
 // 정리 전용 오류 문구는 정리·수정 요청·끝내기에만 쓴다. 메시지 보내기 실패에는 붙지 않는다.
@@ -689,9 +694,7 @@ it('올린 제안이 종료 직전에 거두어지면 수정 초안 단계에 �
     apiError(409, 'meeting_proposal_changed'),
   )
   await user.click(screen.getByRole('button', { name: '수정 초안 만들기' }))
-  await user.click(
-    screen.getByRole('button', { name: '변경 제안 올리고 회의 끝내기' }),
-  )
+  await user.click(screen.getByRole('button', { name: '변경 제안' }))
   expect(await screen.findByText(/다시 누르면 새 제안/)).toBeInTheDocument()
   expect(
     screen.getByRole('heading', { name: '변경 제안에 담을 것' }),

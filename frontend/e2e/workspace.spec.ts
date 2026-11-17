@@ -251,7 +251,7 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
 // S15P31A108-454: 회의는 대화 → 비비 정리 → 수정 초안 → 변경 제안 네 단계 화면으로 나아간다. 노란 버튼은 다음 단계 하나다.
 // 창이 스크롤하지 않고 대화 칸만 스크롤하는지(S15P31A108-438)는 1440×900에서 본다. 풀스크린 창(#321) 전의 1280×720 창은
 // 처음부터 펼친 안건(S15P31A108-457)과 단계 칸을 다 담지 못해 창이 조금 스크롤한다.
-test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 끝내면 변경 제안이 올라간다', async ({
+test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 끝내면 변경 제안이 올라가고 그 제안을 연다', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -313,13 +313,27 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
   await expect(
     page.getByRole('heading', { name: '변경 제안에 담을 것' }),
   ).toBeVisible()
+  await page.getByRole('button', { name: '변경 제안', exact: true }).click()
+  // 회의를 끝내면 만든 변경 제안을 변경 제안 창에서 골라 둔 채 연다(사용자 요청 11-17).
+  await expect(
+    page.getByRole('heading', { name: '변경 제안', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText('회의 결과: 초대 안내 문구 검토').first(),
+  ).toBeVisible()
+  // 회의실로 돌아오면 끝난 회의는 '끝남'에서 보이고, 기록은 읽기만 한다. 업무 창이 열린 동안 단축 바는 창 뒤에서
+  // 접근성 트리에서 숨지만 눌러서 메뉴를 바꿀 수 있다.
   await page
-    .getByRole('button', { name: '변경 제안 올리고 회의 끝내기' })
+    .getByRole('button', { name: '회의실', exact: true, includeHidden: true })
+    .click()
+  await page.getByRole('button', { name: /^끝남/ }).click()
+  await page
+    .getByRole('list', { name: '끝난 회의' })
+    .getByRole('button', { name: /초대 안내 문구 검토/ })
     .click()
   await expect(
     page.getByRole('region', { name: '회의 끝낸 결과' }),
   ).toContainText('변경 제안을 올렸어요')
-  // 끝난 회의는 읽기만 하고, 변경 제안으로 이동할 수 있다.
   await page.getByRole('button', { name: '회의 기록 보기' }).click()
   await expect(
     page.getByText('끝난 회의라 메시지를 보낼 수 없어요.'),

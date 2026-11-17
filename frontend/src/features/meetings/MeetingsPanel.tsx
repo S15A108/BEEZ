@@ -80,7 +80,7 @@ const line = 'border-[#e4e0d4]'
 
 // 회의는 사람이 만들지 않는다. 작업이 부딪히면 비비가 팀장과 관련 작업자를 불러 연다.
 // 왼쪽은 회의 목록(진행 중·끝남 필터), 오른쪽은 회의 머리·참여자, '정할 것' 줄, 흰 단계 카드와 아래 버튼 줄이다(S15P31A108-454·457).
-// 단계 표시줄은 없애고(사용자 요청 11-17) 단계는 다음 할 일 버튼과 '‹ 돌아가기'로 오간다.
+// 단계 표시줄은 없애고(사용자 요청 11-17) 그 자리에 대화 단계는 '정할 것' 줄, 그 밖의 단계는 뒤로·다음 할 일 버튼을 둔다.
 // 단계는 서버 상태로 정한다: 끝난 회의 → 변경 제안, 지금 정리로 만든 수정 초안 → 수정 초안, 정리 뒤 새 대화가 없는 최신 정리 →
 // 비비 정리, 그 밖에는 대화. 사람은 지난 단계로 돌아가 볼 수 있다('‹ 돌아가기', 끝난 회의는 결과의 '회의 기록 보기'·'비비 정리 보기').
 // API 없음: origin·task_ids·conflict_summary·status·closed_*는 dev 명세의 '수정안 요청'이라 서버가 주면 그린다.
@@ -339,6 +339,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
         setSelection({ id: meetingId, focus })
         setStepView(null)
         setListFilter(null)
+        // 변경 제안을 만들었으면 변경 제안 창(단축 바 2)에서 그 제안을 골라 둔 채 연다(알림·링크와 같은 openPane + focus id).
+        // 응답은 제안 하나(change_proposal_id)다. 제안이 없으면(바뀔 문서 없음) 회의실에 결과를 보인다.
+        if (result.change_proposal_id)
+          openPane('changes', result.change_proposal_id)
       } catch (error) {
         const code = getApiErrorCode(error)
         // 오래된 정리로는 끝낼 수 없다. 대화로 돌아가 정리를 다시 요청하게 한다. 이미 끝난 회의면 결과로 간다.
@@ -550,6 +554,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 origin={meeting.origin}
                               />
                             </div>
+                            {step === 0 && closedMeeting && resultButton}
                             {step === 0 && !closedMeeting && (
                               <div className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1">
                                 {!isLeader && (
@@ -743,35 +748,126 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             </p>
                           </div>
                         </div>
-                        {/* '정할 것' 줄은 단계와 상관없이 회의 머리 아래에 둔다(사용자 요청 11-17, 단계 표시줄 자리).
-                            펼친 안내는 단계 카드와 남는 높이를 나누고 안에서 스크롤한다(S15P31A108-438). */}
-                        {(meeting.conflict_summary ||
-                          meeting.conflict_guidance) && (
-                          <MeetingConflictGuidance
-                            // 대화 단계는 펼쳐서 시작하고, 정리 이후 단계로 넘어가면 한 줄로 접어 정리·수정 초안 자리를 넓힌다.
-                            key={`${meeting.id}:${step === 0}`}
-                            defaultOpen={step === 0}
-                            summary={meeting.conflict_summary}
-                            taskIds={meeting.task_ids ?? []}
-                            guidance={meeting.conflict_guidance}
-                            brief={
-                              notes.find(
-                                (entry) => entry.kind === 'CONFLICT_BRIEF',
-                              )?.text
-                            }
-                            closed={closedMeeting}
-                            taskKeyOf={(id) => taskOf(id)?.key}
-                            documentTitleOf={documentTitleOf}
-                          />
+                        {/* 위쪽 줄(예전 단계 표시줄 자리, 사용자 요청 11-17): 대화 단계는 '정할 것' 줄, 그 밖의 단계는 그 단계의
+                            뒤로(보조 버튼)와 다음 할 일(오른쪽 주 버튼). 아래 버튼 줄은 두지 않는다.
+                            펼친 '정할 것' 안내는 단계 카드와 남는 높이를 나누고 안에서 스크롤한다(S15P31A108-438). */}
+                        {step === 0 &&
+                          (meeting.conflict_summary ||
+                            meeting.conflict_guidance) && (
+                            <MeetingConflictGuidance
+                              key={meeting.id}
+                              summary={meeting.conflict_summary}
+                              taskIds={meeting.task_ids ?? []}
+                              guidance={meeting.conflict_guidance}
+                              brief={
+                                notes.find(
+                                  (entry) => entry.kind === 'CONFLICT_BRIEF',
+                                )?.text
+                              }
+                              closed={closedMeeting}
+                              taskKeyOf={(id) => taskOf(id)?.key}
+                              documentTitleOf={documentTitleOf}
+                            />
+                          )}
+                        {step > 0 && (
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            {step === 3 ? (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="lg"
+                                  onClick={() => goTo(0)}
+                                >
+                                  회의 기록 보기
+                                </Button>
+                                {summary && (
+                                  <Button
+                                    variant="outline"
+                                    size="lg"
+                                    onClick={() => goTo(1)}
+                                  >
+                                    비비 정리 보기
+                                  </Button>
+                                )}
+                                {proposalId && (
+                                  <Button
+                                    size="lg"
+                                    className="ml-auto"
+                                    onClick={() =>
+                                      openPane('changes', proposalId)
+                                    }
+                                  >
+                                    변경 제안에서 보기
+                                  </Button>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="lg"
+                                  className="mr-auto"
+                                  onClick={() => goTo(step - 1)}
+                                >
+                                  <ChevronLeft />
+                                  {step === 1 ? '대화로 돌아가기' : '뒤로 가기'}
+                                </Button>
+                                {closedMeeting ? (
+                                  resultButton
+                                ) : step === 1 ? (
+                                  isLeader ? (
+                                    <Button
+                                      size="lg"
+                                      disabled={!participant}
+                                      onClick={() => goTo(2)}
+                                    >
+                                      수정 초안 만들기
+                                    </Button>
+                                  ) : (
+                                    <p className="text-xs text-muted-foreground">
+                                      팀장이 비비 정리를 확인하고 회의를 끝내요.
+                                    </p>
+                                  )
+                                ) : (
+                                  summary && (
+                                    <>
+                                      {/* 이름은 짧게 '변경 제안'이고, 누르면 회의가 끝난다는 것을 버튼 옆에 적는다(사용자 요청 11-17). */}
+                                      <span className="text-xs text-muted-foreground">
+                                        {hasDocumentChanges
+                                          ? '누르면 변경 제안을 올리고 회의를 끝내요'
+                                          : '누르면 회의를 끝내요'}
+                                      </span>
+                                      <Button
+                                        size="lg"
+                                        disabled={
+                                          action.busy ||
+                                          !isLeader ||
+                                          !participant ||
+                                          talkedAfterSummary
+                                        }
+                                        onClick={() =>
+                                          closeMeeting(meeting.id, summary.id)
+                                        }
+                                      >
+                                        {hasDocumentChanges
+                                          ? '변경 제안'
+                                          : '회의 끝내기'}
+                                      </Button>
+                                    </>
+                                  )
+                                )}
+                              </>
+                            )}
+                          </div>
                         )}
-                        {/* 단계 카드: 위는 그 단계의 내용, 아래는 버튼 줄. 넓은 화면에서는 남는 높이를 모두 쓰고 안에서 스크롤한다.
-                            대화 단계는 대화 칸(112px)과 입력칸이, 정리 단계는 정리(144px)와 입력칸·버튼 줄이 겹치지 않을 높이를 지키고,
+                        {/* 단계 카드: 그 단계의 내용. 넓은 화면에서는 남는 높이를 모두 쓰고 안에서 스크롤한다.
+                            대화 단계는 대화 칸(112px)과 입력칸이, 정리 단계는 정리(144px)와 정리 수정 칸이 겹치지 않을 높이를 지키고,
                             창이 그보다 낮으면 회의실 창이 스크롤한다(PR #306 재검토와 같은 방식). */}
                         <div
                           className={cn(
                             'flex flex-col rounded-2xl border bg-white lg:min-h-0 lg:flex-1',
                             step === 0 && 'lg:min-h-64',
-                            step === 1 && 'lg:min-h-[21.5rem]',
+                            step === 1 && 'lg:min-h-72',
                             line,
                           )}
                         >
@@ -1066,118 +1162,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                     바뀌어요.
                                   </p>
                                 )}
-                                <div className="mt-1 flex flex-wrap justify-center gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="lg"
-                                    onClick={() => goTo(0)}
-                                  >
-                                    회의 기록 보기
-                                  </Button>
-                                  {summary && (
-                                    <Button
-                                      variant="outline"
-                                      size="lg"
-                                      onClick={() => goTo(1)}
-                                    >
-                                      비비 정리 보기
-                                    </Button>
-                                  )}
-                                  {proposalId && (
-                                    <Button
-                                      size="lg"
-                                      onClick={() =>
-                                        openPane('changes', proposalId)
-                                      }
-                                    >
-                                      변경 제안에서 보기
-                                    </Button>
-                                  )}
-                                </div>
-                              </section>
-                            )}
-                          </div>
-                          <div
-                            hidden={step === 0 && !closedMeeting}
-                            className={cn(
-                              'flex flex-wrap items-center gap-2.5 rounded-b-2xl border-t bg-[#fbfaf6] px-4 py-3 sm:px-6',
-                              line,
-                            )}
-                          >
-                            {step === 0 && (
-                              <>
-                                <p className="mr-auto text-xs leading-5 text-muted-foreground">
-                                  끝난 회의에는 더 쓸 수 없어요.
+                                <p className="text-xs leading-5 text-muted-foreground">
+                                  끝난 회의에는 더 쓸 수 없어요. 다시 맞출 게
+                                  생기면 비비가 새 회의를 열어요.
                                 </p>
-                                {resultButton}
-                              </>
-                            )}
-                            {step === 1 && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="lg"
-                                  className="mr-auto"
-                                  onClick={() => goTo(0)}
-                                >
-                                  <ChevronLeft />
-                                  대화로 돌아가기
-                                </Button>
-                                {closedMeeting ? (
-                                  resultButton
-                                ) : isLeader ? (
-                                  <Button
-                                    size="lg"
-                                    disabled={!participant}
-                                    onClick={() => goTo(2)}
-                                  >
-                                    수정 초안 만들기
-                                  </Button>
-                                ) : (
-                                  <p className="text-xs text-muted-foreground">
-                                    팀장이 비비 정리를 확인하고 회의를 끝내요.
-                                  </p>
-                                )}
-                              </>
-                            )}
-                            {step === 2 && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="lg"
-                                  className="mr-auto"
-                                  onClick={() => goTo(1)}
-                                >
-                                  <ChevronLeft />
-                                  정리로 돌아가기
-                                </Button>
-                                {closedMeeting
-                                  ? resultButton
-                                  : summary && (
-                                      <Button
-                                        size="lg"
-                                        disabled={
-                                          action.busy ||
-                                          !isLeader ||
-                                          !participant ||
-                                          talkedAfterSummary
-                                        }
-                                        onClick={() =>
-                                          closeMeeting(meeting.id, summary.id)
-                                        }
-                                      >
-                                        {hasDocumentChanges
-                                          ? '변경 제안 올리고 회의 끝내기'
-                                          : '회의 끝내기'}
-                                      </Button>
-                                    )}
-                              </>
-                            )}
-                            {step === 3 && (
-                              <p className="text-xs leading-5 text-muted-foreground">
-                                끝난 회의에는 더 쓸 수 없어요. 다시 맞출 게
-                                생기면 비비가 새 회의를 열어요.
-                              </p>
+                              </section>
                             )}
                           </div>
                         </div>
