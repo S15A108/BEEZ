@@ -286,7 +286,7 @@ it('작업이 없을 때 기준 v1 안내는 기준이 아직 없을 때만 붙�
       <RelationsView projectId="101" hasBaseline={false} />
     </QueryClientProvider>,
   )
-  expect(await screen.findByText(/기준 v1이 생기기 전에는/)).toBeVisible()
+  expect(await screen.findByText(/설계 기준 v1이 생기기 전에는/)).toBeVisible()
 })
 
 // PR #72 4차 TC-02: 진행 중 제안이 첫 50개 밖에 있으면 영향 경고가 사라졌다. 마지막 페이지까지 읽어 맞춘다.

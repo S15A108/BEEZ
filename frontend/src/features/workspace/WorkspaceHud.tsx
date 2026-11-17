@@ -104,8 +104,8 @@ const notices: Record<
     member: '팀장이 프로젝트를 시작하면 알려 드려요.',
   },
   3: {
-    title: '기준 v1이 생겼어요 · 프로젝트가 시작됐어요',
-    text: '팀장이 프로젝트를 시작해 기준 v1이 생겼어요. 이제 변경 제안, 회의실, 작업 현황, 설계 관계를 쓸 수 있어요. 문서 수정도 이제 변경 제안으로 해요.',
+    title: '설계 기준 v1이 생겼어요 · 프로젝트가 시작됐어요',
+    text: '팀장이 프로젝트를 시작해 설계 기준 v1이 생겼어요. 이제 변경 제안, 회의실, 작업 현황, 설계 관계를 쓸 수 있어요. 문서 수정도 이제 변경 제안으로 해요.',
   },
 }
 
@@ -337,7 +337,7 @@ export function WorkspaceHud({
         : allApproved
           ? "문서 4종 승인 4 / 4 · 기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 시작돼요"
           : // 승인 전 버튼은 '승인 요청 보기'·'문서함 보기'라서 '켜진다'고 하지 않고 다음 순서만 알린다(잠긴 줄의 이유 글자로도 쓰인다).
-            `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '설계 초안 만들기'로 기획 분석을 열어요. 설계 항목을 검토하고 '프로젝트 시작'을 누르면 기준 v1이 생기고 시작돼요.`,
+            `팀장 승인 ${approvedKinds} / 4${pendingApprovals ? ` · 승인 요청 ${pendingApprovals}건` : ''} · 팀장이 4종을 승인하면 '설계 초안 만들기'로 기획 분석을 열어요. 설계 항목을 검토하고 '프로젝트 시작'을 누르면 설계 기준 v1이 생기고 시작돼요.`,
       done: started,
       locked: !allUploaded,
       // 기준 v1 발행(PLN-A10)은 기획 분석의 '프로젝트 시작' 한 곳에서 한다. '설계 초안 만들기'는 그 창을 연다.
@@ -372,7 +372,7 @@ export function WorkspaceHud({
       action: { label: '설정에서 연결하기', pane: 'settings', focus: 'agent' },
     },
     {
-      title: '기준 문서 v1 읽기',
+      title: '현재 승인 문서 읽기',
       detail: started
         ? '팀장이 승인한 문서 4종을 확인해요.'
         : '팀장이 프로젝트를 시작하면 열려요.',
@@ -605,7 +605,7 @@ export function WorkspaceHud({
         detail: reviewSummary,
         preview,
         note: reviewImpact.data
-          ? `영향 작업 ${reviewImpact.data.explicit.length} · 승인하면 기준 v${(project.current_baseline?.version_no ?? 0) + 1}`
+          ? `영향 작업 ${reviewImpact.data.explicit.length} · 승인하면 설계 기준 v${(project.current_baseline?.version_no ?? 0) + 1}`
           : undefined,
         action: '검토하러 가기',
         open: () => openPane('changes', firstReview?.id),
@@ -692,7 +692,7 @@ export function WorkspaceHud({
                 : ['팀원', me?.domain].filter(Boolean).join(' · ')}{' '}
               ·{' '}
               {project.current_baseline
-                ? `기준 v${project.current_baseline.version_no}`
+                ? `설계 기준 v${project.current_baseline.version_no}`
                 : started
                   ? '시작됨'
                   : !allUploaded
@@ -940,7 +940,7 @@ export function WorkspaceHud({
                           {focus.action.label}
                         </Button>
                       )}
-                      {!isLeader && focus.title === '기준 문서 v1 읽기' && (
+                      {!isLeader && focus.title === '현재 승인 문서 읽기' && (
                         <Button
                           size="xs"
                           variant="outline"

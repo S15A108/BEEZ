@@ -99,7 +99,7 @@ export function ProjectReadiness({
                       open: () => openPane('planning'),
                     }
                   : {
-                      text: "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 기준 v1이 생기고 시작돼요.",
+                      text: "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 설계 기준 v1이 생기고 시작돼요.",
                       // 배너·시작 가이드와 같은 이름. 초안이 있어도 같은 기획 분석을 연다(발행은 기획 분석에서만).
                       label: '설계 초안 만들기',
                       open: () => openPane('planning'),

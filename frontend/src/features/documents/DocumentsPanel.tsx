@@ -504,7 +504,7 @@ export function DocumentsPanel({
                     </strong>
                     <span className="text-sm text-muted-foreground">
                       {isLeader
-                        ? "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 기준 v1이 생기고 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요."
+                        ? "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 설계 기준 v1이 생기고 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요."
                         : '팀장이 프로젝트를 시작하면 알려 드려요.'}
                     </span>
                   </div>

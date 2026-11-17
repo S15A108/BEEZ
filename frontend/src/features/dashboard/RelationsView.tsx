@@ -183,7 +183,7 @@ export function RelationsView({
             제안을 이어서 그려요.
             {/* 기준이 이미 있으면 이 안내는 틀린 말이라 기준이 없을 때만 붙인다(S15P31A108-346). */}
             {hasBaseline === false &&
-              ' 기준 v1이 생기기 전에는 작업 계획을 올릴 수 없어요.'}
+              ' 설계 기준 v1이 생기기 전에는 작업 계획을 올릴 수 없어요.'}
             <Button size="sm" onClick={() => openPane('tasks')}>
               작업 계획 등록
             </Button>
