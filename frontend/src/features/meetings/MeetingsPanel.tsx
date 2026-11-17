@@ -383,7 +383,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       <AsyncState query={list}>
         {() =>
           meetings.length ? (
-            <div className="grid flex-1 gap-6 lg:min-h-0 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+            <div className="grid flex-1 gap-5 lg:min-h-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
               <div
                 className={cn(
                   'grid content-start gap-3 self-start rounded-2xl border bg-white p-3.5 lg:max-h-full lg:overflow-y-auto',
