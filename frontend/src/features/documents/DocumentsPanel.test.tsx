@@ -585,6 +585,36 @@ it('4종이 승인되면 설계 초안 만들기가 켜져 있고 누르면 발�
   expect(publish).not.toHaveBeenCalled()
 })
 
+// 팀원은 설계 초안을 만들 수 없다. 끝까지 풀리지 않는 잠긴 버튼을 보이지 않고, 팀장이 만든다고 알린다.
+it.each([
+  [2, null],
+  [4, '문서 승인을 마쳤어요. 팀장이 설계 초안을 만들면 시작돼요'],
+] as const)(
+  '팀원에게는 승인 %i개일 때 설계 초안 만들기 버튼이 없다',
+  async (count, title) => {
+    const approved = { ...version, status: 'APPROVED' as const }
+    vi.mocked(documentsApi.list).mockResolvedValue({
+      items: (['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const)
+        .slice(0, count)
+        .map((kind, index) => ({
+          ...listedDocument,
+          id: String(index + 1),
+          kind,
+          approved_version: approved,
+        })),
+      has_more: false,
+    })
+    mount(false)
+    expect(
+      await screen.findByText(`팀장 승인 ${count} / 4`),
+    ).toBeInTheDocument()
+    if (title) expect(screen.getByText(title)).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '설계 초안 만들기' }),
+    ).toBeNull()
+  },
+)
+
 // PR #72 재전수 ROUND2-DOC-03: 버전 이력은 다음 페이지까지 읽어 가장 오래된 v1도 고를 수 있다.
 it('버전 이력은 다음 페이지까지 읽어 v1까지 보인다', async () => {
   const user = userEvent.setup()

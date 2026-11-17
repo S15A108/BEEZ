@@ -498,7 +498,9 @@ export function DocumentsPanel({
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/50 bg-primary/10 p-4">
                   <div className="grid min-w-0 flex-1 gap-1">
                     <strong>
-                      문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요
+                      {isLeader
+                        ? '문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요'
+                        : '문서 승인을 마쳤어요. 팀장이 설계 초안을 만들면 시작돼요'}
                     </strong>
                     <span className="text-sm text-muted-foreground">
                       {isLeader
@@ -516,12 +518,15 @@ export function DocumentsPanel({
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3.5">
-                  <Button variant="secondary" disabled>
-                    <Lock />
-                    설계 초안 만들기
-                  </Button>
-                </div>
+                // 팀원은 설계 초안을 만들 수 없어 끝까지 풀리지 않는 버튼이라 팀장에게만 보인다.
+                isLeader && (
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3.5">
+                    <Button variant="secondary" disabled>
+                      <Lock />
+                      설계 초안 만들기
+                    </Button>
+                  </div>
+                )
               )}
             </section>
           )}
