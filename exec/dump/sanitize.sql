@@ -6,6 +6,8 @@
 
 \set ON_ERROR_STOP on
 BEGIN;
+-- 제출한 검토 자료처럼 수정을 막는 트리거가 있다. 임시 DB 에서 이 트랜잭션 동안만 트리거를 끈다(슈퍼유저 필요)
+SET LOCAL session_replication_role = replica;
 
 -- 1) 계정: 이메일은 user<id>@example.com, 비밀번호는 시연용 하나로 통일, 시연 계정이 아닌 이름은 사용자<id>
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -30,5 +32,29 @@ UPDATE invitation
 -- 4) 에이전트 토큰: 작업·감사 기록이 참조하므로 행은 두고, 원래 토큰으로는 접속할 수 없게 해시만 바꾼다
 UPDATE agent_token SET token_hash = md5('revoked-agent-token-' || id);
 UPDATE agent_session SET session_key = md5('revoked-agent-session-' || id);
+
+-- 5) 문서·작업 계획·AI 기록 본문에 적힌 이메일: 모든 텍스트·JSON 컬럼에서 example.com, example.test, beez.ai.kr 밖의
+--    주소를 redacted@example.com 으로 바꾼다. 바뀐 본문은 저장된 content_hash 와 달라질 수 있다(해당 문서만 해당)
+DO $$
+DECLARE
+  col record;
+  pattern constant text := '[A-Za-z0-9._%+-]+@(?!example\.com|example\.test|beez\.ai\.kr)[A-Za-z0-9.-]+\.[A-Za-z]{2,}';
+BEGIN
+  FOR col IN
+    SELECT c.table_name, c.column_name, c.data_type
+      FROM information_schema.columns c
+      JOIN information_schema.tables t
+        ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
+     WHERE c.table_schema = 'public'
+       AND c.data_type IN ('text', 'character varying', 'jsonb')
+       AND c.table_name <> 'flyway_schema_history'
+  LOOP
+    EXECUTE format(
+      'UPDATE %I SET %I = regexp_replace(%I::text, %L, %L, %L)::%s WHERE %I::text ~ %L',
+      col.table_name, col.column_name, col.column_name, pattern, 'redacted@example.com', 'g',
+      CASE col.data_type WHEN 'jsonb' THEN 'jsonb' ELSE 'text' END,
+      col.column_name, pattern);
+  END LOOP;
+END $$;
 
 COMMIT;

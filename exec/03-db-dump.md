@@ -4,7 +4,7 @@
 
 | 파일 | 내용 | 만든 곳 | 덤프를 만든 서버 커밋 |
 | --- | --- | --- | --- |
-| [`exec/beez-db-dump.sql`](beez-db-dump.sql) | PostgreSQL 17 `pg_dump` SQL 파일. 테이블 구조와 시연 데이터 | 팀 개발 서버 DB를 비식별화한 것 | (덤프를 커밋할 때 기입) |
+| [`exec/beez-db-dump.sql.gz`](beez-db-dump.sql.gz) | PostgreSQL 17 `pg_dump` SQL 파일을 gzip으로 압축한 것(약 23MB, 풀면 약 80MB). 테이블 구조와 시연 데이터 | 2026-11-17 팀 개발 서버 DB를 비식별화한 것 | `2d27e1d078213aecb38c9cf027b92acc1c963b58` |
 
 이 덤프는 저장소가 공개라서 **비식별화한 것**입니다. 개발 서버 DB에서 아래를 바꾸거나 지웠습니다.
 
@@ -17,8 +17,18 @@
 | 초대 | 받는 사람 이메일을 `invitee<번호>@example.com`으로, 초대 링크는 쓸 수 없게 바꿈 |
 | 에이전트 토큰 | 원래 토큰으로는 접속할 수 없게 바꿈. 에이전트는 복원한 뒤 새 토큰을 발급해 연결합니다 |
 
+| 문서·작업 계획·AI 기록 본문의 이메일 | `example.com`, `example.test` 같은 예시 주소가 아니면 `redacted@example.com` |
+
 프로젝트, 문서, 설계, 작업, 회의 같은 업무 데이터는 그대로 있습니다. 비식별화에 쓴 SQL은
-[`exec/dump/sanitize.sql`](dump/sanitize.sql)입니다.
+[`exec/dump/sanitize.sql`](dump/sanitize.sql)입니다. 압축한 이유는 문서 검색용 임베딩(`document_chunk`)이
+원본의 70%를 차지해 SQL 그대로는 80MB가 넘기 때문입니다.
+
+덤프는 시연 시나리오의 버튼을 누르기 전 상태입니다. 시연 계정은 아래 둘이고, 비밀번호는 모두 `beez-demo-2026`입니다.
+
+| 계정 | 로그인 이메일 |
+| --- | --- |
+| 팀장 전진 | `user7@example.com` |
+| 백엔드 담당 백엔드진 | `user11@example.com` |
 
 테이블 구조만 필요하면 덤프가 없어도 됩니다. backend가 처음 뜰 때 빈 DB에 최신 테이블을 자동으로 만듭니다
 ([1-6의 7번](01-build-and-deploy.md#1-6-배포할-때-주의할-점)). 테이블 설명은 [docs/design/03-erd.md](../docs/design/03-erd.md)와
@@ -43,7 +53,7 @@ docker compose -p beez down -v
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait postgres
 
 # 2) 덤프를 넣습니다. 오류가 나면 그 자리에서 멈춥니다
-docker exec -i beez-postgres-1 psql -v ON_ERROR_STOP=1 -q -U beez -d beez < exec/beez-db-dump.sql > /dev/null
+gunzip -c exec/beez-db-dump.sql.gz | docker exec -i beez-postgres-1 psql -v ON_ERROR_STOP=1 -q -U beez -d beez > /dev/null
 
 # 3) 나머지 서비스를 띄웁니다
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait
@@ -51,12 +61,10 @@ docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infr
 
 2)에서 `ERROR`가 나오고 멈췄다면 1)부터 다시 실행하세요. 일부만 들어간 DB로는 backend가 제대로 동작하지 않습니다.
 
-<http://localhost:8088>에서 로그인합니다. 시연 팀장 계정은 3-1 표 아래의 비밀번호 `beez-demo-2026`과, 아래 명령으로
-찾은 이메일로 로그인합니다.
+2)에서 `wal_level` 경고가 한 줄 나올 수 있는데, 무시해도 됩니다. 개발 서버의 변경 감지(CDC) 설정이 덤프에 함께 들어
+있어서 나오는 안내입니다.
 
-```bash
-docker exec beez-postgres-1 psql -U beez -d beez -c "select email, display_name from account where display_name in ('전진', '백엔드진') order by id"
-```
+<http://localhost:8088>에서 3-1의 시연 계정(`user7@example.com`, 비밀번호 `beez-demo-2026`)으로 로그인합니다.
 
 AI 기능까지 쓰려면 이어서 [README "AI 기능 켜기"](../README.md#4-ai-기능-켜기)를 실행하세요. 새 터미널에서 띄우면
 AI 기능은 꺼진 채로 뜹니다.
@@ -102,13 +110,13 @@ ssh <서버> 'rm ~/beez-dump.sql ~/beez-dump.commit'
 
 ### 3) 비식별화해 제출 덤프 만들기
 
-저장소 폴더에서 실행합니다. 원본은 임시 컨테이너 안에서만 다루고, 결과만 `exec/beez-db-dump.sql`로 남깁니다.
+저장소 폴더에서 실행합니다. 원본은 임시 컨테이너 안에서만 다루고, 결과만 `exec/beez-db-dump.sql.gz`로 남깁니다.
 
 ```bash
 DEMO_PASSWORD='beez-demo-2026' KEEP_NAMES='전진,백엔드진' bash exec/dump/make-public-dump.sh ~/beez-dump.sql
 ```
 
-- 결과에 `example.com`이 아닌 이메일 주소가 남아 있으면 스크립트가 결과 파일을 지우고 그 주소를 보여 줍니다.
+- 결과에 `example.com`, `example.test`, `beez.ai.kr`이 아닌 이메일 주소가 남아 있으면 스크립트가 결과 파일을 지우고 그 주소를 보여 줍니다.
   그 주소가 든 테이블을 찾아 `exec/dump/sanitize.sql`에 처리를 더한 뒤 다시 실행하세요.
-- 끝나면 `~/beez-dump.commit`의 SHA를 3-1 표의 "덤프를 만든 서버 커밋" 칸에 적고, `exec/beez-db-dump.sql`과 함께 PR로
-  올립니다. 원본 `~/beez-dump.sql`은 지웁니다.
+- 끝나면 `~/beez-dump.commit`의 SHA를 3-1 표의 "덤프를 만든 서버 커밋" 칸에 적고, `exec/beez-db-dump.sql.gz`와 함께 PR로
+  올립니다. 스크립트가 마지막에 보여 주는 시연 계정 이메일도 3-1 표에 맞춥니다. 원본 `~/beez-dump.sql`과 `~/beez-dump.commit`은 지웁니다.
