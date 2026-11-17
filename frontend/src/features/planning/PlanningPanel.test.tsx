@@ -13,6 +13,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { loadMockDatabase, saveMockDatabase } from '@/mocks/state'
 import { WAITING_POLL_MS } from '@/lib/pollIntervals'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { PlanningPanel } from './PlanningPanel'
@@ -102,13 +103,223 @@ it('문서 4종이 모두 승인되기 전에는 발행을 끄고 공용 문서�
   expect(
     await screen.findByText(/문서 4종이 모두 팀장 승인을 받아야/),
   ).toBeInTheDocument()
-  expect(
-    screen.getByRole('button', { name: '검토한 설계 승인·발행' }),
-  ).toBeDisabled()
+  expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeDisabled()
   await user.click(
     screen.getByRole('button', { name: '공용 문서함에서 승인하기' }),
   )
   expect(useWorkspaceStore.getState().pane).toBe('documents')
+})
+
+// 예시 서버가 지금 들고 있는 프로젝트 102. 요청을 처리하며 저장본을 바꿔 끼우므로 쓸 때마다 다시 꺼낸다.
+const project102 = () =>
+  loadMockDatabase().projects.find((item) => item.project.id === '102')!
+// 예시 프로젝트 102의 문서 4종을 팀장 승인 상태로 둔다. 설계 초안(REQ-001) 1개는 예시 그대로다.
+function approveAllDocuments() {
+  const project = project102()
+  for (const version of project.versions) version.status = 'APPROVED'
+  for (const document of project.documents) {
+    document.approved_version = project.versions.find(
+      (version) => version.document_id === document.id,
+    )
+    delete document.latest_draft
+  }
+  for (const copy of project.working_copies) copy.status = 'APPROVED'
+  saveMockDatabase(loadMockDatabase())
+  return project
+}
+const startButton = async () => {
+  const button = await screen.findByRole('button', { name: '프로젝트 시작' })
+  await waitFor(() => expect(button).toBeEnabled())
+  return button
+}
+
+// S15P31A108-460: '프로젝트 시작'은 '승인'을 입력하는 확인 창 없이 바로 기준 v1을 발행한다(PLN-A10).
+it('프로젝트 시작을 누르면 확인 창 없이 한 번만 발행한다', async () => {
+  approveAllDocuments()
+  const publish = vi.spyOn(planningApi, 'publishBaseline')
+  const user = renderPanel()
+  const start = await startButton()
+  await user.dblClick(start)
+  expect(await screen.findByText(/첫 기준 설계를 발행했어요/)).toBeVisible()
+  expect(publish).toHaveBeenCalledTimes(1)
+  expect(publish).toHaveBeenCalledWith({
+    project_id: '102',
+    document_version_ids: expect.arrayContaining(['231', '232', '233', '234']),
+    design_item_version_ids: ['331'],
+    draft_snapshot_hash: expect.any(String),
+  })
+  expect(publish.mock.calls[0][0].document_version_ids).toHaveLength(4)
+  expect(screen.queryByText('최초 기준 설계 승인·발행')).toBeNull()
+  expect(screen.queryByRole('textbox', { name: /승인/ })).toBeNull()
+  expect(
+    await screen.findByText(/기준 설계 v1이 발행되어 있어요/),
+  ).toBeInTheDocument()
+})
+
+// 발행 뒤에는 다음 할 일(작업 만들기)이 맨 위에 오고, 성공 안내는 그 카드 안에 함께 보인다.
+// 초안은 기준으로 넘어가 비므로 초안 탭 대신 기준 설계 v1의 승인 항목을 읽기만 한다.
+it('프로젝트를 시작하면 작업 만들기 카드에 성공 안내가 붙고 기준 설계 v1 항목을 읽기만 한다', async () => {
+  approveAllDocuments()
+  const user = renderPanel()
+  await user.click(await startButton())
+  const next = await screen.findByRole('region', {
+    name: '승인 설계에서 작업 만들기',
+  })
+  expect(
+    await within(next).findByText(
+      '첫 기준 설계를 발행했어요. 이제 승인 설계에서 작업을 만들어 배정해요.',
+    ),
+  ).toBeVisible()
+  expect(screen.getAllByText(/첫 기준 설계를 발행했어요/)).toHaveLength(1)
+  expect(
+    within(next).getByRole('button', { name: '작업 만들고 배정하기' }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: /설계 항목 초안/ })).toBeNull()
+  await openTab(user, /기준 설계 v1\s*1/)
+  expect(
+    await visiblePanel().findByRole('heading', { name: 'REQ-001' }),
+  ).toBeInTheDocument()
+  expect(visiblePanel().getByText('기준 v1 항목 1개')).toBeInTheDocument()
+  expect(
+    visiblePanel().getByText(/바꾸려면 변경 제안을 올려 주세요/),
+  ).toBeInTheDocument()
+  for (const name of ['항목 추가', '내용 수정', '발행 대상에서 제외'])
+    expect(screen.queryByRole('button', { name })).toBeNull()
+  expect(screen.queryByText(/아직 설계 항목 초안이 없어요/)).toBeNull()
+  expect(
+    screen.getByRole('button', { name: '변경 제안으로 이동' }),
+  ).toBeInTheDocument()
+})
+
+// -390 규칙 그대로: 팀원에게는 작업 만들기 없이 기준 설계를 읽기만 보인다.
+it('팀원에게는 기준이 있는 프로젝트에서 작업 만들기 없이 기준 설계 항목을 읽기만 보인다', async () => {
+  const user = renderPanel(false, '101')
+  await openTab(user, /기준 설계 v1/)
+  expect(
+    await visiblePanel().findByRole('heading', { name: 'REQ-001' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('region', { name: '승인 설계에서 작업 만들기' }),
+  ).toBeNull()
+  for (const name of [
+    '작업 만들고 배정하기',
+    '항목 추가',
+    '내용 수정',
+    '발행 대상에서 제외',
+  ])
+    expect(screen.queryByRole('button', { name })).toBeNull()
+  expect(
+    screen.getByRole('button', { name: '변경 제안으로 이동' }),
+  ).toBeInTheDocument()
+})
+
+it('검토한 뒤 설계 초안이 바뀌었으면 발행하지 않고 다시 검토하라고 알린다', async () => {
+  approveAllDocuments()
+  const publish = vi.spyOn(planningApi, 'publishBaseline')
+  const user = renderPanel()
+  const start = await startButton()
+  // 화면이 받아 둔 뒤 다른 곳에서 초안이 하나 더 생긴다.
+  await planningApi.createItem('102', {
+    kind: 'REQUIREMENT',
+    schema_version: 1,
+    content: { description: '팀원은 자기 작업만 고친다.' },
+  })
+  await user.click(start)
+  expect(
+    await screen.findByText(
+      '검토 후 내용이 바뀌었어요. 최신 내용을 다시 검토한 뒤 시작해 주세요.',
+    ),
+  ).toBeVisible()
+  expect(publish).not.toHaveBeenCalled()
+  // 다시 읽은 초안 2개가 화면에 보이고, 그대로 다시 누르면 그 내용으로 발행한다.
+  await waitFor(() =>
+    expect(
+      screen.getByRole('tab', { name: /설계 항목 초안\s*2/ }),
+    ).toBeVisible(),
+  )
+  await user.click(await startButton())
+  expect(await screen.findByText(/첫 기준 설계를 발행했어요/)).toBeVisible()
+  expect(publish).toHaveBeenCalledTimes(1)
+  expect(publish.mock.calls[0][0].design_item_version_ids).toHaveLength(2)
+})
+
+it('검토한 뒤 원본 문서 버전이 바뀌었으면 발행하지 않는다', async () => {
+  approveAllDocuments()
+  const publish = vi.spyOn(planningApi, 'publishBaseline')
+  const user = renderPanel()
+  const start = await startButton()
+  // 화면이 받아 둔 뒤 기획안의 승인본이 새 버전으로 바뀐다.
+  const project = project102()
+  const plan = project.documents[0]
+  const next = { ...plan.approved_version!, id: '9231', version_no: 2 }
+  project.versions.push(next)
+  plan.approved_version = next
+  saveMockDatabase(loadMockDatabase())
+  await user.click(start)
+  expect(await screen.findByText(/검토 후 내용이 바뀌었어요/)).toBeVisible()
+  expect(publish).not.toHaveBeenCalled()
+})
+
+it('서버가 발행을 거절하면 그 이유를 알린다', async () => {
+  approveAllDocuments()
+  vi.spyOn(planningApi, 'publishBaseline').mockRejectedValue(
+    new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {
+        error: {
+          code: 'analysis_not_completed',
+          message: 'analysis not completed',
+        },
+      },
+    }),
+  )
+  const user = renderPanel()
+  await user.click(await startButton())
+  expect(
+    await screen.findByText(/문서 4종의 색인이 아직 끝나지 않았어요/),
+  ).toBeVisible()
+  expect(
+    screen.queryByText(
+      '요청을 처리하지 못했어요. 최신 상태와 권한을 확인해 주세요.',
+    ),
+  ).toBeNull()
+})
+
+// 확인 창이 사라져도 채택하지 않은 후보 안내(S15P31A108-389)는 누르기 전에 보인다.
+it('채택하지 않은 후보가 있으면 프로젝트 시작 위에 펼치지 않아도 안내한다', async () => {
+  const project = approveAllDocuments()
+  project.draft_jobs = [
+    {
+      id: '9001',
+      document_version_id: '231',
+      status: 'COMPLETED',
+      mode: 'DOCUMENT_ONLY',
+      candidates: [
+        {
+          id: '9002',
+          candidate_key: 'draft-9002',
+          change: 'CREATE',
+          kind: 'REQUIREMENT',
+          status: 'PENDING',
+          after: { description: '팀장은 회의를 연다.' },
+          changed_fields: [],
+          conflicting_fields: [],
+          sources: [{ location: '1. 개요', quote: '팀장은 회의를 연다.' }],
+          answer_refs: [],
+          support: 'DOCUMENT',
+        },
+      ],
+    },
+  ]
+  saveMockDatabase(loadMockDatabase())
+  renderPanel()
+  await startButton()
+  expect(
+    screen.getByText(/아직 채택하지 않은 후보 1개는 기준에 들어가지 않아요/),
+  ).toBeVisible()
 })
 
 // S15P31A108-202: 232 이후 질문은 유형·종류·근거 상태를 가진다.
