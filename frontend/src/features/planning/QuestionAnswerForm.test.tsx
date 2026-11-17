@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -375,4 +375,51 @@ it('여러 개 고르는 질문에서 고른 직후 바로 해제하면 보내�
   expect(onSave).toHaveBeenCalledTimes(1)
   expect(screen.queryByText('저장됨')).toBeNull()
   expect(screen.getByText('빈 답은 저장하지 않아요')).toBeInTheDocument()
+})
+
+// PR #303 재검토 1: '입력하고 Tab 으로 다음'으로 가다 닫기 버튼에 와 있을 때 저장되어 버튼이 사라져도 포커스를 잃지 않는다.
+it('키보드로 답을 쓰고 Tab 으로 닫기 버튼에 왔을 때 저장돼 버튼이 사라지면 포커스를 다음 버튼으로 옮긴다', async () => {
+  const user = setup()
+  const onSave = vi.fn().mockResolvedValue(undefined)
+  render(<Harness list={[short('1'), short('2')]} onSave={onSave} />)
+  await user.type(screen.getByLabelText('답변'), '답')
+  await user.tab()
+  // 칸을 벗어나며 바로 저장하고, 저장되면 '답변하지 않고 닫기'가 사라진다.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: '답변하지 않고 닫기' }),
+    ).toBeNull(),
+  )
+  expect(screen.getByRole('button', { name: /^다음/ })).toHaveFocus()
+})
+
+// PR #303 리뷰(인라인): 닫기 응답을 기다리는 동안 같은 질문에 글을 써도 새 자동 저장이 생기지 않는다.
+// 막지 않으면 DISMISSED → 입력칸 비워짐 → 1초 뒤 answer_payload 순으로 보내져 서버가 닫은 질문을 다시 '답함'으로 바꾼다.
+it('답하지 않고 닫는 동안에는 그 질문의 입력과 자동 저장을 막아, 닫은 뒤 답이 다시 보내지지 않는다', async () => {
+  const user = setup()
+  let finish = () => {}
+  const onSave = vi
+    .fn()
+    .mockImplementation((_id: string, input: { status?: string }) =>
+      input.status === 'DISMISSED'
+        ? new Promise<void>((resolve) => {
+            finish = resolve
+          })
+        : Promise.resolve(),
+    )
+  render(<Harness list={[short('1'), short('2')]} onSave={onSave} />)
+  const box = screen.getByLabelText('답변')
+  await user.type(box, '버릴 글')
+  await user.click(screen.getByRole('button', { name: '답변하지 않고 닫기' }))
+  await waitFor(() =>
+    expect(onSave).toHaveBeenCalledWith('1', { status: 'DISMISSED' }),
+  )
+  // 닫기 응답을 기다리는 동안 더 써 보지만 입력이 막혀 있다.
+  await user.type(box, ' 더')
+  expect(box).toHaveValue('버릴 글')
+  await pass(AUTOSAVE_DELAY_MS * 2)
+  await act(async () => finish())
+  await pass(AUTOSAVE_DELAY_MS * 2)
+  expect(onSave).toHaveBeenCalledTimes(1)
+  expect(onSave).toHaveBeenLastCalledWith('1', { status: 'DISMISSED' })
 })

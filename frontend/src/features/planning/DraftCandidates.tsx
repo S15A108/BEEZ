@@ -564,20 +564,25 @@ export function DraftCandidates({
               )}
             </>
           }
-          detail={
-            focused && (
+          // 후보마다 상세를 띄워 두고 고른 후보만 보인다. 다른 후보를 보고 돌아와도 근거 확인·확정한 필드·
+          // 낡은 후보 안내(초안 다시 만들기)가 그대로 남는다(PR #303 재검토).
+          detail={candidates.map((candidate) => (
+            <div
+              key={candidate.id}
+              hidden={candidate.id !== focused?.id}
+              className="flex flex-1 flex-col"
+            >
               <CandidateCard
-                key={focused.id}
-                candidate={focused}
+                candidate={candidate}
                 titleOf={titleOf}
                 isLeader={isLeader}
                 busy={busy}
-                onAdopt={(input) => onAdopt(focused, input)}
-                onDiscard={() => onDiscard(focused)}
-                onRegenerate={() => regenerate(focused)}
+                onAdopt={(input) => onAdopt(candidate, input)}
+                onDiscard={() => onDiscard(candidate)}
+                onRegenerate={() => regenerate(candidate)}
               />
-            )
-          }
+            </div>
+          ))}
         />
       )}
     </div>

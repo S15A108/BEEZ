@@ -98,6 +98,7 @@ export function QuestionAnswerForm({
   onNavigate,
   onSave,
   onEdit,
+  locked,
   children,
 }: {
   question: PlanningQuestion
@@ -111,6 +112,9 @@ export function QuestionAnswerForm({
   onSave: (id: string, input: AnswerQuestionInput) => Promise<unknown>
   /** 지금 보는 질문의 답을 바꾸기 시작했다(목록이 이 질문을 붙잡아 두게) */
   onEdit?: (id: string) => void
+  /** 지금은 답할 수 없는 질문의 안내. 있으면 입력 대신 이것을 보인다.
+   *  폼은 그대로 두어 다른 질문에 쓰던 답과 저장 상태가 사라지지 않는다 */
+  locked?: ReactNode
   /** 입력 위에 둘 질문 머리(종류·질문·근거) */
   children?: ReactNode
 }) {
@@ -123,8 +127,13 @@ export function QuestionAnswerForm({
   const text = draft.text
   const autosave = useAnswerAutosave(onSave)
   const saveState = autosave.states[question.id]
+  // 답하지 않고 닫는 중인 질문. 닫기 요청이 끝날 때까지 그 질문의 입력과 자동 저장을 막는다.
+  // 막지 않으면 닫는 동안 쓴 글이 닫기가 끝난 뒤 저장되어 서버가 닫은 질문을 다시 '답함'으로 바꾼다(PR #303 리뷰).
+  const [closingId, setClosingId] = useState<string>()
+  const closing = closingId === question.id
   // 바꾼 답을 기록하고 저장을 맡긴다. 선택은 바로, 글은 입력을 멈춘 뒤 저장한다.
   const change = (next: Partial<Draft>, now: boolean) => {
+    if (closing) return
     const value = { ...draft, ...next }
     setDrafts((all) => ({ ...all, [question.id]: value }))
     onEdit?.(question.id)
@@ -147,16 +156,35 @@ export function QuestionAnswerForm({
   useEffect(() => {
     shownId.current = question.id
   }, [question.id])
-  const [dismissing, setDismissing] = useState(false)
   const limit = type === 'CHOICE' || !type ? undefined : TEXT_LIMITS[type]
   const maxLength = limit
     ? Math.min(format?.max_length ?? limit.fallback, limit.hard)
     : (format?.max_length ?? LEGACY_TEXT_MAX)
   // 닫으면 서버가 이전 답변을 지우므로, 이미 답한 질문에서는 닫기를 보이지 않는다.
   const canDismiss =
+    !locked &&
     !question.answer &&
     question.status !== 'DISMISSED' &&
     saveState?.state !== 'saved'
+
+  // 키보드로 '답변하지 않고 닫기'에 와 있는데 답이 저장돼 버튼이 사라지면, 포커스가 화면 밖(body)으로 떨어지지 않게
+  // 다음 버튼(없으면 이전 버튼, 그것도 없으면 답변 칸)으로 옮긴다. 버튼이 떼어질 때 아직 포커스가 있었는지 기록해 둔다.
+  const dismissHadFocus = useRef(false)
+  const formRef = useRef<HTMLFormElement>(null)
+  const previousRef = useRef<HTMLButtonElement>(null)
+  const nextRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (canDismiss || !dismissHadFocus.current) return
+    dismissHadFocus.current = false
+    const target =
+      [nextRef.current, previousRef.current].find(
+        (button) => button && !button.disabled,
+      ) ??
+      formRef.current?.querySelector<HTMLElement>(
+        '#planning-answer, input, textarea',
+      )
+    target?.focus()
+  }, [canDismiss])
 
   // 넘길 수 있는 질문들. 서버는 대체된 질문을 목록에 주지 않는다.
   const ordered = siblings ?? [question]
@@ -170,10 +198,10 @@ export function QuestionAnswerForm({
   const number = question.number ?? index + 1
 
   const dismiss = async () => {
-    setFailure(undefined)
-    setDismissing(true)
-    const after = next
     const closing = question.id
+    setFailure(undefined)
+    setClosingId(closing)
+    const after = next
     try {
       await autosave.cancel(closing)
       await onSave(closing, { status: 'DISMISSED' })
@@ -187,7 +215,7 @@ export function QuestionAnswerForm({
     } catch (cause) {
       setFailure({ id: closing, message: getApiErrorMessage(cause) })
     } finally {
-      setDismissing(false)
+      setClosingId((id) => (id === closing ? undefined : id))
     }
   }
 
@@ -262,6 +290,7 @@ export function QuestionAnswerForm({
   const nav = onNavigate && ordered.length > 1
   return (
     <form
+      ref={formRef}
       noValidate
       className="flex flex-1 flex-col"
       onSubmit={submit}
@@ -276,8 +305,10 @@ export function QuestionAnswerForm({
         </p>
         {children}
         <div className="mt-6 grid gap-4 border-t pt-6">
-          {type === 'CHOICE' ? (
-            <fieldset className="relative grid gap-2">
+          {locked ? (
+            locked
+          ) : type === 'CHOICE' ? (
+            <fieldset className="relative grid gap-2" disabled={closing}>
               <legend className="mb-2 text-sm font-medium">
                 {multiple ? '답변 (여러 개 선택 가능)' : '답변'}
               </legend>
@@ -324,6 +355,7 @@ export function QuestionAnswerForm({
                       aria-label="기타 답변"
                       maxLength={OTHER_MAX}
                       placeholder="직접 입력해 주세요."
+                      readOnly={closing}
                       value={choice.other}
                       onChange={(event) =>
                         change(
@@ -352,6 +384,7 @@ export function QuestionAnswerForm({
                 <Input
                   id="planning-answer"
                   maxLength={maxLength}
+                  readOnly={closing}
                   value={text}
                   onChange={(event) =>
                     change({ text: event.target.value }, false)
@@ -363,6 +396,7 @@ export function QuestionAnswerForm({
                   id="planning-answer"
                   rows={type === 'ESSAY' ? 6 : 4}
                   maxLength={maxLength}
+                  readOnly={closing}
                   value={text}
                   onChange={(event) =>
                     change({ text: event.target.value }, false)
@@ -372,7 +406,7 @@ export function QuestionAnswerForm({
               )}
             </div>
           )}
-          {problem && (
+          {!locked && problem && (
             <p
               role="alert"
               className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
@@ -387,7 +421,11 @@ export function QuestionAnswerForm({
           <Button
             type="button"
             variant="ghost"
-            disabled={dismissing}
+            ref={(node) => () => {
+              if (node && document.activeElement === node)
+                dismissHadFocus.current = true
+            }}
+            disabled={closingId !== undefined}
             title="닫아도 나중에 다시 답할 수 있어요."
             // 누를 때 입력 칸을 벗어나며 버릴 글을 저장하지 않게 포커스를 옮기지 않는다.
             onMouseDown={(event) => event.preventDefault()}
@@ -399,6 +437,7 @@ export function QuestionAnswerForm({
         {nav && (
           <>
             <Button
+              ref={previousRef}
               type="button"
               variant="outline"
               className="ml-auto"
@@ -409,6 +448,7 @@ export function QuestionAnswerForm({
               이전
             </Button>
             <Button
+              ref={nextRef}
               type="button"
               disabled={!next}
               onClick={() => next && onNavigate?.(next.id)}

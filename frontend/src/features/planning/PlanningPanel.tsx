@@ -273,21 +273,60 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
   }
-  // 보완 질문 자동 저장(PLN-A04). 저장하면 질문 목록만 새로 읽는다. 질문이 바뀌었거나(question_superseded)
-  // 이전 본문 기준이 되어(question_outdated) 409로 거절되면 안내는 답변 칸이 하고, 목록을 새로 불러온다.
-  const queryClient = useQueryClient()
-  const refreshQuestions = () =>
-    queryClient.invalidateQueries({
-      queryKey: ['projects', projectId, 'planning-questions'],
+  // 분석이 끝나지 않은 문서의 안내(실패 이유, 진행 상황)는 마우스를 올리지 않아도 읽히게 문서 줄 아래에 글자로 보인다.
+  // 완료된 문서의 안내(검색 준비 완료 등)는 문서 줄의 title 로만 둔다(PR #303 재검토).
+  const analysisNotes = (
+    items: NonNullable<typeof documents.data>['items'],
+  ) => {
+    const notes = DOCUMENT_KINDS.flatMap((kind) => {
+      const document = items.find((item) => item.kind === kind)
+      const version = document ? versionOf(document) : undefined
+      const analysis = version
+        ? analyses[versions.findIndex((item) => item.id === version.id)]?.data
+        : undefined
+      return analysis?.message && analysis.status !== 'COMPLETED'
+        ? [
+            {
+              kind,
+              message: analysis.message,
+              failed: analysis.status === 'FAILED',
+            },
+          ]
+        : []
     })
+    if (!notes.length) return null
+    return (
+      <ul aria-label="문서 분석 안내" className="-mt-2 grid gap-1 px-1 text-xs">
+        {notes.map((note) => (
+          <li
+            key={note.kind}
+            className={
+              note.failed ? 'text-destructive' : 'text-muted-foreground'
+            }
+          >
+            {statusLabel(note.kind)}: {note.message}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  // 보완 질문 자동 저장(PLN-A04). 저장하면 질문 목록만 새로 읽는다. 409로 거절되면(질문이 바뀜 question_superseded,
+  // 이전 본문 기준 question_outdated, 다른 곳에서 기준 발행 design_already_published 등) 안내는 답변 칸이 하고,
+  // 다른 처리(action.run)처럼 프로젝트를 모두 새로 읽는다. 발행됐으면 기준 설계를 다시 읽어 답변 입력을 닫는다.
+  const queryClient = useQueryClient()
   const saveAnswer = async (id: string, input: AnswerQuestionInput) => {
     try {
       await planningApi.answerQuestion(projectId, id, input)
     } catch (cause) {
-      if (getApiErrorStatus(cause) === 409) void refreshQuestions()
+      if (getApiErrorStatus(cause) === 409)
+        void queryClient.invalidateQueries({
+          queryKey: ['projects', projectId],
+        })
       throw cause
     }
-    void refreshQuestions()
+    void queryClient.invalidateQueries({
+      queryKey: ['projects', projectId, 'planning-questions'],
+    })
   }
   // 문서마다 따로 본다. 한 문서가 실패해도 다른 문서의 진행·완료는 계속 따라간다.
   const documentGenerations = versions.map((version, index) => ({
@@ -575,108 +614,122 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       )}
       <AsyncState query={documents}>
         {(data) => (
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border bg-card/70 px-4 py-2 text-[13px]">
-            <span className="font-semibold">문서 4종</span>
-            <span aria-hidden className="h-4 w-px bg-border" />
-            {DOCUMENT_KINDS.map((kind) => {
-              const document = data.items.find((item) => item.kind === kind)
-              const version = document ? versionOf(document) : undefined
-              const analysis = version
-                ? analyses[versions.findIndex((item) => item.id === version.id)]
-                : undefined
-              const status =
-                analysis?.data?.status ??
-                (document?.approved_version ? 'APPROVED' : 'NOT_RUN')
-              const running = status === 'PENDING' || status === 'RUNNING'
-              const Icon = !document
-                ? CircleDashed
-                : status === 'COMPLETED'
-                  ? CircleCheck
-                  : status === 'FAILED'
-                    ? CircleAlert
-                    : running
-                      ? LoaderCircle
-                      : Circle
-              return (
-                <span
-                  key={kind}
-                  title={
-                    [document?.title, analysis?.data?.message]
-                      .filter(Boolean)
-                      .join(' · ') || undefined
-                  }
-                  className="flex items-center gap-1.5"
-                >
-                  <Icon
-                    aria-hidden
-                    className={cn(
-                      'size-4',
-                      !document || status === 'APPROVED' || status === 'NOT_RUN'
-                        ? 'text-muted-foreground/70'
-                        : status === 'COMPLETED'
-                          ? 'text-[#00753a]'
-                          : status === 'FAILED'
-                            ? 'text-destructive'
-                            : 'animate-spin text-amber-600 motion-reduce:animate-none',
+          <>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border bg-card/70 px-4 py-2 text-[13px]">
+              <span className="font-semibold">문서 4종</span>
+              <span aria-hidden className="h-4 w-px bg-border" />
+              {DOCUMENT_KINDS.map((kind) => {
+                const document = data.items.find((item) => item.kind === kind)
+                const version = document ? versionOf(document) : undefined
+                const analysis = version
+                  ? analyses[
+                      versions.findIndex((item) => item.id === version.id)
+                    ]
+                  : undefined
+                const status =
+                  analysis?.data?.status ??
+                  (document?.approved_version ? 'APPROVED' : 'NOT_RUN')
+                const running = status === 'PENDING' || status === 'RUNNING'
+                const Icon = !document
+                  ? CircleDashed
+                  : status === 'COMPLETED'
+                    ? CircleCheck
+                    : status === 'FAILED'
+                      ? CircleAlert
+                      : running
+                        ? LoaderCircle
+                        : Circle
+                return (
+                  <span
+                    key={kind}
+                    title={
+                      [
+                        document?.title,
+                        status === 'COMPLETED' && analysis?.data?.message,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || undefined
+                    }
+                    className="flex items-center gap-1.5"
+                  >
+                    <Icon
+                      aria-hidden
+                      className={cn(
+                        'size-4',
+                        !document ||
+                          status === 'APPROVED' ||
+                          status === 'NOT_RUN'
+                          ? 'text-muted-foreground/70'
+                          : status === 'COMPLETED'
+                            ? 'text-[#00753a]'
+                            : status === 'FAILED'
+                              ? 'text-destructive'
+                              : 'animate-spin text-amber-600 motion-reduce:animate-none',
+                      )}
+                    />
+                    {statusLabel(kind)}
+                    {version && (
+                      <span className="text-muted-foreground">
+                        v{version.version_no}
+                      </span>
                     )}
-                  />
-                  {statusLabel(kind)}
-                  {version && (
-                    <span className="text-muted-foreground">
-                      v{version.version_no}
-                    </span>
-                  )}
-                  {!document ? (
-                    <span className="text-muted-foreground">등록 전</span>
-                  ) : analysis?.error ? (
-                    <span role="alert" className="text-destructive">
-                      분석 상태를 불러오지 못했어요.
-                    </span>
-                  ) : (
-                    status !== 'COMPLETED' && (
-                      <span
-                        className={
-                          status === 'FAILED'
-                            ? 'text-destructive'
-                            : 'text-muted-foreground'
+                    {!document ? (
+                      <span className="text-muted-foreground">등록 전</span>
+                    ) : analysis?.error ? (
+                      <span role="alert" className="text-destructive">
+                        분석 상태를 불러오지 못했어요.
+                      </span>
+                    ) : (
+                      status !== 'COMPLETED' && (
+                        <span
+                          className={
+                            status === 'FAILED'
+                              ? 'text-destructive'
+                              : 'text-muted-foreground'
+                          }
+                        >
+                          {statusLabel(status)}
+                        </span>
+                      )
+                    )}
+                    {status === 'FAILED' && isLeader && version && document && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={action.busy}
+                        onClick={() =>
+                          perform(
+                            () =>
+                              planningApi.retryAnalysis(
+                                projectId,
+                                document.id,
+                                {
+                                  document_version_id: version.id,
+                                },
+                              ),
+                            '분석 재시도를 접수했어요.',
+                          )
                         }
                       >
-                        {statusLabel(status)}
-                      </span>
-                    )
-                  )}
-                  {status === 'FAILED' && isLeader && version && document && (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      disabled={action.busy}
-                      onClick={() =>
-                        perform(
-                          () =>
-                            planningApi.retryAnalysis(projectId, document.id, {
-                              document_version_id: version.id,
-                            }),
-                          '분석 재시도를 접수했어요.',
-                        )
-                      }
-                    >
-                      <RefreshCw />
-                      분석 재시도
-                    </Button>
-                  )}
-                </span>
-              )
-            })}
-            <Button
-              size="sm"
-              variant="outline"
-              className="ml-auto"
-              onClick={() => openPane('documents')}
-            >
-              <FileCheck2 />
-              공용 문서함
-            </Button>
-          </div>
+                        <RefreshCw />
+                        분석 재시도
+                      </Button>
+                    )}
+                  </span>
+                )
+              })}
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                onClick={() => openPane('documents')}
+              >
+                <FileCheck2 />
+                공용 문서함
+              </Button>
+            </div>
+            {analysisNotes(data.items)}
+          </>
         )}
       </AsyncState>
       {!baseline.data && isLeader && unapproved.length > 0 && (
@@ -700,6 +753,24 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           role="tablist"
           aria-label="설계 초안 만들기 단계"
           className="flex items-end gap-7"
+          // 탭 사이는 좌우 화살표·Home·End 로 옮긴다. Tab 키는 고른 탭 하나에만 들른다.
+          onKeyDown={(event) => {
+            const index = tabs.indexOf(tab)
+            const target =
+              event.key === 'ArrowRight'
+                ? tabs[(index + 1) % tabs.length]
+                : event.key === 'ArrowLeft'
+                  ? tabs[(index - 1 + tabs.length) % tabs.length]
+                  : event.key === 'Home'
+                    ? tabs[0]
+                    : event.key === 'End'
+                      ? tabs[tabs.length - 1]
+                      : undefined
+            if (!target) return
+            event.preventDefault()
+            setPicked(target)
+            document.getElementById(`planning-tab-${target}`)?.focus()
+          }}
         >
           {tabs.map((key) => {
             const info = tabInfo[key]
@@ -712,6 +783,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                 id={`planning-tab-${key}`}
                 aria-controls={`planning-panel-${key}`}
                 aria-selected={on}
+                tabIndex={on ? 0 : -1}
                 onClick={() => setPicked(key)}
                 className={cn(
                   '-mb-px flex items-center gap-1.5 border-b-[3px] pt-1 pb-2.5 text-[15px] transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',

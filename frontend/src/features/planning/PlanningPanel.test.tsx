@@ -1010,3 +1010,82 @@ it('문서 목록이 기준 설계·초안 작업보다 늦게 와도 처음 탭
     ),
   )
 })
+
+// PR #303 재검토 4: 자동 저장이 409로 거절되면(예: 다른 곳에서 기준을 발행함) 프로젝트를 모두 새로 읽어 기준 설계도 바로잡는다.
+it('자동 저장이 409로 거절되면 기준 설계까지 프로젝트를 모두 새로 읽는다', async () => {
+  const user = renderPanel()
+  await questionsLoaded()
+  vi.spyOn(planningApi, 'answerQuestion').mockRejectedValue(
+    new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {
+        error: {
+          code: 'design_already_published',
+          message: 'design already published',
+        },
+      },
+    }),
+  )
+  const baseline = vi.spyOn(documentsApi, 'baseline')
+  await openRow(user, '프로젝트 삭제 권한은 인간 팀장만 가지나요?')
+  await user.type(visiblePanel().getByRole('textbox', { name: '답변' }), '답')
+  await user.tab()
+  expect(await visiblePanel().findByText('저장 못 했어요')).toBeInTheDocument()
+  expect(
+    visiblePanel().getByText(/이미 기준 설계가 발행되어 답변을 바꿀 수 없어요/),
+  ).toBeInTheDocument()
+  await waitFor(() => expect(baseline).toHaveBeenCalled())
+})
+
+// PR #303 재검토 5: 분석이 실패하거나 진행 중인 문서의 안내는 마우스를 올리지 않아도 읽힌다. 완료 안내는 보이지 않는다.
+it('분석이 실패하거나 진행 중인 문서의 안내는 문서 줄 아래에 글자로 보인다', async () => {
+  const docs = (await documentsApi.list('102')).items
+  vi.spyOn(planningApi, 'analysis').mockImplementation(
+    async (_projectId, documentId, query) => {
+      const kind = docs.find((item) => item.id === documentId)!.kind
+      return {
+        document_version_id: query.document_version_id,
+        status:
+          kind === 'PLAN' ? 'FAILED' : kind === 'ERD' ? 'RUNNING' : 'COMPLETED',
+        message:
+          kind === 'PLAN'
+            ? '문서를 읽지 못했어요.'
+            : kind === 'ERD'
+              ? '문서를 나눠 읽는 중이에요.'
+              : '검색 준비가 완료되었습니다.',
+        items: [],
+        questions: [],
+      } as never
+    },
+  )
+  renderPanel()
+  const notes = await screen.findByRole('list', { name: '문서 분석 안내' })
+  expect(within(notes).getByText('기획안: 문서를 읽지 못했어요.')).toBeVisible()
+  expect(
+    within(notes).getByText('ERD: 문서를 나눠 읽는 중이에요.'),
+  ).toBeVisible()
+  expect(within(notes).queryByText(/검색 준비가 완료/)).toBeNull()
+})
+
+// PR #303 재검토 7: 탭은 좌우 화살표·Home·End 로 옮기고, Tab 키는 고른 탭 하나에만 들른다.
+it('탭은 좌우 화살표·Home·End 로 옮기고 Tab 키는 고른 탭에만 들른다', async () => {
+  const user = renderPanel()
+  await questionsLoaded()
+  const tabOf = (name: RegExp) => screen.getByRole('tab', { name })
+  expect(tabOf(/보완 질문/)).toHaveAttribute('tabindex', '0')
+  expect(tabOf(/문서 후보/)).toHaveAttribute('tabindex', '-1')
+  tabOf(/보완 질문/).focus()
+  await user.keyboard('{ArrowRight}')
+  expect(tabOf(/답변 보완 후보/)).toHaveAttribute('aria-selected', 'true')
+  expect(tabOf(/답변 보완 후보/)).toHaveFocus()
+  await user.keyboard('{End}')
+  expect(tabOf(/설계 항목 초안/)).toHaveFocus()
+  await user.keyboard('{Home}')
+  expect(tabOf(/문서 후보/)).toHaveAttribute('aria-selected', 'true')
+  expect(tabOf(/문서 후보/)).toHaveFocus()
+  await user.keyboard('{ArrowLeft}')
+  expect(tabOf(/설계 항목 초안/)).toHaveAttribute('aria-selected', 'true')
+})

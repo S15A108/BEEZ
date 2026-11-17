@@ -139,6 +139,16 @@ export function PlanningQuestions({
     previousActive.current = now
   }, [activeKey, projectId, queryClient])
   const questions = usePlanningQuestions(projectId, generating)
+  const board = (data: NonNullable<typeof questions.data>) => (
+    <QuestionBoard
+      {...answer}
+      entries={data.pages.flatMap((page) => page.items)}
+      total={data.pages[0]?.total_count}
+      hasNextPage={questions.hasNextPage}
+      loadingNext={questions.isFetchingNextPage}
+      loadNext={() => void questions.fetchNextPage()}
+    />
+  )
   return (
     <div className={TAB_BODY}>
       {failed.map((item) => (
@@ -198,18 +208,33 @@ export function PlanningQuestions({
           )}
         </Notice>
       )}
-      <AsyncState query={questions}>
-        {(data) => (
-          <QuestionBoard
-            {...answer}
-            entries={data.pages.flatMap((page) => page.items)}
-            total={data.pages[0]?.total_count}
-            hasNextPage={questions.hasNextPage}
-            loadingNext={questions.isFetchingNextPage}
-            loadNext={() => void questions.fetchNextPage()}
-          />
-        )}
-      </AsyncState>
+      {questions.data ? (
+        // 받아 둔 목록이 있으면 다시 읽기가 한 번 실패해도 답변 판을 내리지 않는다.
+        // 필터·열린 질문·쓰던 답·포커스를 그대로 두고 위에 안내만 보인다(PR #303 재검토).
+        <>
+          {questions.error && (
+            <Notice
+              tone="fail"
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void questions.refetch()}
+                >
+                  <RefreshCw />
+                  다시 불러오기
+                </Button>
+              }
+            >
+              질문 목록을 새로 불러오지 못했어요. 지금 보이는 목록은 마지막으로
+              불러온 것이에요.
+            </Notice>
+          )}
+          {board(questions.data)}
+        </>
+      ) : (
+        <AsyncState query={questions}>{board}</AsyncState>
+      )}
     </div>
   )
 }
@@ -259,8 +284,6 @@ function QuestionBoard({
         현재 등록된 보완 질문이 없어요.
       </EmptyState>
     )
-  const canAnswer = (question: PlanningQuestion) =>
-    isLeader && answerable && !isLocked(question)
   const header = (
     <div
       role="group"
@@ -333,7 +356,16 @@ function QuestionBoard({
     </>
   )
   const head = current && <QuestionHead question={current} />
-  const detail = !current ? null : canAnswer(current) ? (
+  const lockedNotice = (question: PlanningQuestion) =>
+    question.freshness && question.freshness !== 'CURRENT' ? (
+      <p className="flex gap-2 rounded-lg bg-muted px-4 py-3 text-sm leading-6">
+        <Lock className="mt-1 size-4 shrink-0 text-muted-foreground" />
+        {lockedMessage[question.freshness]}
+      </p>
+    ) : null
+  // 팀장이 답할 수 있는 동안에는 잠긴 질문도 같은 답변 폼 안에서 안내만 바꿔 보인다.
+  // 폼이 내려가면 저장에 실패해 남겨 둔 답과 저장 상태가 사라지기 때문이다(PR #303 재검토).
+  const detail = !current ? null : isLeader && answerable ? (
     <QuestionAnswerForm
       question={current}
       siblings={filtered.filter(
@@ -348,6 +380,7 @@ function QuestionBoard({
       onEdit={(id) =>
         setOpened((shown) => shown ?? entries.find((item) => item.id === id))
       }
+      locked={isLocked(current) ? lockedNotice(current) : undefined}
     >
       {head}
     </QuestionAnswerForm>
@@ -372,16 +405,9 @@ function QuestionBoard({
           기준 설계가 발행되어 답변을 바꿀 수 없어요.
         </p>
       )}
-      {isLeader &&
-        !published &&
-        isLocked(current) &&
-        current.freshness &&
-        current.freshness !== 'CURRENT' && (
-          <p className="mt-6 flex gap-2 rounded-lg bg-muted px-4 py-3 text-sm leading-6">
-            <Lock className="mt-1 size-4 shrink-0 text-muted-foreground" />
-            {lockedMessage[current.freshness]}
-          </p>
-        )}
+      {isLeader && !published && isLocked(current) && (
+        <div className="mt-6">{lockedNotice(current)}</div>
+      )}
     </div>
   )
   return <SplitView header={header} list={rows} detail={detail} />
