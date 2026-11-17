@@ -67,7 +67,7 @@
 
 Windows에서는 Git Bash에서 실행하세요. 첫 명령의 `VITE_API_MODE=live npm run build`는 PowerShell과 cmd에서
 동작하지 않습니다. PowerShell을 써야 한다면 `frontend/.env` 파일에 `VITE_API_MODE=live` 한 줄을 적고
-`npm ci; npm run build`만 실행해도 됩니다.
+`npm ci; npm run build`만 실행해도 됩니다. 다만 아래 인증 코드 확인과 AI 기능 켜기는 bash 명령이라 Git Bash에서 실행하세요.
 
 ```bash
 # 1) 프론트엔드를 실제 API에 붙는 모드로 빌드합니다 (frontend/dist 생성)
@@ -86,7 +86,7 @@ docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infr
 ### 회원가입하기
 
 로컬에서는 인증 메일을 보내지 않고 backend 로그에 인증 코드를 남깁니다. 가입 화면에서 코드를 요청한 뒤 아래 명령으로
-6자리 코드를 확인해 입력하세요.
+6자리 코드를 확인해 입력하세요. 여러 번 요청했다면 맨 아래에 나온 코드가 최신입니다.
 
 ```bash
 docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 코드입니다"
@@ -94,23 +94,9 @@ docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 �
 
 ### AI 기능까지 쓰려면
 
-키 없이도 서비스는 뜨지만 문서 검토, 비비 질문 같은 AI 기능은 실패합니다. AI 기능을 쓰려면 SSAFY GMS API 키가
-필요합니다(SSAFY 교육생만 발급 가능). 키를 받았으면 아래 명령을 차례로 실행하세요. 키는 파일에 저장하지 않고
-지금 열린 터미널에만 둡니다.
-
-```bash
-read -rs GMS_KEY && export GMS_KEY      # 키를 붙여 넣고 Enter (화면에 보이지 않습니다)
-export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna
-export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTEXT_SELECTION_MAX_ITEMS=10 \
-       CONTEXT_SELECTION_MAX_EVIDENCE=8 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30
-docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
-```
-
-- 둘째 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을 켭니다.
-- 셋째 줄은 에이전트가 승인된 설계를 읽어 가는 기능을 켭니다. 이 줄이 없으면 에이전트를 연결해도 설계를 읽지 못합니다.
-- 이 기능들은 기본으로 꺼져 있어서 키만 넣으면 여전히 실패합니다.
-- `export`한 값은 지금 열린 터미널에만 남습니다. 터미널을 새로 열었다면 위 명령을 처음부터 다시 실행한 뒤 서비스를
-  띄우세요. 그러지 않으면 AI 기능이 꺼진 채로 뜹니다.
+키 없이도 서비스는 뜨지만 문서 검토, 비비 질문 같은 AI 기능은 실패합니다. SSAFY GMS API 키(SSAFY 교육생만 발급 가능)를
+받았다면 [포팅 매뉴얼 1-2절 "AI 기능 켜기"](exec/01-build-and-deploy.md#3-ai-기능-켜기)의 명령으로 키를 넣고 기능을 켜세요.
+키만 넣으면 기능이 꺼진 채라 여전히 실패하니, 그 절의 명령을 모두 실행해야 합니다.
 
 ### 주소
 
@@ -191,7 +177,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 에이전트 연결하기
 
-1. 웹에 로그인하고 연결할 프로젝트에 들어갑니다. 화면 위쪽의 톱니바퀴(설정) 버튼을 눌러 **내 에이전트 관리**에서
+1. 웹에 로그인하고 연결할 프로젝트에 들어갑니다. 오른쪽 위의 톱니바퀴(설정) 버튼을 눌러 **내 에이전트 관리**에서
    토큰을 발급합니다. 토큰은 프로젝트마다 따로 발급하고, 발급할 때 한 번만 보이니 바로 복사하세요.
 2. 화면에 나온 명령을 작업할 저장소 폴더에서 실행합니다. 로컬 서버라면 주소가 `http://localhost:8088/mcp`입니다.
 

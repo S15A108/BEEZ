@@ -9,14 +9,14 @@ PC에서 실행해 보려면 1-2절을, 새 서버에 배포하려면 1-4절을 
 | 구분 | 제품 | 버전 | 주요 설정 값 | 확인한 파일 |
 | --- | --- | --- | --- | --- |
 | JVM | Eclipse Temurin (OpenJDK) | 21 (빌드 `21-jdk`, 실행 `21-jre`) | `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0` (컨테이너 메모리의 75%까지 힙 사용) | `backend/Dockerfile` |
-| WAS | Spring Boot 내장 Tomcat | Spring Boot 4.1.1 | 포트 8080, 종료할 때 처리 중인 요청을 최대 20초 기다림 | `backend/build.gradle`, `application.yml` |
+| WAS | Spring Boot 내장 Tomcat | Tomcat 11.0.24 (Spring Boot 4.1.1) | 포트 8080, 종료할 때 처리 중인 요청을 최대 20초 기다림 | `backend/build.gradle`, `application.yml` |
 | 빌드 도구 | Gradle Wrapper | 8.14.3 | | `backend/gradle/wrapper/gradle-wrapper.properties` |
 | 웹서버 | Nginx | 1.24 (서버는 Ubuntu 패키지, 로컬은 `nginx:1.24-alpine` 이미지) | 업로드 최대 2MB, `/api/` 응답 대기 60초, `/mcp` 응답 대기 1시간(버퍼링 끔) | `infra/nginx/sites-available/dev.beez.ai.kr.conf` |
 | AI 서버 | Python, FastAPI, Uvicorn | Python 3.12 | 포트 8000 (컨테이너 안에서만 열림) | `ai/Dockerfile`, `ai/requirements.lock` |
 | 프론트 빌드 | Node.js, Vite | Node 24, Vite 8 | 빌드할 때 `VITE_API_MODE=live` | `frontend/package.json` |
 | DB | PostgreSQL + pgvector | PostgreSQL 17 | DB 이름 `beez`, 포트 5432, `wal_level=logical` | `infra/compose.yaml` |
 | 파일 저장소 | SeaweedFS (S3 호환) | 4.51 | 버킷 `beez-documents`, 포트 8333 (컨테이너 안에서만 열림) | `infra/compose.yaml` |
-| 컨테이너 | Docker Engine, Docker Compose v2 | 서버 Docker CE, 로컬 Docker Desktop 29.6 | | `docs/infra/server-setup.md`, `docs/infra/docker-images.md` |
+| 컨테이너 | Docker Engine, Docker Compose | 서버 Docker Engine 29.9.2와 Compose v5.6.1, 로컬 Docker Desktop 29.6 | | `docs/infra/server-setup.md`, `docs/infra/docker-images.md` |
 | 서버 OS | Ubuntu | 24.04 LTS (4 vCPU, RAM 15GiB, 디스크 309GB) | 방화벽(ufw)으로 80, 443만 엶 | `docs/infra/server-setup.md` |
 
 ### 주요 라이브러리
@@ -42,20 +42,66 @@ PC에서 실행해 보려면 1-2절을, 새 서버에 배포하려면 1-4절을 
 | DB 이름 | `beez` | `beez` | `beez` |
 | 계정 | `infra/local.env`의 `DB_USERNAME`, `DB_PASSWORD` | `beez` / `beez` (`backend/compose.yaml`) | 서버 `/opt/beez/.env.dev` |
 
-DB에 직접 접속하려면 `docker exec -it beez-postgres-1 psql -U beez -d beez`를 실행합니다.
+DB에 직접 접속하려면 아래 명령을 실행합니다. Git Bash에서 `the input device is not a TTY` 오류가 나면 명령 앞에 `winpty`를
+붙이세요. `bootRun`으로 띄웠다면 컨테이너 이름이 `beez-postgres`입니다.
+
+```bash
+docker exec -it beez-postgres-1 psql -U beez -d beez
+```
 
 ## 1-2. PC에서 빌드하고 실행하기
 
-Docker Desktop과 Node.js 24를 설치하고, 저장소를 클론한 폴더에서 아래 두 명령을 실행합니다.
-Windows는 Git Bash를 쓰세요. 첫 명령은 PowerShell과 cmd에서 동작하지 않습니다.
+Docker Desktop과 Node.js 24를 설치하고 Docker Desktop을 켜 둡니다. 이 절의 명령은 모두 저장소를 클론한 폴더에서
+실행하고, Windows에서는 Git Bash를 쓰세요. PowerShell과 cmd에서는 `VITE_API_MODE=live npm run build`와 `grep`, `read`
+같은 명령이 동작하지 않습니다.
+
+### 1) 빌드하고 띄우기
 
 ```bash
 cd frontend && npm ci && VITE_API_MODE=live npm run build && cd ..
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait
 ```
 
-명령이 끝나면 <http://localhost:8088>을 엽니다. 가입 인증 코드 확인, AI 기능 켜기, 종료 방법은
-[저장소 README "빠르게 실행하기"](../README.md#빠르게-실행하기)에 있습니다.
+첫 명령 출력 끝에 `built in`(빌드 완료) 줄이 나왔는지 확인하고 두 번째 명령을 실행하세요. 첫 명령이 중간에 실패하면
+터미널이 `frontend` 폴더에 남아 있으니 `cd ..`로 돌아와 다시 실행합니다. 처음에는 이미지를 빌드하느라 5분쯤 걸리고,
+끝나면 브라우저에서 <http://localhost:8088>을 엽니다.
+
+### 2) 회원가입하기
+
+PC 실행은 인증 메일을 보내지 않고 backend 로그에 인증 코드를 남깁니다. 가입 화면에서 코드를 요청한 뒤 아래 명령으로
+6자리 코드를 확인해 입력하세요. 여러 번 요청했다면 맨 아래에 나온 코드가 최신입니다.
+
+```bash
+docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 코드입니다"
+```
+
+### 3) AI 기능 켜기
+
+키 없이도 서비스는 뜨지만 문서 검토, 비비 질문 같은 AI 기능은 실패합니다. AI 기능을 쓰려면 SSAFY GMS API 키
+([2-1](02-external-services.md#2-1-llm-api-ssafy-gms))를 받아 아래 명령을 차례로 실행합니다. 키는 파일에 저장하지 않고
+지금 열린 터미널에만 둡니다.
+
+```bash
+read -rs GMS_KEY && export GMS_KEY      # 키를 붙여 넣고 Enter. Git Bash에서는 Shift+Insert로 붙여 넣습니다 (화면에 보이지 않습니다)
+export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna
+export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTEXT_SELECTION_MAX_ITEMS=10 \
+       CONTEXT_SELECTION_MAX_EVIDENCE=8 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30
+docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
+```
+
+- 키와 함께 둘째, 셋째 줄도 꼭 실행하세요. 둘째 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 셋째 줄은 에이전트가
+  승인된 설계를 읽어 가는 기능을 켭니다. 이 기능들은 기본으로 꺼져 있습니다.
+- 셋째 줄의 기능은 팀 문서([docs/infra/env.md](../docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 AI 담당이
+  확정하기 전의 제안값입니다. 다만 이 기능이 꺼져 있으면 에이전트가 설계를 읽지 못해 시연 ②가 동작하지 않으므로 함께 켭니다.
+- `export`한 값은 지금 열린 터미널에만 남습니다. 터미널을 새로 열었다면 위 명령을 처음부터 다시 실행한 뒤 서비스를 띄우세요.
+
+### 4) 상태 보기와 끄기
+
+```bash
+docker compose -p beez ps                 # postgres, seaweedfs, ai, backend 가 (healthy) 면 정상입니다. nginx 는 Up 으로만 나옵니다
+docker compose -p beez down               # 끄기. 데이터는 남습니다
+docker compose -p beez down -v            # 데이터까지 지우기. 가입한 계정과 올린 문서가 모두 지워집니다
+```
 
 ### 서비스별 빌드 명령
 
@@ -95,13 +141,13 @@ compose의 `--build`가 backend와 ai 이미지를 직접 빌드하므로, 전�
 | `GMS_KEY` | | 비밀 | SSAFY GMS API 키. 비우면 AI 기능을 쓸 수 없습니다 |
 | `PLANNING_QUESTIONS_ENABLED`, `DESIGN_DRAFTS_ENABLED`, `BEE_CHAT_ENABLED` | | | `true`. 보완 질문, 설계 초안, 비비 질문을 켭니다. 적지 않으면 꺼져 있습니다 |
 | `IMPACT_LLM_MODEL` | | | `gpt-6-luna`. 변경 영향 분석을 켭니다. 비우면 꺼져 있습니다 |
-| `CONTEXT_SELECTION_ENABLED`와 `CONTEXT_SELECTION_MIN_SIMILARITY`, `_MAX_ITEMS`, `_MAX_EVIDENCE`, `_TOTAL_TIMEOUT_SECONDS` | | | 차례로 `true`, `0.3`, `10`, `8`, `30`. 에이전트가 승인된 설계를 읽어 가는 기능입니다. 다섯 줄이 모두 있어야 켜집니다 |
+| `CONTEXT_SELECTION_ENABLED`, `CONTEXT_SELECTION_MIN_SIMILARITY`, `CONTEXT_SELECTION_MAX_ITEMS`, `CONTEXT_SELECTION_MAX_EVIDENCE`, `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` | | | 차례로 `true`, `0.3`, `10`, `8`, `30`. 에이전트가 승인된 설계를 읽어 가는 기능이고, 다섯 줄이 모두 있어야 켜집니다. 팀 기본값은 꺼짐이고 값은 AI 담당 확정 전의 제안값입니다. 꺼 두면 에이전트가 설계를 읽지 못합니다 |
 
 난수는 `openssl rand -hex 24`로 만듭니다. 16진수만 쓰세요. 따옴표나 역슬래시가 들어가면 파일 저장소 설정이 깨집니다.
 
 ## 1-4. 새 서버에 배포하기
 
-우리 팀 서버는 dev 브랜치에 push하면 자동으로 배포됩니다([1-5](#1-5-우리-서버의-자동-배포)). 이 자동 배포는 팀의
+팀 개발 서버는 dev 브랜치에 push하면 자동으로 배포됩니다([1-5](#1-5-팀-개발-서버의-자동-배포)). 이 자동 배포는 팀의
 GitHub 저장소 권한과 Jenkins가 있어야 하므로, 새 서버에서는 아래 순서대로 직접 배포합니다.
 서버는 Ubuntu 24.04이고, 사용할 도메인이 서버 IP를 가리키도록 DNS에 등록해 두었다고 가정합니다.
 
@@ -116,11 +162,13 @@ sudo apt-get install -y nginx certbot
 
 ### 2) 소스 받기
 
-GitLab 저장소는 비공개라 SSAFY 계정으로 로그인해야 받을 수 있습니다.
+GitLab 저장소는 비공개라 SSAFY GitLab 계정으로 로그인해야 받을 수 있습니다. 비밀번호를 물을 때 로그인이 거절되면
+GitLab의 사용자 설정에서 Personal Access Token(`read_repository` 권한)을 만들어 비밀번호 자리에 넣으세요.
+개발 서버와 같은 코드를 받도록 `dev` 브랜치를 지정합니다.
 
 ```bash
 sudo mkdir -p /opt/beez && sudo chown "$USER" /opt/beez
-git clone https://lab.ssafy.com/s15-final/S15P31A108.git /opt/beez/src
+git clone -b dev https://lab.ssafy.com/s15-final/S15P31A108.git /opt/beez/src
 ```
 
 ### 3) env 파일 만들기
@@ -185,10 +233,6 @@ ssh <서버> 'rm -rf /tmp/beez-dist' && scp -r dist <서버>:/tmp/beez-dist
 # 서버
 sudo mkdir -p /var/www/beez && sudo rm -rf /var/www/beez/current && sudo mv /tmp/beez-dist /var/www/beez/current
 ```
-
-이렇게 올리면 `/var/www/beez/current`가 일반 폴더가 됩니다. 나중에 우리 팀의 자동 배포 스크립트(`deploy.sh`)로
-바꾸려면 이 폴더를 지워야 합니다. 그 스크립트는 같은 자리에 버전별 폴더를 가리키는 링크를 만들기 때문입니다.
-
 ### 6) Nginx 설정과 HTTPS 인증서
 
 443 포트 설정은 인증서 파일이 있어야 켜지므로, 인증서를 받는 임시 설정을 먼저 켜고 인증서를 받은 뒤 진짜 설정으로
@@ -229,13 +273,14 @@ certbot이 실패하면 도메인이 이 서버 IP를 가리키는지(`nslookup 
 ### 7) 확인
 
 ```bash
+D=내도메인.com
 curl -s https://$D/actuator/health; echo    # {"status":"UP"} 이면 정상
 ```
 
 브라우저로 `https://내도메인.com`을 열어 회원가입을 해 봅니다. 인증 메일이 오지 않으면 3)의 `MAIL_` 값을 확인하고,
 `docker compose -p beez logs backend | grep -i mail`로 오류를 찾아보세요.
 
-## 1-5. 우리 서버의 자동 배포
+## 1-5. 팀 개발 서버의 자동 배포
 
 | 항목 | 값 |
 | --- | --- |
@@ -261,11 +306,10 @@ curl -s https://$D/actuator/health; echo    # {"status":"UP"} 이면 정상
 2. **DB 비밀번호(`DB_PASSWORD`)는 env 파일에서만 바꾸면 안 됩니다.** DB는 처음 만들 때의 비밀번호를 계속 쓰므로,
    env 파일만 바꾸면 backend가 DB에 접속하지 못합니다. DB 안의 비밀번호도 함께 바꾸세요.
 3. 필수 환경변수가 빠지면 compose가 빠진 변수 이름을 알려 주고 멈춥니다. 그 줄을 env 파일에 넣고 다시 실행하세요.
-4. AI 기능은 env 파일에 켜는 줄이 있어야 동작합니다. `GMS_KEY`만 넣으면 보완 질문, 설계 초안, 비비 질문, 영향 분석,
-   에이전트의 설계 읽기는 계속 실패합니다. 1-4의 3)에 켜는 줄을 모두 넣어 두었습니다.
+4. AI 기능을 켜는 줄은 1-4의 3)에서 env 파일에 모두 넣었습니다. 지우면 그 기능만 실패합니다.
 5. AI 응답을 기다리는 시간을 늘릴 때는 바깥쪽부터 늘리세요. 예를 들어 문서 검토 대화는 AI 모델 호출
-   `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`(50초) < backend 대기 `DOCUMENT_REVIEW_READ_TIMEOUT`(55s) < Nginx
-   `proxy_read_timeout`(60s) 순서를 지켜야 합니다. 바깥쪽이 더 짧아지는 순간 Nginx가 먼저 504 오류를 내고 backend는
+   `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`(50초) < backend 대기 `DOCUMENT_REVIEW_READ_TIMEOUT`(55초) < Nginx
+   `proxy_read_timeout`(60초) 순서를 지켜야 합니다. backend 값은 `55s`처럼 단위를 붙여 적습니다. 바깥쪽이 더 짧아지는 순간 Nginx가 먼저 504 오류를 내고 backend는
    계속 돌아 비용만 나갑니다. 그래서 늘릴 때는 Nginx, backend, AI 순서로, 줄일 때는 반대 순서로 바꿉니다.
 6. `VITE_API_MODE`는 프론트엔드를 빌드할 때 정해집니다. 값을 바꿨다면 프론트엔드를 다시 빌드해 올려야 반영됩니다.
 7. DB 테이블은 backend가 뜰 때 자동으로 만들어집니다. Flyway가 `backend/src/main/resources/db/migration`(SQL)과
@@ -289,7 +333,7 @@ DB 접속 정보 같은 계정과 설정이 정의된 파일입니다. 실제 �
 | `frontend/.env.example` | `VITE_API_MODE` 예시. `frontend/.env`로 복사해 씁니다 | 예시만 |
 | 서버 `/opt/beez/.env.dev` | 실제 DB, 파일 저장소, AI, 메일 비밀값 | X |
 | 서버 `/opt/beez/.env.monitoring` | 모니터링(Grafana 등) 계정 | X |
-| 서버 `/opt/beez/.cdc-secrets/database.properties` | 문서 변경 감지(CDC) 커넥터가 쓰는 DB 계정 ([docs/infra/cdc-connector.md](../docs/infra/cdc-connector.md)) | X |
+| 서버 `/opt/beez/.cdc-secrets/database.properties` | 발행된 설계 변경을 분석 대기열로 넘기는 CDC(DB 변경 전달) 커넥터의 DB 계정 ([docs/infra/cdc-connector.md](../docs/infra/cdc-connector.md)) | X |
 | 서버 `/opt/beez/.alertmanager-webhook-url` | Mattermost 알림을 보낼 웹훅 주소 | X |
 | 서버 `/etc/jenkins/casc.env` | Jenkins 관리자와 배포 계정 | X |
 | GitHub 저장소 설정 | 배포 토큰(`JENKINS_API_TOKEN`), GitLab 동기화 토큰(`GITLAB_SYNC_TOKEN`), 자동 병합 토큰(`PR_AUTOMERGE_TOKEN`), `VITE_API_MODE` | X |
