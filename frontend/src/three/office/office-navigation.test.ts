@@ -4,7 +4,12 @@ import { makeDreamFloor } from './dream-floor'
 import { moveContinuous } from './motion'
 import { officeActors } from './office-actors'
 import { OfficeLifeSimulation, PERSONAL_SPACE } from './office-life'
-import { enterTarget, officeLanding, officeWalkable } from './office-navigation'
+import {
+  enterTarget,
+  officeLanding,
+  officeWalkable,
+  officeWalkRoute,
+} from './office-navigation'
 import { officeHomeSeats } from './office-work'
 import { officeSceneAgents } from '../sceneData'
 
@@ -125,3 +130,28 @@ it('Enter 거리 안에 아무도 없으면 대상을 고르지 않는다', () =
   expect(enterTarget(people, { x: 50, y: 0 })).toBe('b')
   expect(enterTarget(people, { x: 300, y: 0 })).toBeUndefined()
 })
+
+// PR #319 리뷰 확인 부탁: 내 캐릭터도 몸 반지름(16px)만큼 가구에서 떨어져 걷게 되며 시작 자리와 클릭 이동이 막히는
+// 곳이 없는지. 가구 사이에 갇힌 틈을 누르면 길이 없어 제자리에 섰다(tower 19칸, wood 28칸).
+it.each(['glass', 'brick', 'modern', 'tower', 'wood'])(
+  '%s: 내 캐릭터는 엘리베이터 앞에서 시작하고, 사무실 어느 칸을 눌러도 걸어간다',
+  (design) => {
+    const floor = makeDreamFloor(
+      makeBuilding(ALL_KEYS, design, null, {}).floors[1],
+      4,
+    )
+    const exit = { x: floor.exit.x * 32 + 16, y: floor.exit.y * 32 + 27 }
+    expect(officeLanding(floor, exit)).toEqual(exit)
+    const stuck: string[] = []
+    for (let y = 0; y < floor.H; y++)
+      for (let x = 0; x < floor.W; x++) {
+        if (floor.grid[y][x] === '#') continue
+        const route = officeWalkRoute(floor, exit, {
+          x: x * 32 + 16,
+          y: y * 32 + 16,
+        })
+        if (!route.length) stuck.push(`${x},${y}`)
+      }
+    expect(stuck).toEqual([])
+  },
+)
