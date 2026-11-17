@@ -1,11 +1,17 @@
 import { Suspense, lazy } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Hexagon, Settings } from 'lucide-react'
+import { ChevronDown, Hexagon, LogOut, Settings } from 'lucide-react'
 import { authApi } from '@/api/services'
 import { useSession } from '@/features/auth/useSession'
 import { useAccountDialog } from '@/features/account/useAccountDialog'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { CharacterAvatar } from '@/components/CharacterAvatar'
 import { characterOf } from '@/lib/characters'
 
@@ -58,28 +64,39 @@ export default function App() {
           <h1 className="text-xl font-extrabold tracking-wide">BEEZ</h1>
         </Link>
         {session.data ? (
-          <nav aria-label="계정" className="flex items-center gap-1 text-sm">
-            <span className="mr-2 inline-flex items-center gap-2 text-muted-foreground">
-              <CharacterAvatar
-                character={characterOf(session.data.avatar)}
-                className="size-7 ring-2 ring-primary"
-              />
-              {session.data.name}
-            </span>
-            {/* 회원 설정은 지금 화면 위에 창으로 연다(D48). */}
-            <Button variant="ghost" asChild>
-              <Link {...account.linkTo('profile')}>
-                <Settings />
-                회원 설정
-              </Link>
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={logout.isPending}
-              onClick={() => logout.mutate()}
-            >
-              로그아웃
-            </Button>
+          // 이름을 누르면 회원 설정·로그아웃 메뉴가 열린다(화면 검수 2026-11-16, S15P31A108-446).
+          <nav aria-label="계정">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="h-10 gap-2 rounded-full pr-2.5 pl-1.5"
+                >
+                  <CharacterAvatar
+                    character={characterOf(session.data.avatar)}
+                    className="size-7 ring-2 ring-primary"
+                  />
+                  {session.data.name}
+                  <ChevronDown className="text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {/* 회원 설정은 지금 화면 위에 창으로 연다(D48). 창이 열려 있으면 머리줄은 창 아래에 가린다. */}
+                <DropdownMenuItem asChild>
+                  <Link {...account.linkTo('profile')}>
+                    <Settings />
+                    회원 설정
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={logout.isPending}
+                  onSelect={() => logout.mutate()}
+                >
+                  <LogOut />
+                  로그아웃
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </nav>
         ) : ['/', '/login', '/register'].includes(pathname) ? null : (
           // 로그인 화면 밖(초대·없는 주소)에서는 머리줄 오른쪽에 로그인 링크(캔버스 SCR-03·SCR-07)

@@ -159,6 +159,10 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
     preview.getByRole('region', { name: '확인하지 못한 것' }),
   ).toBeVisible()
   await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  // 발행 성공과 영향 미확정을 요약 한 줄에서 함께 읽는다(S15P31A108-434).
+  await expect(
+    dialog.getByRole('heading', { name: '발행 완료 · 영향 확인 필요' }),
+  ).toBeVisible()
   const status = dialog.getByRole('region', { name: '발행 후 분석 상태' })
   await expect(status).toContainText('상태 확인 필요')
   await expect(status).toContainText('발행 전 영향 분석과는 별도의 처리 상태')
@@ -248,6 +252,21 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
     page.getByRole('button', { name: '참여하기', exact: true }),
   ).toHaveCount(0)
   const log = page.getByRole('log', { name: '회의 대화' })
+  // 참여자는 제목 줄에 있어 입력줄에 가리지 않고, 창은 스크롤하지 않고 대화 칸만 스크롤한다(S15P31A108-438).
+  await expect(
+    log.getByText('TASK-002에서 만료 전용 안내는 뺄게요.'),
+  ).toBeVisible()
+  const people = await page.getByRole('group', { name: '참여자' }).boundingBox()
+  const input = await page
+    .getByRole('textbox', { name: /메시지/ })
+    .boundingBox()
+  expect(people!.y + people!.height).toBeLessThan(input!.y)
+  expect(
+    await log.evaluate((element) => {
+      const panel = element.closest('section')!
+      return panel.scrollHeight - panel.clientHeight
+    }),
+  ).toBeLessThanOrEqual(1)
   await page
     .getByRole('textbox', { name: /메시지/ })
     .fill('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.')
@@ -289,6 +308,39 @@ test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 
   ).toBeVisible()
   await expect(
     page.getByRole('button', { name: '변경 제안 보기', exact: true }),
+  ).toBeVisible()
+})
+
+// PR #306 재검토(S15P31A108-438): 낮은 창에서 비비 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 납작해지지 않고
+// (초안은 버튼과 초안 몇 줄, 안건은 '정할 것' 줄과 안내 몇 줄), 모자라면 창이 스크롤해 '접기'를 다시 누를 수 있다.
+test('1024×768에서 정리 뒤 수정 초안과 안건을 펼쳐도 두 칸이 보이고 다시 접을 수 있다', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '회의실', exact: true }).click()
+  const log = page.getByRole('log', { name: '회의 대화' })
+  await page
+    .getByRole('button', { name: '비비에게 정리 요청', exact: true })
+    .click()
+  await expect(log.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
+  await page.getByRole('button', { name: '회의 수정 초안 만들기' }).click()
+  const fold = page.getByRole('button', { name: '회의 수정 초안 접기' })
+  const draft = fold.locator('..')
+  const agenda = page.getByRole('region', { name: '안건' })
+  await agenda.getByRole('button', { name: '펼치기' }).click()
+  await expect(agenda.getByRole('button', { name: '접기' })).toBeVisible()
+  const draftBox = await draft.boundingBox()
+  const foldBox = await fold.boundingBox()
+  const agendaBox = await agenda.boundingBox()
+  expect(draftBox!.height).toBeGreaterThanOrEqual(150)
+  expect(foldBox!.y + foldBox!.height).toBeLessThanOrEqual(
+    draftBox!.y + draftBox!.height,
+  )
+  expect(agendaBox!.height).toBeGreaterThanOrEqual(120)
+  await fold.click()
+  await expect(
+    page.getByRole('button', { name: '회의 수정 초안 만들기' }),
   ).toBeVisible()
 })
 
@@ -361,10 +413,20 @@ test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카�
 
   await page.mouse.move(0, 0)
   await expect(tooltip).toHaveCount(0)
+  // 제목 줄의 정렬 뒤로 만들기 버튼과 도시 이름표를 지나 첫 카드까지 키보드로 간다(S15P31A108-446).
   await page.getByLabel('정렬').focus()
-  await page.keyboard.press('Tab')
+  for (let i = 0; i < 30; i++) {
+    if (await preparing.evaluate((element) => element.matches(':focus'))) break
+    await page.keyboard.press('Tab')
+  }
+  await expect(preparing).toBeFocused()
   await expect(tooltip).toHaveCount(1)
-  await page.keyboard.press('Shift+Tab')
+  await expect(tooltip).toContainText('시작 준비 중')
+  await page.keyboard.press('Tab')
+  await expect(running).toBeFocused()
+  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  // 마지막 카드에서 목록 밖으로 나가면 닫힌다.
+  await page.keyboard.press('Tab')
   await expect(tooltip).toHaveCount(0)
 })
 

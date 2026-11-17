@@ -478,6 +478,13 @@ export function WorkspaceHud({
     DRAFT: '계획 작성 중',
     READY: '시작 전',
   } as Record<string, string>
+  // 연결된 에이전트(연결 미확인 포함, AGT-A05). 끊김·연결 전은 목록에 내 것만 남기고 팀 카드 수에도 세지 않는다.
+  const linked = (status: string) =>
+    status === 'connected' || status === 'recheck'
+  // 팀 카드 인원(디자인 검수 F05): 사람과 에이전트 줄을 합쳐 세지 않는다. 사람 수는 팀 관리 목록과 같은 팀원 목록이다.
+  const agentCount = members.filter((member) =>
+    linked(statusOf(member).status),
+  ).length
   const teamRows = [
     ...members
       .toSorted((a, b) => Number(b.id === me?.id) - Number(a.id === me?.id))
@@ -486,26 +493,30 @@ export function WorkspaceHud({
         const seen = presenceView(
           presence?.find((item) => item.member_id === member.id),
         )
+        // 사람 줄은 접속 상태(MON-A07)를 '접속 중'·'오프라인'으로 쓴다. 에이전트의 연결 상태 이름과 섞지 않는다(디자인 검수 F05).
+        const status =
+          seen.online === undefined
+            ? undefined
+            : seen.online
+              ? '접속 중'
+              : (seen.detail ?? '오프라인')
         return {
           online: seen.online,
           key: member.id,
           initial: member.name.slice(0, 1),
           color: member.color,
           name: `${member.name}${member.id === me?.id ? ' · 나' : ''}`,
+          status,
           // 위치는 presence(MON-A07)에서 온다. 아직 못 받았으면 나만 '사무실 내 자리'로 두고, 다른 팀원은 하는 일만 보여 준다.
+          // 위치(zone)가 없으면 presenceView가 위치 칸에 '접속 중'을 채우는데, 상태 이름에 이미 있어 한 번만 쓴다.
           place:
-            seen.place ??
+            (seen.place !== status && seen.place) ||
             (member.id === me?.id && !presence ? '사무실 내 자리' : undefined),
-          detail: [
-            seen.detail,
-            task
-              ? `${task.key} ${taskText[task.status]}`
-              : [member.role === 'LEADER' ? '인간 팀장' : '팀원', member.domain]
-                  .filter(Boolean)
-                  .join(' · '),
-          ]
-            .filter(Boolean)
-            .join(' · '),
+          detail: task
+            ? `${task.key} ${taskText[task.status]}`
+            : [member.role === 'LEADER' ? '인간 팀장' : '팀원', member.domain]
+                .filter(Boolean)
+                .join(' · '),
           open: () =>
             task ? openPane('tasks', task.id) : openPane('settings', 'team'),
         }
@@ -514,12 +525,7 @@ export function WorkspaceHud({
     // 연결은 사무실과 같은 연결 현황(AGT-A05)으로 본다. 첫 조회의 agent_connected는 연 뒤의 연결·끊김을 담지 못한다.
     ...members
       .map((member) => ({ member, ...statusOf(member) }))
-      .filter(
-        ({ member, status }) =>
-          status === 'connected' ||
-          status === 'recheck' ||
-          member.id === me?.id,
-      )
+      .filter(({ member, status }) => linked(status) || member.id === me?.id)
       .map(({ member, status, lastReportAt }) => {
         const mine = member.id === me?.id
         return {
@@ -528,7 +534,9 @@ export function WorkspaceHud({
           initial: 'AI',
           color: undefined,
           name: `${member.name}의 에이전트`,
-          place: agentStatusLabels[status],
+          // 연결 상태는 위치가 아니므로 지도 핀이 붙는 위치 칸에 두지 않는다. 연결 미확인은 그 이름 그대로 보인다(F05).
+          status: agentStatusLabels[status],
+          place: undefined,
           detail:
             status === 'recheck' && lastReportAt
               ? `마지막 보고 ${formatShort(lastReportAt)}`
@@ -765,16 +773,12 @@ export function WorkspaceHud({
         </div>
         <div className="grid gap-1 border-t pt-2.5">
           <div className="flex items-center justify-between gap-2 px-0.5">
+            {/* '팀 2 · 아직 혼자예요'처럼 에이전트 줄까지 합친 수였다(F05). 혼자인지는 '팀원 1명'과 초대 버튼이 말한다. */}
             <span className="text-xs font-semibold">
-              팀{' '}
+              팀원 {members.length}명{' '}
               <span className="font-normal text-muted-foreground">
-                {teamRows.length}
+                · 에이전트 {agentCount}개
               </span>
-              {members.length <= 1 && (
-                <span className="ml-1.5 font-normal text-muted-foreground">
-                  아직 혼자예요
-                </span>
-              )}
             </span>
             {isLeader && members.length <= 1 ? (
               <Button
@@ -817,19 +821,14 @@ export function WorkspaceHud({
                       {row.initial}
                     </span>
                     {row.online !== undefined && (
-                      <>
-                        {/* 접속 점(MON-A07): 접속 중은 초록, 오프라인은 회색 */}
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            'absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-background',
-                            row.online ? 'bg-emerald-500' : 'bg-stone-400',
-                          )}
-                        />
-                        <span className="sr-only">
-                          {row.online ? '접속 중' : '오프라인'}
-                        </span>
-                      </>
+                      // 접속 점(MON-A07): 접속 중은 초록, 오프라인은 회색. 상태 이름은 아래 줄에 글로 있다.
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          'absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-background',
+                          row.online ? 'bg-emerald-500' : 'bg-stone-400',
+                        )}
+                      />
                     )}
                   </span>
                   <span className="min-w-0">
@@ -838,6 +837,8 @@ export function WorkspaceHud({
                       {row.name}
                     </strong>
                     <span className="block truncate text-xs leading-[18px] text-muted-foreground">
+                      {row.status}
+                      {row.status && (row.place || row.detail) && ' · '}
                       {row.place && (
                         <span className="inline-flex items-center gap-0.5 text-[#57534e]">
                           <MapPin className="size-3" aria-hidden="true" />

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useId, useRef, useState } from 'react'
+import { lazy, Suspense, useId, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
   useInfiniteQuery,
@@ -54,7 +54,6 @@ function City() {
   const [creatingAt, setCreatingAt] = useState<number | null>(null)
   const [design, setDesign] = useState<BuildingDesign>('modern')
   const [search, setSearch] = useState('')
-  const titleRef = useRef<HTMLDivElement>(null)
   const [sort, setSort] = useState<'recent' | 'name' | 'leader'>('recent')
   // 호버 카드는 한 번에 하나다. 지도에서 올리면 지도 왼쪽 위, 카드에 올리면 그 카드 위에 뜬다.
   const [hover, setHover] = useState<{
@@ -131,234 +130,200 @@ function City() {
       <AsyncState query={projects}>
         {() => (
           <>
-            <div className="relative">
-              {/* 제목·만들기 버튼: 넓은 화면(lg)에서는 캔버스처럼 도시 위에 겹치고, 좁은 화면에서는 줄이 늘어 건물과
-                겹치므로 도시 바깥 위에 둔다. */}
-              <div
-                ref={titleRef}
-                className="mb-4 flex flex-wrap items-start justify-between gap-3 lg:pointer-events-none lg:absolute lg:inset-x-6 lg:top-6 lg:z-10 lg:mb-0"
-              >
-                <h2 className="min-w-0 text-[26px] leading-[34px] font-bold wrap-anywhere">
-                  {session.data?.name}님의 프로젝트
-                </h2>
+            {/* 제목 줄 하나에 검색·정렬·만들기를 둔다. 도시 위에 겹치지 않아 3D를 가리지 않는다(화면 검수 2026-11-16, S15P31A108-446). */}
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <h2 className="mr-auto flex min-w-0 items-baseline gap-2 text-[26px] leading-[34px] font-bold wrap-anywhere">
+                {session.data?.name}님의 프로젝트
+                <span className="text-[15px] font-semibold text-muted-foreground">
+                  {allProjects.length}
+                </span>
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative max-w-full">
+                  <Search className="pointer-events-none absolute top-2 left-2.5 size-4 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    aria-label="프로젝트 검색"
+                    placeholder="프로젝트 이름 검색"
+                    className="w-[220px] max-w-full pl-8 text-[12.5px] md:text-[12.5px]"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </div>
+                <NativeSelect
+                  aria-label="정렬"
+                  className="[&_select]:text-[12.5px]"
+                  value={sort}
+                  onChange={(event) =>
+                    setSort(event.target.value as typeof sort)
+                  }
+                >
+                  <NativeSelectOption value="recent">
+                    최근 만든 순
+                  </NativeSelectOption>
+                  <NativeSelectOption value="name">이름순</NativeSelectOption>
+                  <NativeSelectOption value="leader">
+                    팀장 먼저
+                  </NativeSelectOption>
+                </NativeSelect>
                 <Button
-                  className="h-10 rounded-xl px-4 font-bold lg:pointer-events-auto"
+                  className="h-9 rounded-xl px-4 font-bold"
                   disabled={nextLot === undefined}
                   onClick={() => startCreate(nextLot ?? null)}
                 >
                   <Plus />
-                  프로젝트 만들기
+                  {nextLot === undefined
+                    ? '모든 부지를 사용 중이에요'
+                    : '프로젝트 만들기'}
                 </Button>
               </div>
-              <section
-                // 높이는 화면의 54%(최소 384px)지만 폭의 80%를 넘지 않는다. 좁은 세로 화면에서 키가 크면 고리 전체가 보여 원으로
-                // 읽히므로, 넓은 화면과 같은 가로세로 비율로 고리 앞쪽 호만 담는다(D33).
-                className="relative h-[min(max(54dvh,24rem),80vw)] overflow-hidden rounded-3xl border bg-card shadow-sm"
-                aria-label="내 프로젝트 도시"
-              >
-                {/* 거리 뒤가 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city). 제목이 겹치는 넓은 화면에서만 둔다. */}
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 top-0 z-[1] hidden h-[120px] bg-linear-to-b from-[rgba(253,252,248,0.96)] to-transparent lg:block"
-                />
-                <Suspense
-                  fallback={
-                    <p
-                      role="status"
-                      className="grid h-full place-items-center text-sm text-muted-foreground"
-                    >
-                      도시를 준비하는 중…
-                    </p>
-                  }
-                >
-                  {/* 프로젝트 만들기 창이 열리면 도시가 화면 전체로 깔리고 창의 흐린 막 뒤에 보인다(SCR-04-v2-create-project). */}
-                  <CityScene
-                    projects={sceneProjects}
-                    nextLot={nextLot ?? null}
-                    // 마지막으로 연 프로젝트(이 계정·이 브라우저)가 도시에 있으면 그 건물을 가운데에 둔다. 지웠거나 나간 프로젝트는
-                    // 목록에 없어 처음 화면 규칙을 쓴다(D33).
-                    visitedLot={
-                      sceneProjects.find(
-                        (project) => project.id === lastVisited,
-                      )?.lot
-                    }
-                    backdrop={creatingAt !== null}
-                    titleRef={titleRef}
-                    onProjectSelect={(id) => navigate(`/projects/${id}`)}
-                    onLotSelect={startCreate}
-                    onProjectHover={(id) =>
-                      setHover(id ? { id, from: 'map' } : null)
-                    }
-                    describedBy={(id) =>
-                      mapHover?.id === id ? hoverCardId : undefined
-                    }
-                    className={
-                      creatingAt === null
-                        ? 'h-full w-full'
-                        : 'fixed inset-0 z-40'
-                    }
-                  />
-                </Suspense>
-                {/* 캔버스 SCR-04-v2-city(v495)처럼 바탕 없이 왼쪽 아래 24·16px에 둔다. */}
-                <p className="pointer-events-none absolute right-6 bottom-4 left-6 text-xs break-keep text-muted-foreground">
-                  끌거나 휠로 고리 돌리기 · 빈 부지 다음은 꾸밈 칸을 건너
-                  1번으로 · 부지를 눌러 선택
-                </p>
-                {/* 건물을 가리지 않게 제목 아래 고정 자리에 두고, 포인터는 그대로 뒤의 건물로 통과시킨다. */}
-                {mapHover && (
-                  <ProjectHoverCard
-                    id={hoverCardId}
-                    project={mapHover}
-                    design={designOf(mapHover.id)}
-                    unread={unreadOf(mapHover.id)}
-                    className="pointer-events-none absolute top-3 left-3 z-30 w-[272px] lg:top-[68px] lg:left-6"
-                  />
-                )}
-              </section>
             </div>
-            <section className="mt-7">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="flex items-center gap-2 text-lg font-bold">
-                  내 프로젝트
-                  <span className="text-[15px] font-semibold text-muted-foreground">
-                    {allProjects.length}
-                  </span>
-                </h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative max-w-full">
-                    <Search className="pointer-events-none absolute top-2 left-2.5 size-4 text-muted-foreground" />
-                    <Input
-                      type="search"
-                      aria-label="프로젝트 검색"
-                      placeholder="프로젝트 이름 검색"
-                      className="w-[220px] max-w-full pl-8 text-[12.5px] md:text-[12.5px]"
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                    />
-                  </div>
-                  <NativeSelect
-                    aria-label="정렬"
-                    className="[&_select]:text-[12.5px]"
-                    value={sort}
-                    onChange={(event) =>
-                      setSort(event.target.value as typeof sort)
-                    }
+            <section
+              // 높이는 화면에서 헤더·제목 줄·안내·카드 한 줄·아래 여백(31rem)을 뺀 나머지라, 프로젝트가 한 줄이면 1440×900에서
+              // 스크롤 없이 목록까지 들어온다(S15P31A108-446, 사용자 결정 '안 2'). 최소 320px이고 폭의 80%를 넘지 않는다. 좁은 세로
+              // 화면에서 키가 크면 고리 전체가 보여 원으로 읽히므로, 넓은 화면과 같은 가로세로 비율로 고리 앞쪽 호만 담는다(D33).
+              className="relative h-[min(max(20rem,100dvh_-_31rem),80vw)] overflow-hidden rounded-3xl border bg-card shadow-sm"
+              aria-label="내 프로젝트 도시"
+            >
+              <Suspense
+                fallback={
+                  <p
+                    role="status"
+                    className="grid h-full place-items-center text-sm text-muted-foreground"
                   >
-                    <NativeSelectOption value="recent">
-                      최근 만든 순
-                    </NativeSelectOption>
-                    <NativeSelectOption value="name">이름순</NativeSelectOption>
-                    <NativeSelectOption value="leader">
-                      팀장 먼저
-                    </NativeSelectOption>
-                  </NativeSelect>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {shownProjects.map((project) => {
-                  const open = hover?.from === 'card' && hover.id === project.id
-                  const unread = unreadOf(project.id)
-                  return (
-                    // 카드는 건물 그림·이름·설명만. 역할·상태·숫자는 호버 카드가 카드 위에 겹쳐 펼쳐 보인다(터치에서는 배지만).
-                    <Link
-                      className={cn(
-                        'relative flex min-h-[104px] min-w-0 items-start gap-3 rounded-[18px] border bg-card p-4',
-                        // 닫힌 카드도 z를 둬 제 배지를 카드 안에 가둔다. 없으면 옆 카드의 호버 카드 위로 배지가 비친다.
-                        open ? 'z-20' : 'z-[1]',
-                      )}
-                      key={project.id}
-                      to={`/projects/${project.id}`}
-                      aria-label={
-                        unread
-                          ? `${project.name}, ${unread.label}`
-                          : project.name
-                      }
-                      aria-describedby={open ? hoverCardId : undefined}
-                      onPointerEnter={(event) => {
-                        if (event.pointerType !== 'touch')
-                          setHover({ id: project.id, from: 'card' })
-                      }}
-                      onPointerLeave={() => setHover(null)}
-                      onFocus={(event) => {
-                        if (event.currentTarget.matches(':focus-visible'))
-                          setHover({ id: project.id, from: 'card' })
-                      }}
-                      onBlur={() => setHover(null)}
-                    >
-                      <span className="flex size-14 shrink-0 items-end justify-center overflow-hidden rounded-[14px] bg-[#f4f2ec]">
-                        <BuildingArt
-                          design={designOf(project.id)}
-                          className="h-12"
-                        />
-                      </span>
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <strong className="truncate text-base font-bold">
-                          {project.name}
-                        </strong>
-                        <span className="line-clamp-2 text-[13px] leading-[19px] wrap-anywhere break-keep text-[#57534e]">
-                          {project.description || NO_DESCRIPTION}
-                        </span>
-                      </span>
-                      {/* 절대 위치의 기준이 링크의 테두리 안쪽이라 테두리 1px만큼 더 뺀다: 호버 카드는 카드 밖 6px, 배지는 9px. */}
-                      {open && (
-                        <ProjectHoverCard
-                          id={hoverCardId}
-                          project={project}
-                          design={designOf(project.id)}
-                          unread={unread}
-                          className="absolute -inset-x-[7px] -top-[7px] z-30"
-                        />
-                      )}
-                      {unread && (
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            UNREAD_BADGE,
-                            '-top-2.5 -right-2.5 z-[31] h-6 min-w-6 px-[7px] ring-background',
-                          )}
-                        >
-                          {unread.text}
-                        </span>
-                      )}
-                    </Link>
-                  )
-                })}
-                <button
-                  type="button"
-                  className="grid min-h-[104px] place-content-center justify-items-center gap-1 rounded-[18px] border-[1.5px] border-dashed border-[#e0b400] bg-[#fdf6da] p-3 text-[#5c4700] hover:bg-[#fbeec2] disabled:opacity-60"
-                  disabled={nextLot === undefined}
-                  onClick={() => startCreate(nextLot ?? null)}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="grid size-6 place-items-center rounded-full bg-primary text-[#322710]"
-                  >
-                    <Plus className="size-4" strokeWidth={2.5} />
-                  </span>
-                  <span className="text-sm font-bold text-[#322710]">
-                    {nextLot === undefined
-                      ? '모든 부지를 사용 중이에요'
-                      : '프로젝트 만들기'}
-                  </span>
-                  {nextLot !== undefined && (
-                    <span className="text-xs leading-4">
-                      빈 부지 {nextLot + 1}번 · 만들면 고리의 다음 칸이 빈
-                      부지가 돼요
-                    </span>
-                  )}
-                </button>
-              </div>
-              {projects.hasNextPage && (
-                <Button
-                  variant="outline"
-                  className="mt-4"
-                  disabled={projects.isFetchingNextPage}
-                  onClick={() => void projects.fetchNextPage()}
-                >
-                  프로젝트 더 보기
-                </Button>
+                    도시를 준비하는 중…
+                  </p>
+                }
+              >
+                {/* 프로젝트 만들기 창이 열리면 도시가 화면 전체로 깔리고 창의 흐린 막 뒤에 보인다(SCR-04-v2-create-project). */}
+                <CityScene
+                  projects={sceneProjects}
+                  nextLot={nextLot ?? null}
+                  // 마지막으로 연 프로젝트(이 계정·이 브라우저)가 도시에 있으면 그 건물을 가운데에 둔다. 지웠거나 나간 프로젝트는
+                  // 목록에 없어 처음 화면 규칙을 쓴다(D33).
+                  visitedLot={
+                    sceneProjects.find((project) => project.id === lastVisited)
+                      ?.lot
+                  }
+                  backdrop={creatingAt !== null}
+                  onProjectSelect={(id) => navigate(`/projects/${id}`)}
+                  onLotSelect={startCreate}
+                  onProjectHover={(id) =>
+                    setHover(id ? { id, from: 'map' } : null)
+                  }
+                  describedBy={(id) =>
+                    mapHover?.id === id ? hoverCardId : undefined
+                  }
+                  className={
+                    creatingAt === null ? 'h-full w-full' : 'fixed inset-0 z-40'
+                  }
+                />
+              </Suspense>
+              {/* 건물을 가리지 않게 도시 왼쪽 위 고정 자리에 두고, 포인터는 그대로 뒤의 건물로 통과시킨다. */}
+              {mapHover && (
+                <ProjectHoverCard
+                  id={hoverCardId}
+                  project={mapHover}
+                  design={designOf(mapHover.id)}
+                  unread={unreadOf(mapHover.id)}
+                  className="pointer-events-none absolute top-3 left-3 z-30 w-[272px]"
+                />
               )}
             </section>
+            {/* 조작 안내는 도시 밖 아래 한 줄. 도시 위에 두면 나무·건물에 가렸다(S15P31A108-446). */}
+            <p className="mt-2 text-xs break-keep text-muted-foreground">
+              끌거나 휠로 고리 돌리기 · 새 프로젝트 다음은 다시 1번 · 부지를
+              눌러 선택
+            </p>
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {shownProjects.map((project) => {
+                const open = hover?.from === 'card' && hover.id === project.id
+                const unread = unreadOf(project.id)
+                return (
+                  // 카드는 건물 그림·이름·설명만. 역할·상태·숫자는 호버 카드가 카드 위에 겹쳐 펼쳐 보인다(터치에서는 배지만).
+                  <Link
+                    className={cn(
+                      'relative flex min-h-[104px] min-w-0 items-start gap-3 rounded-[18px] border bg-card p-4',
+                      // 닫힌 카드도 z를 둬 제 배지를 카드 안에 가둔다. 없으면 옆 카드의 호버 카드 위로 배지가 비친다.
+                      open ? 'z-20' : 'z-[1]',
+                    )}
+                    key={project.id}
+                    to={`/projects/${project.id}`}
+                    aria-label={
+                      unread ? `${project.name}, ${unread.label}` : project.name
+                    }
+                    aria-describedby={open ? hoverCardId : undefined}
+                    onPointerEnter={(event) => {
+                      if (event.pointerType !== 'touch')
+                        setHover({ id: project.id, from: 'card' })
+                    }}
+                    onPointerLeave={() => setHover(null)}
+                    onFocus={(event) => {
+                      if (event.currentTarget.matches(':focus-visible'))
+                        setHover({ id: project.id, from: 'card' })
+                    }}
+                    onBlur={() => setHover(null)}
+                  >
+                    <span className="flex size-14 shrink-0 items-end justify-center overflow-hidden rounded-[14px] bg-[#f4f2ec]">
+                      <BuildingArt
+                        design={designOf(project.id)}
+                        className="h-12"
+                      />
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <strong className="truncate text-base font-bold">
+                        {project.name}
+                      </strong>
+                      <span className="line-clamp-2 text-[13px] leading-[19px] wrap-anywhere break-keep text-[#57534e]">
+                        {project.description || NO_DESCRIPTION}
+                      </span>
+                    </span>
+                    {/* 절대 위치의 기준이 링크의 테두리 안쪽이라 테두리 1px만큼 더 뺀다: 호버 카드는 카드 밖 6px, 배지는 9px. */}
+                    {open && (
+                      <ProjectHoverCard
+                        id={hoverCardId}
+                        project={project}
+                        design={designOf(project.id)}
+                        unread={unread}
+                        className="absolute -inset-x-[7px] -top-[7px] z-30"
+                      />
+                    )}
+                    {unread && (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          UNREAD_BADGE,
+                          '-top-2.5 -right-2.5 z-[31] h-6 min-w-6 px-[7px] ring-background',
+                        )}
+                      >
+                        {unread.text}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+              {/* 점선 만들기 카드를 지워 목록이 비면 그 자리가 안내 없이 비었다(PR #318 리뷰). 만들기는 제목 줄 버튼과 빈 부지로 한다. */}
+              {shownProjects.length === 0 && (
+                <p
+                  role="status"
+                  className="col-span-full text-sm text-muted-foreground"
+                >
+                  {allProjects.length === 0
+                    ? '아직 프로젝트가 없어요. 프로젝트 만들기로 시작해 보세요.'
+                    : `‘${search.trim()}’에 맞는 프로젝트가 없어요.`}
+                </p>
+              )}
+            </div>
+            {projects.hasNextPage && (
+              <Button
+                variant="outline"
+                className="mt-4"
+                disabled={projects.isFetchingNextPage}
+                onClick={() => void projects.fetchNextPage()}
+              >
+                프로젝트 더 보기
+              </Button>
+            )}
           </>
         )}
       </AsyncState>
