@@ -5,6 +5,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 글자 크기 단계(D49). 본문 text-body 15px, 설명·보조 text-sub 13px, 날짜 같은 메타·캡션 text-caption 12px,
+   단축키 표시 text-kbd 11px. 버튼·입력·목록 제목은 text-sm(14px) 그대로 쓴다. 11px는 키 표시에만 쓴다.
+   새 이름은 lib/utils.ts의 cn()에도 등록해 색 클래스(text-muted-foreground 등)와 함께 써도 지워지지 않게 한다. */
+@theme {
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.6;
+  --text-sub: 0.8125rem;
+  --text-sub--line-height: 1.5;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-kbd: 0.6875rem;
+  --text-kbd--line-height: 1;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;
@@ -25,6 +39,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
   --color-destructive-ink: var(--destructive-ink);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -69,6 +84,8 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* 안 읽음 같은 상태 점(D49). 흰 바탕 3.67:1, 노란 옅은 바탕 3.57:1, 회색 호버 바탕 3.36:1 */
+  --success: oklch(0.596 0.145 163.2);
   /* destructive/10·/20 바탕 위 글자. #ac1a1b, 4.81:1 이상 (S15P31A108-442) */
   --destructive-ink: oklch(0.48 0.18 27.325);
   --border: oklch(0.922 0 0);
@@ -108,6 +125,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.765 0.177 163.2);
   --primary-ink: var(--primary);
   --destructive-ink: var(--destructive);
   --border: oklch(1 0 0 / 10%);

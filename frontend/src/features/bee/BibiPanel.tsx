@@ -162,7 +162,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         <div className="flex flex-wrap items-center gap-3">
           <BibiFace className="size-12 shrink-0" />
           {/* 창 제목이 이미 '비비'라 이름과 '공용 문서에서 찾아 답해요'를 다시 쓰지 않는다(S15P31A108-449). */}
-          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+          <p className="min-w-0 flex-1 text-sub text-muted-foreground">
             답마다 찾은 문서를 붙여요. 최종 설계는 인간 팀장이 승인해요.
           </p>
           <div
@@ -172,7 +172,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
           >
             <span
               id={scopeLabel}
-              className="mr-1 text-xs text-muted-foreground"
+              className="mr-1 text-sub text-muted-foreground"
             >
               찾는 범위
             </span>
@@ -180,7 +180,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               <Fragment key={option.value}>
                 <label
                   className={cn(
-                    'cursor-pointer rounded-full px-3 py-1 text-xs font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
+                    'cursor-pointer rounded-full px-3 py-1 text-sub font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
                     scope === option.value
                       ? 'bg-foreground text-background'
                       : 'bg-muted text-muted-foreground hover:text-foreground',
@@ -205,7 +205,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                 {option.soon && (
                   <span
                     id={`${scopeLabel}-soon`}
-                    className="text-xs text-muted-foreground"
+                    className="text-sub text-muted-foreground"
                   >
                     {option.soon}
                   </span>
@@ -219,15 +219,15 @@ export function BibiPanel({ projectId }: { projectId: string }) {
           aria-label="비비 설계 질의응답"
           className="grid min-h-48 flex-1 content-start gap-3"
         >
-          <p className="max-w-xl justify-self-start rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5 text-sm">
+          <p className="max-w-xl justify-self-start rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5 text-body">
             공용 문서의 승인된 내용에서 찾아 답해 드릴게요.
           </p>
           {messages.map((message, index) => (
             <div key={index} className="grid gap-3">
-              <p className="max-w-xl justify-self-end rounded-2xl rounded-br-sm bg-foreground px-3.5 py-2.5 text-sm whitespace-pre-wrap text-background">
+              <p className="max-w-xl justify-self-end rounded-2xl rounded-br-sm bg-foreground px-3.5 py-2.5 text-body whitespace-pre-wrap text-background">
                 {message.question}
               </p>
-              <article className="max-w-xl justify-self-start rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5 text-sm">
+              <article className="max-w-xl justify-self-start rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5 text-body">
                 <p className="leading-6 whitespace-pre-wrap">
                   {message.answer.text
                     .split(/(\[\d+\])/g)
@@ -255,7 +255,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                     })}
                 </p>
                 {message.answer.unresolved.length > 0 && (
-                  <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
+                  <ul className="mt-2 list-inside list-disc text-sub text-muted-foreground">
                     {message.answer.unresolved.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -264,14 +264,14 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                 {!!message.answer.notices?.length && (
                   <ul
                     aria-label="답변 안내"
-                    className="mt-2 text-xs text-muted-foreground"
+                    className="mt-2 text-sub text-muted-foreground"
                   >
                     {message.answer.notices.map((notice, index) => (
                       <li key={index}>{notice}</li>
                     ))}
                   </ul>
                 )}
-                <span className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="mt-2 flex items-center gap-2 text-caption text-muted-foreground">
                   찾은 문서 {message.answer.sources.length}개
                   {/* 초안까지 찾은 답은 승인 전 내용이 섞였을 수 있다(명세: 미승인 검토임을 표시). */}
                   {message.scope === 'INCLUDE_DRAFTS' && (
@@ -300,10 +300,10 @@ export function BibiPanel({ projectId }: { projectId: string }) {
           ))}
           {pending && (
             <>
-              <p className="max-w-xl justify-self-end rounded-2xl rounded-br-sm bg-foreground px-3.5 py-2.5 text-sm whitespace-pre-wrap text-background">
+              <p className="max-w-xl justify-self-end rounded-2xl rounded-br-sm bg-foreground px-3.5 py-2.5 text-body whitespace-pre-wrap text-background">
                 {pending.question}
               </p>
-              <p role="status" className="text-xs text-muted-foreground">
+              <p role="status" className="text-sub text-muted-foreground">
                 비비가 문서를 찾는 중…
               </p>
             </>
@@ -338,11 +338,11 @@ export function BibiPanel({ projectId }: { projectId: string }) {
             </Button>
           </form>
           {errors.question && (
-            <p id={errorId} role="alert" className="text-xs text-destructive">
+            <p id={errorId} role="alert" className="text-sub text-destructive">
               {errors.question.message}
             </p>
           )}
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sub text-muted-foreground">
             대화는 새로 고침하면 지워져요.
           </p>
         </div>
@@ -362,7 +362,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
             <span className="text-muted-foreground">{referenceCount}</span>
           </h3>
           <BeeAnswerEvidence answer={selected.answer} titleOf={documentTitle} />
-          <p className="mt-3 text-xs text-muted-foreground">
+          <p className="mt-3 text-sub text-muted-foreground">
             {selected.scope === 'APPROVED'
               ? '승인된 문서만 찾았어요.'
               : '초안까지 찾았어요. 초안은 아직 팀장이 승인하지 않은 내용이에요.'}

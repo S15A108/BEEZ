@@ -72,7 +72,7 @@ export function AccountWithdraw({ onCancel }: { onCancel: () => void }) {
                 <TriangleAlert aria-hidden="true" className="size-4" />이
                 프로젝트 때문에 지금은 탈퇴할 수 없어요
               </h3>
-              <p className="mt-1.5 text-[13px] leading-5 text-[#57534e]">
+              <p className="mt-1.5 text-sub text-[#57534e]">
                 팀원이 있는 프로젝트의 팀장이에요. 팀장을 위임하거나 프로젝트를
                 삭제하면 탈퇴할 수 있어요.
               </p>
@@ -85,7 +85,7 @@ export function AccountWithdraw({ onCancel }: { onCancel: () => void }) {
                     <span>
                       <strong className="font-semibold">{project.name}</strong>
                       {/* member_count는 본인을 뺀 활성 팀원 수다. */}
-                      <span className="block text-xs text-muted-foreground">
+                      <span className="block text-caption text-muted-foreground">
                         팀장 · 팀원 {project.member_count}명
                       </span>
                     </span>
@@ -123,7 +123,7 @@ export function AccountWithdraw({ onCancel }: { onCancel: () => void }) {
               탈퇴하면 기존 프로젝트는 이렇게 돼요
             </h3>
             {/* 서버(PR #118·#182) 처리: 팀원 프로젝트에서는 빠지며 맡은 열린 작업의 담당자를 비우고, 혼자 쓰는 프로젝트는 지우며, 남긴 기록은 '탈퇴한 사용자'로 보인다. */}
-            <ul className="mt-2 grid gap-1 text-[13px] leading-5">
+            <ul className="mt-2 grid gap-1 text-sub">
               {[
                 '팀원으로 참여한 프로젝트에서는 자동으로 빠져요.',
                 '그 프로젝트에서 맡은 열린 작업은 담당자가 비워져요.',
