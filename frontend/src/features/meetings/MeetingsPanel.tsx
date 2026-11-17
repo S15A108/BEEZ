@@ -745,12 +745,12 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           onSelect={goTo}
                         />
                         {/* 단계 카드: 위는 그 단계의 내용, 아래는 버튼 줄. 넓은 화면에서는 남는 높이를 모두 쓰고 안에서 스크롤한다.
-                            대화 단계는 펼친 안건(128px)·대화 칸(112px)·입력칸·버튼 줄이 겹치지 않을 높이(416px)를 지키고,
+                            대화·정리 단계는 펼친 안건(128px)·대화 칸(112px) 또는 정리(192px)와 아래 입력칸·버튼 줄이 겹치지 않을 높이(416px)를 지키고,
                             창이 그보다 낮으면 회의실 창이 스크롤한다(PR #306 재검토와 같은 방식). */}
                         <div
                           className={cn(
                             'flex flex-col rounded-2xl border bg-white lg:min-h-0 lg:flex-1',
-                            step === 0 && 'lg:min-h-[26rem]',
+                            step <= 1 && 'lg:min-h-[26rem]',
                             line,
                           )}
                         >
@@ -869,7 +869,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             {step === 1 &&
                               (summary ? (
                                 <>
-                                  <div className="-mx-1 grid content-start gap-3.5 px-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                                  <div className="-mx-1 grid content-start gap-3.5 px-1 lg:min-h-48 lg:flex-1 lg:overflow-y-auto">
                                     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                                       <BibiFace className="size-7 shrink-0" />
                                       <h4 className="font-bold">비비 정리</h4>
