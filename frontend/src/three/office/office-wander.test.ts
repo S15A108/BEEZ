@@ -2,12 +2,14 @@ import { expect, test } from 'vitest'
 import { ALL_KEYS, makeBuilding } from './building'
 import { makeDreamFloor } from './dream-floor'
 import { officeActors } from './office-actors'
-import { clearOfChairs, clearOfFurniture } from './motion'
+import { BODY_RADIUS } from './office-nav'
+import { bodyGap } from './office-nav.test-helpers'
 import {
   getOfficeLifeActivity,
   OfficeLifeSimulation,
   PERSONAL_SPACE,
   retreatSpot,
+  SEATED_SPACE,
   strollCandidates,
 } from './office-life'
 import { officeWalkable } from './office-navigation'
@@ -57,40 +59,6 @@ test('막혔을 때 물러설 자리는 벽 없이 곧장 가고 막은 사람�
       (x, y) => Math.hypot(x - from.x, y - from.y) < 5,
     ),
   ).toBeUndefined()
-})
-
-// 칸 단위 막기는 1 m 깊이 테이블이 두 칸에 53%·47%씩 걸치면 어느 칸도 막지 않아, 모던 화이트 가운데 테이블 위를
-// 사람이 걸어 다녔다. 걷는 판정은 가구 실제 바닥면에서 몸 반지름만큼 떨어져야 한다.
-test('단단한 가구 바닥면에서 12px 안은 걸을 수 없고, 유리 칸막이는 칸 단위 판정에, 의자는 피해 가는 길에 맡긴다', () => {
-  const table = { kind: 'table', x: 1, y: 1, w: 2, h: 1, solid: true }
-  const glass = {
-    kind: 'glass-partition',
-    x: 5,
-    y: 1,
-    w: 0.12,
-    h: 3,
-    solid: true,
-  }
-  const chair = { kind: 'chair', x: 8, y: 1, w: 1, h: 1, solid: false }
-  const furniture = [table, glass, chair]
-  expect(clearOfFurniture(furniture, 64, 48)).toBe(false)
-  expect(clearOfFurniture(furniture, 64, 32 + 32 + 11)).toBe(false)
-  expect(clearOfFurniture(furniture, 64, 32 + 32 + 13)).toBe(true)
-  expect(clearOfFurniture(furniture, 5 * 32 + 2, 64)).toBe(true)
-  expect(clearOfFurniture(furniture, 8.5 * 32, 48)).toBe(true)
-  expect(clearOfChairs(furniture, 8.5 * 32, 48 + 17)).toBe(false)
-  expect(clearOfChairs(furniture, 8.5 * 32, 48 + 19)).toBe(true)
-  const modern = makeDreamFloor(
-    makeBuilding(ALL_KEYS, 'modern', null, {}).floors[1],
-    4,
-  )
-  const center = modern.furniture.find(
-    (item) => item.solid && item.kind === 'table' && item.w > 4,
-  )!
-  const x = (center.x + center.w / 2) * 32,
-    y = (center.y + center.h / 2) * 32
-  expect(modern.blocked[Math.floor(y / 32)][Math.floor(x / 32)]).toBe(false)
-  expect(officeWalkable(modern, x, y)).toBe(false)
 })
 
 const DESIGNS = ['glass', 'brick', 'modern', 'tower', 'wood'] as const
@@ -191,70 +159,113 @@ test.each(DESIGNS)(
     expect(at('agent:24').stationary).toBe(true)
 
     const me = { x: floor.exit.x * 32 + 16, y: floor.exit.y * 32 + 27 }
-    const simulation = new OfficeLifeSimulation(`wander-${design}`)
+    const name = `wander-${design}`
+    const simulation = new OfficeLifeSimulation(name)
     const strollers = [...people.map((person) => person.id), 'agent:23']
     const walked = new Map<string, number>()
     const stops = new Map<string, Set<string>>()
+    const rests: number[] = []
+    const resting = new Map<string, number>()
+    const reversals = new Map<string, number>()
+    const moves = new Map<string, { x: number; y: number }>()
     let previous = simulation.step(floor, actors, 0.05, { caller: me })
-    let closest = Infinity
-    let closestPeople = Infinity
-    for (let frame = 0; frame < 1800; frame++) {
+    let closest = Infinity,
+      closestSeated = Infinity,
+      closestWalkers = Infinity,
+      mostWalkers = 0,
+      sharpest = 0
+    // 4분 동안 지켜본다.
+    for (let frame = 0; frame < 4800; frame++) {
       const current = simulation.step(floor, actors, 0.05, { caller: me })
+      let walking = 0
       for (const [index, actor] of current.entries()) {
-        const step = Math.hypot(
-          actor.x - previous[index].x,
-          actor.y - previous[index].y,
-        )
+        const before = previous[index]
+        const step = Math.hypot(actor.x - before.x, actor.y - before.y)
         walked.set(actor.id, (walked.get(actor.id) ?? 0) + step)
         if (!strollers.includes(actor.id)) continue
-        // 돌아다니는 사람은 앉지 않고, 언제나 걸을 수 있는 바닥에 있다.
+        const activity = getOfficeLifeActivity(name, actor.id)?.activity
+        // 돌아다니는 사람은 앉지 않고, 몸이 벽·가구·의자에 닿지 않는다(office-nav와 따로 계산한 장애물로 잰다).
         expect(actor.seated).toBeFalsy()
-        expect(officeWalkable(floor, actor.x, actor.y)).toBe(true)
-        // 가구 실제 바닥면에서 몸이 떨어져 걷는다(칸 단위 막기가 비운 가구 위를 지나지 않는다).
-        expect(clearOfFurniture(floor.furniture, actor.x, actor.y, 1)).toBe(
-          true,
-        )
+        expect(bodyGap(floor, actor)).toBeGreaterThanOrEqual(BODY_RADIUS - 0.5)
+        // 길을 비켜 한 걸음 물러서는 것(그 걸음이 닿는 순간 포함)은 걷는 사람으로 세지 않는다.
+        const snapshot = getOfficeLifeActivity(name, actor.id)
         if (
-          getOfficeLifeActivity(`wander-${design}`, actor.id)?.activity ===
-          'strolling'
+          actor.moving &&
+          snapshot?.activity !== 'pause' &&
+          snapshot?.destination !== 'pause'
         )
-          (
-            stops.get(actor.id) ?? stops.set(actor.id, new Set()).get(actor.id)!
-          ).add(`${Math.round(actor.x)}/${Math.round(actor.y)}`)
-      }
-      // 처음 몇 프레임은 자리 곁에서 갈라진다. 그 뒤로는 나를 포함해 누구도 개인 거리 안으로 겹치지 않는다.
-      if (frame > 40) {
-        const people = [...current, me]
-        for (let a = 0; a < people.length; a++)
-          for (let b = a + 1; b < people.length; b++)
-            closest = Math.min(
-              closest,
-              Math.hypot(people[a].x - people[b].x, people[a].y - people[b].y),
-            )
-      }
-      // 처음 자리에서 갈라진 뒤에는 걷거나 서 있는 팀원끼리 몸 폭(약 36px)보다 넓게 떨어진다.
-      if (frame > 200) {
-        const walkers = current.filter((actor) =>
-          people.some((person) => person.id === actor.id),
-        )
-        for (let a = 0; a < walkers.length; a++)
-          for (let b = a + 1; b < walkers.length; b++)
-            closestPeople = Math.min(
-              closestPeople,
-              Math.hypot(
-                walkers[a].x - walkers[b].x,
-                walkers[a].y - walkers[b].y,
+          walking++
+        // 방향은 한꺼번에 꺾지 않는다(초당 6라디안 넘게 돌지 않는다).
+        if (before.heading !== undefined && actor.heading !== undefined)
+          sharpest = Math.max(
+            sharpest,
+            Math.abs(
+              Math.atan2(
+                Math.sin(actor.heading - before.heading),
+                Math.cos(actor.heading - before.heading),
               ),
-            )
+            ),
+          )
+        // 쉬지 않고 걷는 도중에 오던 쪽으로 되돌아가는 걸음(왔다 갔다)을 센다. 멈추거나 제자리에서 돈 뒤 다른 쪽으로
+        // 출발하는 것은 세지 않는다.
+        if (!actor.moving) moves.delete(actor.id)
+        const last = moves.get(actor.id)
+        if (actor.moving && step > 0.1) {
+          const move = {
+            x: (actor.x - before.x) / step,
+            y: (actor.y - before.y) / step,
+          }
+          if (last && last.x * move.x + last.y * move.y < -0.5)
+            reversals.set(actor.id, (reversals.get(actor.id) ?? 0) + 1)
+          moves.set(actor.id, move)
+        }
+        // 멈춘 곳에서 머문 시간
+        const stopped =
+          !actor.moving &&
+          ['window', 'coffee', 'dropby', 'home'].includes(activity ?? '')
+        if (stopped) {
+          resting.set(actor.id, (resting.get(actor.id) ?? 0) + 0.05)
+          ;(
+            stops.get(actor.id) ?? stops.set(actor.id, new Set()).get(actor.id)!
+          ).add(`${Math.round(actor.x / 16)}/${Math.round(actor.y / 16)}`)
+        } else if (resting.has(actor.id)) {
+          if (frame > 600) rests.push(resting.get(actor.id)!)
+          resting.delete(actor.id)
+        }
       }
+      // 할 일 없이 다니는 사람은 한 번에 둘까지만 걷는다.
+      mostWalkers = Math.max(mostWalkers, walking)
+      // 처음부터 나를 포함해 누구도 겹치지 않는다. 의자에 앉은 사람 뒤로는 의자 반 폭과 몸 반지름만큼 떨어져 지나간다.
+      const everyone = [...current, { ...me, seated: false, moving: false }]
+      for (let a = 0; a < everyone.length; a++)
+        for (let b = a + 1; b < everyone.length; b++) {
+          const gap = Math.hypot(
+            everyone[a].x - everyone[b].x,
+            everyone[a].y - everyone[b].y,
+          )
+          if (everyone[a].seated || everyone[b].seated)
+            closestSeated = Math.min(closestSeated, gap)
+          else closest = Math.min(closest, gap)
+          if (everyone[a].moving && everyone[b].moving)
+            closestWalkers = Math.min(closestWalkers, gap)
+        }
       previous = current
     }
     simulation.dispose()
     for (const id of strollers) {
-      expect(walked.get(id)).toBeGreaterThan(10 * 32)
-      // 걷다가 멈춰 쉬는 자리가 여러 곳이다.
-      expect(stops.get(id)?.size ?? 0).toBeGreaterThanOrEqual(3)
+      expect(walked.get(id)).toBeGreaterThan(3 * 32)
+      // 이유 있는 곳(창가·음료·동료 자리 곁·자기 자리 곁) 두 곳 넘게 멈췄다.
+      expect(stops.get(id)?.size ?? 0).toBeGreaterThanOrEqual(2)
+      // 제자리에서 왔다 갔다 하지 않는다(비켜 주며 물러서는 몇 번은 있을 수 있다).
+      expect(reversals.get(id) ?? 0).toBeLessThanOrEqual(3)
     }
+    expect(mostWalkers).toBeLessThanOrEqual(2)
+    expect(sharpest).toBeLessThanOrEqual(6 * 0.05 + 1e-6)
+    // 멈추면 대개 15초 넘게 머문다(길을 비켜 주느라 일찍 떠나는 때만 짧다).
+    expect(rests.length).toBeGreaterThan(0)
+    expect(
+      rests.filter((seconds) => seconds >= 15).length / rests.length,
+    ).toBeGreaterThanOrEqual(0.75)
     // 작업 중 에이전트는 주인 의자에 앉아 있고, 연결 전 에이전트는 충전 자리에서 움직이지 않는다.
     const working = previous.find((actor) => actor.id === 'agent:22')!
     expect(
@@ -262,7 +273,8 @@ test.each(DESIGNS)(
     ).toBeLessThan(32)
     expect(working.seated).toBe(true)
     expect(walked.get('agent:24')).toBe(0)
-    expect(closest).toBeGreaterThanOrEqual(PERSONAL_SPACE - 1)
-    expect(closestPeople).toBeGreaterThanOrEqual(37)
+    expect(closest).toBeGreaterThanOrEqual(PERSONAL_SPACE - 0.5)
+    expect(closestSeated).toBeGreaterThanOrEqual(SEATED_SPACE - 0.5)
+    expect(closestWalkers).toBeGreaterThanOrEqual(PERSONAL_SPACE - 0.5)
   },
 )

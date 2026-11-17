@@ -5,6 +5,7 @@ import {
   keepsSpace,
   OfficeLifeSimulation,
   PERSONAL_SPACE,
+  SEATED_SPACE,
   type OfficeLifeActor,
 } from './office-life'
 
@@ -44,20 +45,28 @@ test('여러 명이 1분 동안 돌아다녀도 서로의 거리가 개인 거�
   }))
   const simulation = new OfficeLifeSimulation('crowd')
   let closest = Infinity,
+    closestSeated = Infinity,
     walked = 0
   for (let frame = 0; frame < 1200; frame++) {
     const people = simulation.step(floor, actors, 0.05)
     walked += people.filter((person) => person.moving).length
     // 처음 몇 프레임은 같은 자리에서 일어나 갈라진다.
     if (frame < 40) continue
+    // 의자에 앉은 사람 뒤로는 의자 반 폭과 몸 반지름만큼만 떨어져 지나간다(D37 부딪힘, 2026-11-17). 의자 자체가 막아
+    // 준다. 서 있거나 걷는 사람끼리는 사람 사이 거리를 지킨다.
     for (let a = 0; a < people.length; a++)
-      for (let b = a + 1; b < people.length; b++)
-        closest = Math.min(
-          closest,
-          Math.hypot(people[a].x - people[b].x, people[a].y - people[b].y),
+      for (let b = a + 1; b < people.length; b++) {
+        const gap = Math.hypot(
+          people[a].x - people[b].x,
+          people[a].y - people[b].y,
         )
+        if (people[a].seated || people[b].seated)
+          closestSeated = Math.min(closestSeated, gap)
+        else closest = Math.min(closest, gap)
+      }
   }
   simulation.dispose()
   assert.isOk(walked > 1000, 'people actually move around')
   assert.isAtLeast(closest, PERSONAL_SPACE - 1)
+  assert.isAtLeast(closestSeated, SEATED_SPACE - 1)
 })
