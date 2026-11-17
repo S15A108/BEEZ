@@ -986,18 +986,17 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
                                 계획 수정
                               </DropdownMenuItem>
                             )}
-                            {isLeader && (
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  setFormTask(current)
-                                  setAssigning(true)
-                                }}
-                              >
-                                {current.assignee_member_id
-                                  ? '담당자 바꾸기'
-                                  : '담당자 정하기'}
-                              </DropdownMenuItem>
-                            )}
+                            {/* 이 메뉴는 팀장과 담당자에게만 보인다. 팀원은 자기가 맡은 작업을 다른 팀원에게 넘긴다(S15P31A108-419). */}
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                setFormTask(current)
+                                setAssigning(true)
+                              }}
+                            >
+                              {current.assignee_member_id
+                                ? '담당자 바꾸기'
+                                : '담당자 정하기'}
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               variant="destructive"
@@ -1793,16 +1792,19 @@ export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
               label: '새 담당자',
               type: 'select',
               required: true,
-              value: formTask.assignee_member_id ?? '',
+              // 팀원은 자기 작업을 넘기는 것이라 자기 자신은 고를 수 없고, 빈 칸에서 시작한다(S15P31A108-419).
+              value: isLeader ? (formTask.assignee_member_id ?? '') : '',
               // 담당자가 없으면 첫 팀원이 저절로 골라지지 않게 빈 칸을 먼저 둔다.
               options: [
-                ...(formTask.assignee_member_id
+                ...(isLeader && formTask.assignee_member_id
                   ? []
                   : [{ value: '', label: '담당자 고르기' }]),
-                ...(members.data?.items.map((member) => ({
-                  value: member.id,
-                  label: member.name,
-                })) ?? []),
+                ...(members.data?.items
+                  .filter((member) => isLeader || member.id !== memberId)
+                  .map((member) => ({
+                    value: member.id,
+                    label: member.name,
+                  })) ?? []),
               ],
             },
           ]}
