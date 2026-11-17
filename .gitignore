@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 *.local
+# DB 덤프 (개인정보 포함, exec/03-db-dump.md) — S15P31A108-461
+beez-dump.*
+*.dump
 
 # --- Java / Gradle (backend) ---
 backend/.gradle/

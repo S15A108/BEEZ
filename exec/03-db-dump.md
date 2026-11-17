@@ -9,8 +9,8 @@
 덤프 파일은 저장소에 커밋하지 않고 제출 채널에 따로 올립니다. GitHub 저장소가 공개이고 GitLab은 그 복사본이라,
 커밋하면 가입한 사람의 이메일과 비밀번호 해시가 공개되기 때문입니다.
 
-테이블 구조만 필요하면 덤프가 없어도 됩니다. backend가 처음 뜰 때 Flyway(DB 테이블 생성 도구)가 최신 마이그레이션까지 차례로 적용해
-빈 DB에 최신 테이블을 만듭니다. 테이블 설명은 [docs/design/03-erd.md](../docs/design/03-erd.md)와
+테이블 구조만 필요하면 덤프가 없어도 됩니다. backend가 처음 뜰 때 빈 DB에 최신 테이블을 자동으로 만듭니다
+([1-6의 7번](01-build-and-deploy.md#1-6-배포할-때-주의할-점)). 테이블 설명은 [docs/design/03-erd.md](../docs/design/03-erd.md)와
 `docs/design/erd-core.png`, `docs/design/erd-others.png`에 있습니다.
 
 ## 3-2. 덤프 만들기 (서버에서)
@@ -21,6 +21,9 @@
 뒤의 DB를 덤프하면 이 버튼들이 이미 눌린 상태로 저장되어, 덤프를 복원한 사람이 시나리오를 따라 할 수 없습니다.
 그래서 시연 덤프는 **시연 버튼을 누르기 전이고 "발표 2분 전" 에이전트 요청도 보내기 전인 상태**에서 만듭니다.
 발표 뒤에 다시 만들지 마세요.
+
+또 이 포팅 매뉴얼(S15P31A108-461)이 dev에 머지되어 서버에 배포된 **뒤에** 만드세요. 그 전 커밋에는 PC 실행에서
+에이전트 연결 주소(`/mcp`)를 backend로 넘기는 설정이 없어, 그 커밋으로 복원하면 PC 시연의 에이전트 단계가 동작하지 않습니다.
 
 ### 명령
 
@@ -40,10 +43,11 @@ ls -lh ~/beez-dump.sql; cat ~/beez-dump.commit
 
 ### PC로 가져오기
 
-PC(Git Bash)에서 두 파일을 가져온 뒤, 개인정보가 든 덤프가 서버에 남지 않게 지웁니다.
+PC(Git Bash)에서 두 파일을 홈 폴더로 가져온 뒤, 개인정보가 든 덤프가 서버에 남지 않게 지웁니다. 저장소 폴더 안에는
+두지 마세요. 실수로 커밋될 수 있습니다. `<서버>`는 `ubuntu@서버주소`처럼 SSH로 접속할 대상으로 바꿔 적으세요. 그대로 두면 bash가 `<`를 입력 기호로 읽어 오류가 납니다.
 
 ```bash
-scp <서버>:~/beez-dump.sql <서버>:~/beez-dump.commit .
+scp <서버>:~/beez-dump.sql <서버>:~/beez-dump.commit ~/
 ssh <서버> 'rm ~/beez-dump.sql ~/beez-dump.commit'
 ```
 
@@ -59,7 +63,7 @@ ssh <서버> 'rm ~/beez-dump.sql ~/beez-dump.commit'
 - 저장소를 클론하고, 3-1 표의 "덤프를 만든 커밋"으로 체크아웃합니다(`git checkout <커밋>`). 코드가 덤프보다 새로우면 backend가
   뜰 때 마이그레이션이 더 적용되고, 오래되면 backend가 DB를 알아보지 못해 뜨지 않을 수 있습니다.
 - [README "빠르게 실행하기"](../README.md#빠르게-실행하기) 2)의 첫 명령(프론트엔드 빌드)을 먼저 실행합니다. 건너뛰면 화면이 비어 보입니다.
-- 덤프 파일을 저장소 폴더에 `beez-dump.sql`로 둡니다.
+- 덤프 파일을 PC 홈 폴더에 `~/beez-dump.sql`로 둡니다. 저장소 폴더 안에 두면 실수로 커밋될 수 있습니다.
 
 Git Bash에서 저장소 폴더에 있는 상태로 실행합니다.
 
@@ -69,7 +73,7 @@ docker compose -p beez down -v
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait postgres
 
 # 2) 덤프를 넣습니다. 오류가 나면 그 자리에서 멈춥니다
-docker exec -i beez-postgres-1 psql -v ON_ERROR_STOP=1 -q -U beez -d beez < beez-dump.sql
+docker exec -i beez-postgres-1 psql -v ON_ERROR_STOP=1 -q -U beez -d beez < ~/beez-dump.sql
 
 # 3) 나머지 서비스를 띄웁니다
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build --wait

@@ -16,7 +16,7 @@ PC에서 실행해 보려면 1-2절을, 새 서버에 배포하려면 1-4절을 
 | 프론트 빌드 | Node.js, Vite | Node 24, Vite 8 | 빌드할 때 `VITE_API_MODE=live` | `frontend/package.json` |
 | DB | PostgreSQL + pgvector(벡터 검색 확장) | PostgreSQL 17 | DB 이름 `beez`, 포트 5432, `wal_level=logical` | `infra/compose.yaml` |
 | 파일 저장소 | SeaweedFS (S3 호환) | 4.51 | 버킷 `beez-documents`, 포트 8333 (컨테이너 안에서만 열림) | `infra/compose.yaml` |
-| 컨테이너 | Docker Engine, Docker Compose | 서버 Docker Engine 29.9.2와 Compose v5.6.1, 로컬 Docker Desktop 29.6 | | `docs/infra/server-setup.md`, `docs/infra/docker-images.md` |
+| 컨테이너 | Docker Engine, Docker Compose | 서버 Docker Engine 29.9.2와 Compose v5.6.1, 로컬 Docker Desktop(Engine 29.6) | | `docs/infra/server-setup.md`, `docs/infra/docker-images.md` |
 | 서버 OS | Ubuntu | 24.04 LTS (4 vCPU, RAM 15GiB, 디스크 309GB) | 방화벽(ufw)으로 80, 443만 엶 | `docs/infra/server-setup.md` |
 
 ### 주요 라이브러리
@@ -52,7 +52,7 @@ docker exec -it beez-postgres-1 psql -U beez -d beez
 ## 1-2. PC에서 빌드하고 실행하기
 
 [저장소 README "빠르게 실행하기"](../README.md#빠르게-실행하기)를 1)부터 4)까지 차례로 따르세요. 소스 받기, 빌드와 실행,
-회원가입, AI 기능 켜기, 끄기까지 그 절에 모두 있습니다. 같은 절차를 두 곳에 적지 않으려고 README 한 곳에만 둡니다.
+회원가입, AI 기능 켜기, 끄기까지 그 절에 모두 있습니다.
 
 ### 서비스별 빌드 명령
 
@@ -173,20 +173,32 @@ docker compose -p beez ps     # postgres, seaweedfs, ai, backend 가 (healthy) �
 ```
 
 서버에서는 Nginx를 컨테이너가 아니라 서버에 직접 설치해 쓰므로 `compose.local.yaml`은 붙이지 않습니다.
-DB 테이블은 backend가 처음 뜰 때 자동으로 만들어집니다.
+DB 테이블은 backend가 처음 뜰 때 자동으로 만들어집니다([1-6의 7번](#1-6-배포할-때-주의할-점)).
 
 ### 5) 프론트엔드 올리기
 
 PC(Git Bash)에서 빌드해 서버로 보냅니다. 서버에 Node.js 24가 있으면 서버에서 빌드해도 됩니다. 프론트엔드와 backend의
 코드 버전이 같아야 하니, PC 저장소도 `git checkout dev && git pull`로 서버와 같은 `dev` 브랜치에 맞춘 뒤 빌드하세요.
 
+PC의 저장소 폴더에서 빌드합니다.
+
 ```bash
-# PC, 저장소 폴더에서. 첫 줄 출력 끝에 built in(빌드 완료)이 나온 것을 확인한 뒤 다음 줄을 실행합니다
 cd frontend && npm ci && VITE_API_MODE=live npm run build
+```
+
+출력 끝에 `built in`(빌드 완료) 줄이 나온 것을 확인한 뒤, 같은 `frontend` 폴더에서 빌드 결과를 서버로 보냅니다.
+`<서버>`는 `ubuntu@서버주소`처럼 SSH로 접속할 대상으로 바꿔 적으세요. 그대로 두면 bash가 `<`를 입력 기호로 읽어 오류가 납니다.
+
+```bash
 ssh <서버> 'rm -rf /tmp/beez-dist' && scp -r dist <서버>:/tmp/beez-dist
-# 서버
+```
+
+서버에 접속해 받은 파일을 Nginx가 읽는 자리로 옮깁니다.
+
+```bash
 sudo mkdir -p /var/www/beez && sudo rm -rf /var/www/beez/current && sudo mv /tmp/beez-dist /var/www/beez/current
 ```
+
 ### 6) Nginx 설정과 HTTPS 인증서
 
 443 포트 설정은 인증서 파일이 있어야 켜지므로, 인증서를 받는 임시 설정을 먼저 켜고 인증서를 받은 뒤 진짜 설정으로
@@ -260,13 +272,14 @@ curl -s https://$D/actuator/health; echo    # {"status":"UP"} 이면 정상
 2. **DB 비밀번호(`DB_PASSWORD`)는 env 파일에서만 바꾸면 안 됩니다.** DB는 처음 만들 때의 비밀번호를 계속 쓰므로,
    env 파일만 바꾸면 backend가 DB에 접속하지 못합니다. DB 안의 비밀번호도 함께 바꾸세요.
 3. 필수 환경변수가 빠지면 compose가 빠진 변수 이름을 알려 주고 멈춥니다. 그 줄을 env 파일에 넣고 다시 실행하세요.
-4. AI 기능을 켜는 줄은 1-4의 3)에서 env 파일에 모두 넣었습니다. 지우면 그 기능만 실패합니다.
-5. AI 응답을 기다리는 시간은 안쪽이 바깥쪽보다 늘 짧아야 합니다. 예를 들어 문서 검토 대화는 AI 모델 호출
-   `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`(50초) < backend 대기 `DOCUMENT_REVIEW_READ_TIMEOUT`(55초) < Nginx
-   `proxy_read_timeout`(60초)입니다. AI와 backend 값은 env 파일에서, Nginx 값은 서버의
-   `/etc/nginx/sites-available/beez.conf`에서 바꿉니다. backend 값은 `55s`처럼 단위를 붙여 적습니다.
-   늘릴 때는 Nginx, backend, AI 순서로, 줄일 때는 그 반대 순서로 바꿔야 바꾸는 도중에도 이 순서가 깨지지 않습니다.
-   순서가 깨지면 Nginx가 먼저 504 오류를 내고 backend는 계속 돌아 비용만 나갑니다.
+4. AI 기능을 켜는 줄은 1-4의 3)에서 env 파일에 모두 넣었습니다. 어떤 기능을 끄려면 그 줄의 값을 `false`(모델은 빈 값)로
+   바꾸고 1-4의 4) 명령으로 서비스를 다시 띄우세요.
+5. AI 응답 대기 시간은 AI 모델 대기 < backend 대기 < Nginx 대기 순서를 지키세요. 문서 검토 대화라면
+   `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`(50초) < `DOCUMENT_REVIEW_READ_TIMEOUT`(55초) < `proxy_read_timeout`(60초)입니다.
+   - 바꾸는 곳: AI와 backend 값은 env 파일, Nginx 값은 서버의 `/etc/nginx/sites-available/beez.conf`입니다.
+     backend 값은 `55s`처럼 단위를 붙여 적습니다.
+   - 바꾸는 순서: 늘릴 때는 Nginx, backend, AI 순서로, 줄일 때는 그 반대로 바꿉니다. 순서가 깨지면 Nginx가 먼저 504
+     오류를 내고 backend는 계속 돌아 비용만 나갑니다.
 6. `VITE_API_MODE`는 프론트엔드를 빌드할 때 정해집니다. 값을 바꿨다면 프론트엔드를 다시 빌드해 올려야 반영됩니다.
 7. DB 테이블은 backend가 뜰 때 자동으로 만들어집니다. DB 테이블 생성 도구인 Flyway가
    `backend/src/main/resources/db/migration`(SQL)과 `backend/src/main/java/db/migration`(Java)의 마이그레이션을 최신 것까지

@@ -11,7 +11,7 @@ BEEZ가 쓰는 외부 서비스와, 다른 환경에서 쓰려면 무엇을 가�
 | Claude Code (Anthropic) | BEEZ에 연결해 작업 계획을 올리는 AI 에이전트. 시연 ②에 필요합니다 | 에이전트 연결과 시연 ②를 할 수 없습니다. 웹 화면은 그대로 씁니다 | 시연 PC ([2-7](#2-7-ai-에이전트-claude-code)) |
 | Anthropic API | GitHub PR 자동 리뷰(`.github/workflows/ai-review.yml`) | PR 자동 리뷰만 돌지 않습니다 | GitHub 저장소 시크릿 `CLAUDE_CODE_OAUTH_TOKEN` 또는 `ANTHROPIC_API_KEY` |
 | SMTP 메일 계정 | 가입 인증 코드, 비밀번호 찾기, 팀 초대 메일 | 서버에서 회원가입과 초대를 할 수 없습니다. PC 실행은 메일 대신 로그를 쓰므로 필요 없습니다 | env 파일 `MAIL_*` |
-| Let's Encrypt | HTTPS 인증서 | HTTP로만 접속됩니다 | 서버 Nginx |
+| Let's Encrypt | HTTPS 인증서 | Nginx 설정이 HTTPS를 전제로 해서 사이트에 접속할 수 없습니다 | 서버 Nginx |
 | GitHub Actions, GitHub 컨테이너 저장소(GHCR) | 테스트, 이미지 빌드와 보관 | 자동 배포만 안 됩니다. [직접 배포](01-build-and-deploy.md#1-4-새-서버에-배포하기)는 가능합니다 | GitHub 저장소 설정 |
 | Jenkins (서버에 직접 설치) | 서버 배포 실행 | 자동 배포만 안 됩니다 | 서버 `/etc/jenkins/casc.env` |
 | SSAFY GitLab | GitHub 저장소를 그대로 복사해 두는 곳 | 서비스와 무관합니다 | GitHub 저장소 설정 |
@@ -37,6 +37,8 @@ GMS 주소가 코드에 고정된 곳이 많아서, 일반 OpenAI 키로 바꿔 
 2. `ai/app/routers/document_review.py` 107줄의 `gms.ssafy.io` 주소 검사를 고칩니다. 이 검사는 문서 검토, 작업 분해,
    작업 계획 초안, 작업 계획 수정, 문서 수정 초안, 회의 수정 초안 6개 기능이 함께 씁니다.
 3. env 파일에 `GMS_CHAT_ENDPOINT=<OpenAI 채팅 주소>`를 넣고, `GMS_KEY`에는 OpenAI 키를 넣습니다. 2번의 기능들은 이 주소를 씁니다.
+4. 모델 이름은 `ai/app/core/config.py`에 하나로 고정되어 있습니다(24줄 임베딩, 27줄 생성). 쓰려는 공급자에 같은 이름의
+   모델이 없으면 이 두 줄의 허용값과 기본값을 고칩니다.
 
 `ai/app/routers/impact.py`의 `_GMS_CHAT`은 호출 주소가 아니라 "GMS 주소일 때만 `GMS_KEY`를 쓴다"는 비교에 쓰이니
 고치지 마세요. 변경 영향 분석은 코드를 고치지 않고 env 파일에 `IMPACT_LLM_ENDPOINT`(OpenAI 호환 주소)와
@@ -44,11 +46,11 @@ GMS 주소가 코드에 고정된 곳이 많아서, 일반 OpenAI 키로 바꿔 
 
 ### 쓰는 모델
 
-| 용도 | 모델 | 설정 |
+| 용도 | 모델 | 이름이 정해진 곳 |
 | --- | --- | --- |
-| 문서 검색용 임베딩 | `text-embedding-3-small` (1024차원) | `GMS_EMBEDDING_MODEL` |
-| 그 밖의 AI 기능(문서 검토, 보완 질문, 비비 질문, 계획 검증, 회의 정리 등) | `gpt-6-luna` | `BEE_DEFAULT_MODEL` |
-| 변경 영향 분석 | `gpt-6-luna` | `IMPACT_LLM_MODEL` |
+| 문서 검색용 임베딩 | `text-embedding-3-small` (1024차원) | `ai/app/core/config.py`에 고정. 바꾸려면 코드 수정 |
+| 그 밖의 AI 기능(문서 검토, 보완 질문, 비비 질문, 계획 검증, 회의 정리 등) | `gpt-6-luna` | `ai/app/core/config.py`에 고정. 바꾸려면 코드 수정 |
+| 변경 영향 분석 | `gpt-6-luna` | env 파일 `IMPACT_LLM_MODEL` |
 
 ### 키를 넣는 곳
 

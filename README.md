@@ -76,6 +76,8 @@ cd beez
 ```
 
 GitHub에서 받는다면 주소를 `https://github.com/S15A108/BEEZ.git`으로 바꾸세요. 개발 서버와 같은 코드인 `dev` 브랜치를 받습니다.
+SSAFY GitLab은 비공개라 SSAFY GitLab 계정으로 로그인해야 합니다. 비밀번호로 로그인이 거절되면 GitLab 사용자 설정에서
+Personal Access Token(`read_repository` 권한)을 만들어 비밀번호 자리에 넣으세요.
 
 ### 2) 빌드하고 띄우기
 
@@ -108,18 +110,26 @@ docker compose -p beez logs --no-log-prefix backend | grep -A2 "가입 인증 �
 ([발급 방법](exec/02-external-services.md#2-1-llm-api-ssafy-gms), SSAFY 교육생만 발급 가능)를 받아 아래 명령을 차례로
 실행합니다. 키는 파일에 저장하지 않고 지금 열린 터미널에만 둡니다.
 
+먼저 아래 한 줄만 실행하고 키를 붙여 넣은 뒤 Enter를 누릅니다. Git Bash에서는 `Shift+Insert`로 붙여 넣고, 입력한 키는
+화면에 보이지 않습니다.
+
 ```bash
-read -rs GMS_KEY && export GMS_KEY      # 키를 붙여 넣고 Enter. Git Bash에서는 Shift+Insert로 붙여 넣습니다 (화면에 보이지 않습니다)
+read -rs GMS_KEY && export GMS_KEY
+```
+
+그다음 나머지 명령을 실행합니다.
+
+```bash
 export PLANNING_QUESTIONS_ENABLED=true DESIGN_DRAFTS_ENABLED=true BEE_CHAT_ENABLED=true IMPACT_LLM_MODEL=gpt-6-luna
 export CONTEXT_SELECTION_ENABLED=true CONTEXT_SELECTION_MIN_SIMILARITY=0.3 CONTEXT_SELECTION_MAX_ITEMS=10 \
        CONTEXT_SELECTION_MAX_EVIDENCE=8 CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS=30
 docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --wait
 ```
 
-- 키와 함께 둘째, 셋째 줄도 꼭 실행하세요. 둘째 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 셋째 줄은 에이전트가
+- 키와 함께 위 명령을 모두 실행하세요. 첫 줄은 보완 질문, 설계 초안, 비비 질문, 영향 분석을, 둘째 줄은 에이전트가
   승인된 설계를 읽어 가는 기능을 켭니다. 이 기능들은 기본으로 꺼져 있습니다.
-- 셋째 줄의 기능은 팀 문서([docs/infra/env.md](docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 AI 담당이
-  확정하기 전의 제안값입니다. 이 기능이 꺼져 있으면 에이전트가 설계를 읽지 못하므로 함께 켭니다.
+- 둘째 줄의 기능은 팀 문서([docs/infra/env.md](docs/infra/env.md))에 아직 켜지 않는 기능으로 되어 있고, 값은 팀이 아직
+  확정하지 않은 값입니다. 이 기능이 꺼져 있으면 에이전트가 설계를 읽지 못하므로 함께 켭니다.
 - `export`한 값은 지금 열린 터미널에만 남습니다. 터미널을 새로 열었다면 위 명령을 처음부터 다시 실행한 뒤 서비스를 띄우세요.
 
 ### 주소
@@ -199,7 +209,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 에이전트 연결하기
 
-1. 웹에 로그인하고 연결할 프로젝트에 들어갑니다. 오른쪽 위의 톱니바퀴(설정) 버튼을 눌러 **내 에이전트 관리**에서
+1. 웹에 로그인하고 연결할 프로젝트에 들어갑니다. 오른쪽 위의 톱니바퀴(설정) 버튼을 누르고, 설정 창 왼쪽 메뉴의 **내 에이전트 관리**에서
    토큰을 발급합니다. 토큰은 프로젝트마다 따로 발급하고, 발급할 때 한 번만 보이니 바로 복사하세요.
 2. 화면에 나온 명령을 작업할 저장소 폴더에서 실행합니다. 로컬 서버라면 주소가 `http://localhost:8088/mcp`입니다.
 
