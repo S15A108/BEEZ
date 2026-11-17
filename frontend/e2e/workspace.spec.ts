@@ -413,10 +413,20 @@ test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카�
 
   await page.mouse.move(0, 0)
   await expect(tooltip).toHaveCount(0)
+  // 제목 줄의 정렬 뒤로 만들기 버튼과 도시 이름표를 지나 첫 카드까지 키보드로 간다(S15P31A108-446).
   await page.getByLabel('정렬').focus()
-  await page.keyboard.press('Tab')
+  for (let i = 0; i < 30; i++) {
+    if (await preparing.evaluate((element) => element.matches(':focus'))) break
+    await page.keyboard.press('Tab')
+  }
+  await expect(preparing).toBeFocused()
   await expect(tooltip).toHaveCount(1)
-  await page.keyboard.press('Shift+Tab')
+  await expect(tooltip).toContainText('시작 준비 중')
+  await page.keyboard.press('Tab')
+  await expect(running).toBeFocused()
+  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  // 마지막 카드에서 목록 밖으로 나가면 닫힌다.
+  await page.keyboard.press('Tab')
   await expect(tooltip).toHaveCount(0)
 })
 

@@ -22,8 +22,6 @@ export interface CitySceneProps {
   nextLot: number | null
   /** 프로젝트 만들기 창 뒤에 깔 때. 이름표를 숨기고 더 가깝게 본다. */
   backdrop?: boolean
-  /** 도시 위에 겹쳐 놓은 제목 영역. 제목 글자·버튼과 겹치는 이름표는 숨긴다. */
-  titleRef?: RefObject<HTMLElement | null>
   onProjectSelect: (id: string) => void
   onLotSelect: (lot: number) => void
   /** 건물·이름표에 마우스를 올리거나 이름표에 키보드로 들어오면 그 프로젝트, 벗어나면 null. 터치에서는 부르지 않는다. */
@@ -209,21 +207,7 @@ function CityRuntime({
     // 멈춤 자리로 천천히 따라간다(초당 4배, 사용자 요청 "회전속도 더 늦추고"로 8에서 낮췄다).
     v.rot += (v.target - v.rot) * Math.min(1, delta * 4)
     renderer.render({ ...v, backdrop: latest.current.backdrop })
-    // 이름표가 도시 위에 겹친 제목·설명·만들기 버튼(넓은 화면)과 겹치면 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면
-    // 겹칠 일이 없다.
-    const origin = gl.domElement.getBoundingClientRect()
-    const blocked = [...(latest.current.titleRef?.current?.children ?? [])].map(
-      (element) => {
-        const rect = element.getBoundingClientRect()
-        return {
-          left: rect.left - origin.left - 8,
-          right: rect.right - origin.left + 8,
-          top: rect.top - origin.top - 8,
-          bottom: rect.bottom - origin.top + 8,
-        }
-      },
-    )
-    renderer.placeTags(overlay.current, blocked)
+    renderer.placeTags(overlay.current)
   }, 1)
   return null
 }
