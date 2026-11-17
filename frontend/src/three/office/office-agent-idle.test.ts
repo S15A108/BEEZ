@@ -44,7 +44,7 @@ const actorsOf = (status: string) => {
 const REST = ['resting', 'window', 'coffee']
 
 test.each(['online', 'waiting'])(
-  '%s 에이전트는 돌아다니기와 쉬기를 번갈아 한다',
+  '%s 에이전트는 주로 쉬고 가끔 가까운 곳에 짧게 들른다',
   (status) => {
     const id = `idle-${status}`
     const simulation = new OfficeLifeSimulation(id)
@@ -52,23 +52,36 @@ test.each(['online', 'waiting'])(
     expect(actors.find((actor) => actor.id === 'agent:22')).toMatchObject({
       idle: 'lounge',
     })
-    const stops: string[] = []
-    let sat = false
-    for (let frame = 0; frame < 3600; frame++) {
+    let resting = 0,
+      visiting = 0,
+      sat = false
+    const visits: { x: number; y: number }[] = []
+    let lastRest: { x: number; y: number } | undefined
+    // 10분 동안 지켜본다.
+    for (let frame = 0; frame < 12000; frame++) {
       const agent = simulation
         .step(floor, actors, 0.05)
         .find((actor) => actor.id === 'agent:22')!
       const activity = getOfficeLifeActivity(id, 'agent:22')!.activity
-      sat ||= activity === 'resting' && !!agent.seated
-      if (activity === 'walking' || activity === 'standing') continue
-      if (stops.at(-1) !== activity) stops.push(activity)
+      if (REST.includes(activity)) {
+        resting += 0.05
+        sat ||= activity === 'resting' && !!agent.seated
+        lastRest = { x: agent.x, y: agent.y }
+      } else if (activity === 'dropby' || activity === 'home') {
+        visiting += 0.05
+        // 짧게 들르는 곳은 쉬던 곳에서 가깝다(6칸 안 + 길 여유).
+        if (lastRest && !visits.length)
+          expect(
+            Math.hypot(agent.x - lastRest.x, agent.y - lastRest.y),
+          ).toBeLessThanOrEqual(7 * 32)
+        visits.push({ x: agent.x, y: agent.y })
+      }
     }
     simulation.dispose()
-    // 처음 자리에 잠깐 선 것과 첫 산책은 같은 '멈춰 둘러봄'이다. 그 뒤로는 산책과 쉬기가 번갈아 온다.
-    expect(stops.length).toBeGreaterThanOrEqual(4)
-    for (const [index, activity] of stops.entries())
-      expect(REST.includes(activity)).toBe(index % 2 === 1)
     expect(sat).toBe(true)
+    // 쉬는 시간이 들르는 시간의 두 배 넘는다.
+    expect(resting).toBeGreaterThan(visiting * 2)
+    expect(resting).toBeGreaterThan(120)
   },
 )
 

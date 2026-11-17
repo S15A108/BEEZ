@@ -14,7 +14,6 @@ import {
   movementInput,
   movementKey,
   movementSpeed,
-  smoothRoute,
 } from './office/motion'
 import type { Point } from './office/motion'
 import { OfficeRenderer3D } from './office/OfficeRenderer3D'
@@ -32,7 +31,7 @@ import { nearOfficeExit } from './office/office-exit'
 import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
-import { findPath } from './office/path'
+import { navNearest, navOf, navRoute } from './office/office-nav'
 import { officeDesignOf, type OfficeTime } from './office/officeLook'
 import type { OfficeScreens } from './office/office-screens'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
@@ -173,25 +172,10 @@ function OfficeRuntime(
     const free = (x: number, y: number) =>
       officeWalkable(latest.current.floor, x, y)
     const walkTo = (destination: Point) => {
-      const currentFloor = latest.current.floor
-      // 발 위치가 단단한 가구에 붙는 칸도 막아, 가구에 반쯤 걸친 칸으로 길을 내지 않는다.
-      const blocked = currentFloor.blocked.map((row, y) =>
-        row.map(
-          (value, x) =>
-            value ||
-            currentFloor.grid[y][x] === '#' ||
-            !free(x * 32 + 16, y * 32 + 27),
-        ),
-      )
-      const points = findPath(
-        blocked,
-        Math.floor(player.current.x / 32),
-        Math.floor((player.current.y - 4) / 32),
-        Math.floor(destination.x / 32),
-        Math.floor(destination.y / 32),
-      ).map(([x, y]) => ({ x: x * 32 + 16, y: y * 32 + 27 }))
-      points.push(destination)
-      route.current = smoothRoute(player.current, points, free)
+      // 시뮬레이션의 사람들과 같은 판정·길찾기(office-nav)로 걷는다. 막힌 곳을 누르면 가장 가까운 빈 곳으로 간다.
+      const nav = navOf(latest.current.floor)
+      const goal = navNearest(nav, destination)
+      route.current = (goal && navRoute(nav, player.current, goal)) ?? []
     }
     const exit = () => {
       const portal = latest.current.floor.outdoorExit

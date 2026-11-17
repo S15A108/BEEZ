@@ -1,15 +1,12 @@
 import type { Floor } from './floors'
 import { T } from './floors'
-import { clearOfFurniture, gridWalkable } from './motion'
 import type { Point } from './motion'
 import { PERSONAL_SPACE } from './office-life'
+import { navClear, navOf, navReachable } from './office-nav'
 
+/** 몸(반지름 16px)이 벽·가구·의자에 닿지 않는 곳인지. 시뮬레이션의 사람들과 같은 판정이다(office-nav). */
 export function officeWalkable(floor: Floor, x: number, y: number): boolean {
-  return (
-    gridWalkable({ x, y: y - 4 }, floor.blocked, T, 6) &&
-    floor.grid[Math.floor((y - 4) / T)]?.[Math.floor(x / T)] !== '#' &&
-    clearOfFurniture(floor.furniture, x, y)
-  )
+  return navClear(navOf(floor), x, y)
 }
 
 /**
@@ -21,8 +18,9 @@ export function officeLanding(
   from: Point,
   others: readonly Point[] = [],
 ): Point | undefined {
+  // 가구 사이에 갇힌 틈이 아니라 엘리베이터 앞에서 걸어갈 수 있는 곳에 선다.
   const free = (x: number, y: number) =>
-    officeWalkable(floor, x, y) &&
+    navReachable(navOf(floor), { x, y }) &&
     others.every(
       (other) => Math.hypot(x - other.x, y - other.y) >= PERSONAL_SPACE,
     )

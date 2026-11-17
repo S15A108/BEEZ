@@ -6,7 +6,8 @@ import type { OfficeAppearance, OfficeEntity3D } from './OfficeRenderer3D'
 import type { Floor } from './floors'
 import { officeWorkZone } from './office-layout'
 import { PERSONAL_SPACE } from './office-life'
-import { officeLanding, officeWalkable } from './office-navigation'
+import { officeLanding } from './office-navigation'
+import { navOf, navReachable } from './office-nav'
 import { RECEPTIONIST } from './social'
 
 // 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D34).
@@ -179,10 +180,18 @@ function fixedOfficeActors(
   const feet = (spot: Spot) => ({ x: spot.x * 32 + 16, y: spot.y * 32 + 27 })
   /** 서서 출발하는 사람(팀원, 주인 뒤 에이전트)의 발 위치 */
   const standing: { x: number; y: number }[] = []
+  // 비비가 서는 세 자리(라운지 가운데·공용 문서함·회의실, D35). 팀원은 그 곁에서 출발하지 않는다. 팀원이 돌아다니다
+  // 돌아오는 자리라, 그 곁이면 비비가 자리에 닿지 못한다.
+  const bibiSpots = [
+    floor.seats.lead?.[0],
+    floor.bibiSpots?.documents,
+    floor.bibiSpots?.meeting,
+  ].flatMap((spot) => (spot ? [feet(spot)] : []))
   const standAt = (
     seat: Spot,
     back: number,
     side: number,
+    avoid: readonly { x: number; y: number }[] = [],
   ): Spot | undefined => {
     const [dx, dy] = {
       down: [0, -1],
@@ -199,9 +208,9 @@ function fixedOfficeActors(
     // 똑같은지만 보면 등을 맞댄 두 의자의 팀원이 같은 곳에 겹쳐 섰다.
     const at = feet(spot)
     const free =
-      officeWalkable(floor, at.x, at.y) &&
+      navReachable(navOf(floor), at) &&
       !taken.has(key(spot)) &&
-      standing.every(
+      [...standing, ...avoid].every(
         (other) => Math.hypot(other.x - at.x, other.y - at.y) >= PERSONAL_SPACE,
       )
     return free ? (taken.add(key(spot)), standing.push(at), spot) : undefined
@@ -213,6 +222,7 @@ function fixedOfficeActors(
   const landNear = (seat: Spot): Spot | undefined => {
     const point = officeLanding(floor, feet(seat), [
       ...standing,
+      ...bibiSpots,
       ...[...homeSeats.values()].map(feet),
     ])
     if (!point) return undefined
@@ -231,9 +241,9 @@ function fixedOfficeActors(
     // 벽을 등진 의자(나무 배치의 북·동쪽 벽 자리)는 뒤가 벽이라, 의자에서 가장 가까운 빈 칸 중 이미 선 사람과 모든
     // 작업 의자에서 사람 사이 거리만큼 떨어진 곳에 선다. 그전에는 그 팀원이 사무실에서 빠졌다.
     const spot =
-      standAt(seat, 1.5, 0.9) ??
-      standAt(seat, 1.5, -0.9) ??
-      standAt(seat, 1.5, 0) ??
+      standAt(seat, 1.5, 0.9, bibiSpots) ??
+      standAt(seat, 1.5, -0.9, bibiSpots) ??
+      standAt(seat, 1.5, 0, bibiSpots) ??
       landNear(seat)
     if (!spot) continue
     result.push({

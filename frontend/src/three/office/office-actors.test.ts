@@ -456,9 +456,9 @@ test.each(
     expectAt(meeting, live('MEETING', 2, sitting))
     // 같은 상태를 다시 읽어도 움직이지 않는다.
     expect(live('MEETING', 20, sitting).some((item) => item.moving)).toBe(false)
-    // 바뀌면 걷는다: 순간 이동하지 않고 움직이다가 새 자리에 머문다.
+    // 바뀌면 걷는다: 순간 이동하지 않고, 새 쪽으로 돌고 나서(1초 안에) 걷다가 새 자리에 머문다.
     const walk = live('DOCUMENT_REVIEW', 40, sitting)
-    expect(walk[1].moving).toBe(true)
+    expect(walk.slice(0, 20).some((item) => item.moving)).toBe(true)
     expect(
       Math.hypot(walk[1].x - feet(meeting).x, walk[1].y - feet(meeting).y),
     ).toBeLessThan(10)
