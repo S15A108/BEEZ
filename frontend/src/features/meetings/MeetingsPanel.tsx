@@ -27,6 +27,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
@@ -255,6 +260,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   return (
     // 창 본문을 베이지로 채운다(캔버스 PNL-06-v2: 머리 아래 #f3f1ea). 창의 안쪽 여백만큼 밖으로 넓힌다.
     // 넓은 화면에서는 창 높이에 맞춰 대화 칸만 안에서 스크롤한다. 창의 1fr 줄이 내용 높이로 늘지 않게 높이 0에 min-h로 채운다.
+    // 이 칸의 스크롤은 창이 아주 낮아 대화 칸 최소 높이도 못 지킬 때만 생긴다(그때도 입력줄은 아래에 붙어 있다).
     <section
       className={cn(
         '-mx-5 -mb-5 flex min-h-[calc(100%+1.25rem)] flex-col gap-3.5 border-t bg-[#f3f1ea] px-5 py-5 sm:-mx-8 sm:-mb-8 sm:min-h-[calc(100%+2rem)] sm:px-7 lg:h-0 lg:overflow-y-auto',
@@ -576,14 +582,120 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           </section>
                         )}
                         <div className="grid gap-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-lg font-bold">
-                              {meeting.title}
-                            </h3>
-                            <MeetingChip
-                              status={meeting.status}
-                              origin={meeting.origin}
-                            />
+                          {/* 제목 줄: 제목 오른쪽에 참여자를 둔다(화면 검수 11-16). 좁으면 참여자가 제목 아래로 내려간다. */}
+                          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-lg font-bold">
+                                {meeting.title}
+                              </h3>
+                              <MeetingChip
+                                status={meeting.status}
+                                origin={meeting.origin}
+                              />
+                            </div>
+                            <div
+                              role="group"
+                              aria-label="참여자"
+                              className="flex flex-wrap items-center gap-2 text-[13px]"
+                            >
+                              <span className="mr-0.5 text-muted-foreground">
+                                참여자 {meeting.participants.length + 1}
+                              </span>
+                              {/* 참여자 칩(캔버스 PNL-06-v2): 이니셜 원, 이름(역할·이 회의의 작업은 마우스를 올리면). 비비와 팀장 칩에는 × 없음, 빼기는 팀장만. */}
+                              <PersonChip
+                                avatar={<Initial name="비" color="#f3c530" />}
+                                name="비비"
+                                role="AI 팀장"
+                              />
+                              {meeting.participants.map((item) => {
+                                const member = people.find(
+                                  (person) => person.id === item.member_id,
+                                )
+                                const removable =
+                                  isLeader &&
+                                  !closedMeeting &&
+                                  member?.role !== 'LEADER'
+                                return (
+                                  <PersonChip
+                                    key={item.member_id}
+                                    avatar={
+                                      <Initial
+                                        name={member?.name}
+                                        color={member?.color}
+                                        dark={member?.role === 'LEADER'}
+                                      />
+                                    }
+                                    name={member?.name ?? '팀원'}
+                                    role={[
+                                      roleOf(member, meeting.task_ids),
+                                      item.added_by_member_id &&
+                                        `${nameOfMember(item.added_by_member_id)}이 추가`,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ')}
+                                    status={participationLabel[item.status]}
+                                  >
+                                    {removable && (
+                                      <button
+                                        type="button"
+                                        aria-label={`${member?.name ?? '팀원'} 빼기`}
+                                        className="grid size-5 place-items-center rounded-full text-muted-foreground hover:bg-muted"
+                                        onClick={() =>
+                                          perform(
+                                            () =>
+                                              meetingsApi.removeParticipant(
+                                                projectId,
+                                                meeting.id,
+                                                item.member_id,
+                                              ),
+                                            `${member?.name ?? '팀원'}님을 회의에서 뺐어요.`,
+                                          )
+                                        }
+                                      >
+                                        <X className="size-3" />
+                                      </button>
+                                    )}
+                                  </PersonChip>
+                                )
+                              })}
+                              {(isLeader || !!participant) &&
+                                !closedMeeting && (
+                                  <ParticipantPicker
+                                    members={people}
+                                    joinedIds={meeting.participants.map(
+                                      (item) => item.member_id,
+                                    )}
+                                    isLeader={isLeader}
+                                    roleOf={(member) =>
+                                      roleOf(member, meeting.task_ids)
+                                    }
+                                    onAdd={(memberId) =>
+                                      perform(
+                                        () =>
+                                          meetingsApi.invite(
+                                            projectId,
+                                            meeting.id,
+                                            {
+                                              member_ids: [memberId],
+                                            },
+                                          ),
+                                        '관련자를 추가했어요.',
+                                      )
+                                    }
+                                    onRemove={(memberId) =>
+                                      perform(
+                                        () =>
+                                          meetingsApi.removeParticipant(
+                                            projectId,
+                                            meeting.id,
+                                            memberId,
+                                          ),
+                                        '회의에서 뺐어요.',
+                                      )
+                                    }
+                                  />
+                                )}
+                            </div>
                           </div>
                           <p className="text-xs text-muted-foreground">
                             {[
@@ -672,104 +784,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             </span>
                           )}
                         </div>
-                        <div
-                          role="group"
-                          aria-label="참여자"
-                          className="flex flex-wrap items-center gap-2 text-[13px]"
-                        >
-                          <span className="mr-0.5 text-muted-foreground">
-                            참여자 {meeting.participants.length + 1}
-                          </span>
-                          {/* 참여자 칩(캔버스 PNL-06-v2): 이니셜 원, 이름, 역할·이 회의의 작업. 비비와 팀장 칩에는 × 없음, 빼기는 팀장만. */}
-                          <PersonChip
-                            avatar={<Initial name="비" color="#f3c530" />}
-                            name="비비"
-                            role="AI 팀장"
-                          />
-                          {meeting.participants.map((item) => {
-                            const member = people.find(
-                              (person) => person.id === item.member_id,
-                            )
-                            const removable =
-                              isLeader &&
-                              !closedMeeting &&
-                              member?.role !== 'LEADER'
-                            return (
-                              <PersonChip
-                                key={item.member_id}
-                                avatar={
-                                  <Initial
-                                    name={member?.name}
-                                    color={member?.color}
-                                    dark={member?.role === 'LEADER'}
-                                  />
-                                }
-                                name={member?.name ?? '팀원'}
-                                role={[
-                                  roleOf(member, meeting.task_ids),
-                                  item.added_by_member_id &&
-                                    `${nameOfMember(item.added_by_member_id)}이 추가`,
-                                  participationLabel[item.status],
-                                ]
-                                  .filter(Boolean)
-                                  .join(' · ')}
-                              >
-                                {removable && (
-                                  <button
-                                    type="button"
-                                    aria-label={`${member?.name ?? '팀원'} 빼기`}
-                                    className="grid size-5 place-items-center rounded-full text-muted-foreground hover:bg-muted"
-                                    onClick={() =>
-                                      perform(
-                                        () =>
-                                          meetingsApi.removeParticipant(
-                                            projectId,
-                                            meeting.id,
-                                            item.member_id,
-                                          ),
-                                        `${member?.name ?? '팀원'}님을 회의에서 뺐어요.`,
-                                      )
-                                    }
-                                  >
-                                    <X className="size-3" />
-                                  </button>
-                                )}
-                              </PersonChip>
-                            )
-                          })}
-                          {(isLeader || !!participant) && !closedMeeting && (
-                            <ParticipantPicker
-                              members={people}
-                              joinedIds={meeting.participants.map(
-                                (item) => item.member_id,
-                              )}
-                              isLeader={isLeader}
-                              roleOf={(member) =>
-                                roleOf(member, meeting.task_ids)
-                              }
-                              onAdd={(memberId) =>
-                                perform(
-                                  () =>
-                                    meetingsApi.invite(projectId, meeting.id, {
-                                      member_ids: [memberId],
-                                    }),
-                                  '관련자를 추가했어요.',
-                                )
-                              }
-                              onRemove={(memberId) =>
-                                perform(
-                                  () =>
-                                    meetingsApi.removeParticipant(
-                                      projectId,
-                                      meeting.id,
-                                      memberId,
-                                    ),
-                                  '회의에서 뺐어요.',
-                                )
-                              }
-                            />
-                          )}
-                        </div>
                         {review &&
                           !summary &&
                           summaryQuery.isError &&
@@ -783,7 +797,15 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                         {isLeader &&
                           participant?.status === 'JOINED' &&
                           !closedMeeting && (
-                            <div className="grid gap-2">
+                            // 펼친 수정 초안도 안건처럼 대화 칸과 남는 높이를 나눈다. 버튼 초점 테두리가 잘리지 않게 안쪽 여백을 둔다.
+                            // 창이 낮아도 버튼과 초안 몇 줄(160px)은 남기고, 그래도 모자라면 창이 스크롤한다(PR #306 재검토 11-17).
+                            <div
+                              className={cn(
+                                'grid gap-2',
+                                showRevision &&
+                                  'lg:-m-1 lg:max-h-max lg:min-h-40 lg:flex-1 lg:content-start lg:overflow-y-auto lg:p-1',
+                              )}
+                            >
                               <Button
                                 type="button"
                                 variant="outline"
@@ -807,7 +829,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               )}
                             </div>
                           )}
-                        {/* lg 미만은 창이 내용 높이로 늘어나므로 대화 칸 높이를 묶어 안에서 스크롤한다(새 메시지로 내리기). lg부터는 창 높이를 따른다. */}
+                        {/* lg 미만은 창이 내용 높이로 늘어나므로 대화 칸 높이를 묶어 안에서 스크롤한다(새 메시지로 내리기).
+                            lg부터는 제목 줄·안건·단계·입력줄을 뺀 남은 높이를 모두 쓰고, 이 칸만 스크롤한다. */}
                         <AsyncState query={entries}>
                           {() => (
                             <div
@@ -815,7 +838,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               role="log"
                               aria-label="회의 대화"
                               className={cn(
-                                'grid max-h-[50vh] min-h-48 flex-1 content-start gap-3.5 overflow-auto rounded-2xl border bg-white p-4 lg:max-h-none',
+                                'grid max-h-[50vh] min-h-48 flex-1 content-start gap-3.5 overflow-auto rounded-2xl border bg-white p-4 lg:max-h-none lg:min-h-28',
                                 line,
                               )}
                             >
@@ -1064,26 +1087,45 @@ function PersonChip({
   avatar,
   name,
   role,
+  status,
   children,
 }: {
   avatar: ReactNode
   name: string
   role?: string
+  /** 참여 요청·불참처럼 아직 대화에 없는 사람의 상태. 칩에 글자로 보인다. */
+  status?: string
   children?: ReactNode
 }) {
-  return (
+  // 칩이 제목 줄에 들어가도록 역할은 글자로 펼치지 않고, 마우스를 올리거나 키보드로 칩에 초점을 두면 툴팁으로 보인다.
+  // 화면 읽기 프로그램은 sr-only 글자로 읽는다. 참여 상태는 다른 곳에 없어 칩에 글자로 남긴다(리뷰 11-16).
+  const detail = [role, status].filter(Boolean).join(' · ')
+  const chip = (
     <span
+      tabIndex={detail ? 0 : undefined}
       className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1',
+        'inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring',
         children ? 'pr-1.5' : 'pr-3',
         line,
       )}
     >
       {avatar}
       <strong className="font-semibold">{name}</strong>
-      {role && <span className="text-xs text-muted-foreground">{role}</span>}
+      {role && <span className="sr-only">{role}</span>}
+      {status && (
+        <span className="text-xs text-muted-foreground">{status}</span>
+      )}
       {children}
     </span>
+  )
+  if (!detail) return chip
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{chip}</TooltipTrigger>
+      <TooltipContent>
+        {name} · {detail}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
