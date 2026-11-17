@@ -17,9 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
  * TSK-A06 담당자 변경. 사람 세션만. 새 담당자는 같은 프로젝트의 활성 멤버.
  * <ul>
  *   <li>팀장은 어느 작업이든 누구에게나 (명세)</li>
- *   <li>팀원은 <b>담당자 없는(미배정) 작업을 자기에게</b> 맡기는 것만 (-301, 11-04 사용자 결정). 다른 사람 지정·담당자 있는 작업은 403</li>
+ *   <li>팀원은 <b>담당자 없는(미배정) 작업을 자기에게</b> 맡길 수 있다 (-301, 11-04 사용자 결정)</li>
+ *   <li>팀원은 <b>자기가 지금 담당자인 작업</b>을 같은 프로젝트의 다른 활성 멤버에게 넘길 수 있다 (-419, 11-16 사용자 결정, #302).
+ *       그 밖(남의 작업, 미배정 작업을 남에게)은 403</li>
  * </ul>
- * 판정 순서 (-301): 프로젝트 행 잠금 → 잠금 번호(409 revision_conflict) → 권한·미배정(403) → 완료·취소(400) → 새 담당자 활성(400).
+ * 판정 순서 (-301): 프로젝트 행 잠금 → 잠금 번호(409 revision_conflict) → 권한(403) → 완료·취소(400) → 새 담당자 활성(400).
  * 잠금 번호를 권한보다 먼저 보는 이유: 두 팀원이 같은 미배정 작업을 동시에 맡으면, 늦은 쪽은 작업이 이미 맡겨져 권한으로는 403 이지만
  * 실제 사정은 "다른 사람이 먼저 맡음" 이라 409 가 맞다 (화면 PR #140 의 "다른 팀원이 먼저 맡았어요").
  * 진행 중 작업은 팀원 제외·나가기의 인계와 같은 규칙으로 넘긴다 ({@link TaskHandoverService#reassign}) —
@@ -64,7 +66,7 @@ public class TaskAssigneeService {
                     "작업 상태가 이미 바뀌었습니다 (현재 lock_version=" + task.getLockVersion() + ")");
         }
         if (!access.isLeaderAfterLock(actor)) {
-            requireSelfClaimOfUnassigned(actor, task, newAssigneeMemberId);
+            requireMemberMayAssign(actor, task, newAssigneeMemberId);
         }
         if (task.getStatus().isClosed()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition", "완료·취소된 작업의 담당자는 바꿀 수 없습니다");
@@ -77,12 +79,14 @@ public class TaskAssigneeService {
         return query.toDetail(task);
     }
 
-    /** 팀장이 아니면: 담당자 없는 작업을 자기에게 맡기는 것만 된다. 아니면 403 */
-    private static void requireSelfClaimOfUnassigned(ProjectActor actor, Task task, Long newAssigneeMemberId) {
-        boolean toSelf = newAssigneeMemberId != null && newAssigneeMemberId == actor.memberId();
-        if (task.getAssigneeMemberId() != null || !toSelf) {
+    /** 팀장이 아니면: 담당자 없는 작업을 자기에게 맡기거나, 자기가 담당자인 작업을 넘기는 것만 된다. 아니면 403 */
+    private static void requireMemberMayAssign(ProjectActor actor, Task task, Long newAssigneeMemberId) {
+        Long current = task.getAssigneeMemberId();
+        boolean ownTask = current != null && current == actor.memberId();
+        boolean claimToSelf = current == null && newAssigneeMemberId != null && newAssigneeMemberId == actor.memberId();
+        if (!ownTask && !claimToSelf) {
             throw AccessErrors.forbidden("assignee_change_not_allowed task=" + task.getId() + " member=" + actor.memberId(),
-                    "팀원은 담당자 없는 작업을 자기에게 맡기는 것만 할 수 있습니다");
+                    "팀원은 담당자 없는 작업을 자기에게 맡기거나, 자기가 맡은 작업만 넘길 수 있습니다");
         }
     }
 }
