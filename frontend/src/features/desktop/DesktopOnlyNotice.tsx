@@ -24,13 +24,13 @@ export function DesktopOnlyNotice() {
       </span>
       <div className="grid max-w-sm gap-3">
         <h1 className="text-2xl font-bold">PC에서 이용해 주세요</h1>
-        <p className="text-sm break-keep text-muted-foreground">
-          BEEZ는 팀이 승인한 설계와 다른 구현이 쌓이지 않게 돌려보내 주는
-          서비스예요.
-        </p>
         <p>
           화면이 좁아 이용할 수 없어요.
           <br /> PC 브라우저에서 열어 주세요.
+        </p>
+        <p className="text-sm break-keep text-muted-foreground">
+          BEEZ는 팀이 승인한 설계와 다른 구현이 쌓이지 않게 돌려보내 주는
+          서비스예요.
         </p>
       </div>
       <Button type="button" className="min-h-11" onClick={copyAddress}>

@@ -1,8 +1,10 @@
+import { Suspense, lazy } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, Hexagon, LogOut, Settings } from 'lucide-react'
 import { authApi } from '@/api/services'
 import { useSession } from '@/features/auth/useSession'
+import { useAccountDialog } from '@/features/account/useAccountDialog'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -13,11 +15,19 @@ import {
 import { CharacterAvatar } from '@/components/CharacterAvatar'
 import { characterOf } from '@/lib/characters'
 
+// 회원 설정 창(D48)은 열 때만 불러 첫 화면 번들에 넣지 않는다.
+const AccountDialog = lazy(() =>
+  import('@/features/account/AccountDialog').then((module) => ({
+    default: module.AccountDialog,
+  })),
+)
+
 export default function App() {
   const { pathname } = useLocation()
   const session = useSession()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const account = useAccountDialog()
   const logout = useMutation({
     mutationFn: () => authApi.logout(),
     onSuccess: () => {
@@ -30,6 +40,11 @@ export default function App() {
     return (
       <div className="min-h-dvh bg-background text-foreground">
         <Outlet />
+        {account.view && (
+          <Suspense fallback={null}>
+            <AccountDialog />
+          </Suspense>
+        )}
       </div>
     )
   return (
@@ -66,15 +81,13 @@ export default function App() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {/* 회원 설정 안(비밀번호 변경·탈퇴 포함)에서는 회원 설정을 빼고 로그아웃만(캔버스 SCR-05-v2) */}
-                {!pathname.startsWith('/account') && (
-                  <DropdownMenuItem asChild>
-                    <Link to="/account">
-                      <Settings />
-                      회원 설정
-                    </Link>
-                  </DropdownMenuItem>
-                )}
+                {/* 회원 설정은 지금 화면 위에 창으로 연다(D48). 창이 열려 있으면 머리줄은 창 아래에 가린다. */}
+                <DropdownMenuItem asChild>
+                  <Link {...account.linkTo('profile')}>
+                    <Settings />
+                    회원 설정
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={logout.isPending}
                   onSelect={() => logout.mutate()}
@@ -93,23 +106,26 @@ export default function App() {
         )}
       </header>
       {/* 임시 비밀번호(ACC-A07)로 로그인했으면 비밀번호 변경으로 안내만 하고 강제로 옮기지 않는다(Q04). */}
-      {session.data?.must_change_password &&
-        pathname !== '/account/password' && (
-          <p
-            role="status"
-            className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b bg-primary/10 px-5 py-2.5 text-sm"
+      {session.data?.must_change_password && account.view !== 'password' && (
+        <p
+          role="status"
+          className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b bg-primary/10 px-5 py-2.5 text-sm"
+        >
+          임시 비밀번호로 로그인했어요. 회원 설정에서 새 비밀번호로 바꿔 주세요.
+          <Link
+            {...account.linkTo('password')}
+            className="font-semibold underline underline-offset-3"
           >
-            임시 비밀번호로 로그인했어요. 회원 설정에서 새 비밀번호로 바꿔
-            주세요.
-            <Link
-              to="/account/password"
-              className="font-semibold underline underline-offset-3"
-            >
-              비밀번호 변경
-            </Link>
-          </p>
-        )}
+            비밀번호 변경
+          </Link>
+        </p>
+      )}
       <Outlet />
+      {account.view && (
+        <Suspense fallback={null}>
+          <AccountDialog />
+        </Suspense>
+      )}
     </div>
   )
 }

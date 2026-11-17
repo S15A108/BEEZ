@@ -191,7 +191,7 @@ function renderSettings(focus: string, isLeader = true) {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/projects/101']}>
         <SettingsDialog
           projectId="101"
           isLeader={isLeader}
@@ -211,12 +211,22 @@ it('설정 사이드바는 회원 설정·팀 관리·내 에이전트 관리·�
   expect(menu).toHaveTextContent(
     /회원 설정.*팀 관리.*내 에이전트 관리.*프로젝트 관리.*프로젝트 나가기$/,
   )
+  // D48(11-17): 회원 설정은 사무실 주소를 그대로 두고 그 위에 여는 창이다.
   expect(within(menu).getByRole('link', { name: /회원 설정/ })).toHaveAttribute(
     'href',
-    '/account',
+    '/projects/101?account=profile',
   )
   for (const old of ['프로젝트 정보', '사무실 화면', '프로젝트 제거'])
     expect(within(menu).queryByText(old)).not.toBeInTheDocument()
+})
+
+// D48: 두 창이 겹치지 않게 회원 설정을 열면 이 설정 창은 닫는다.
+it('설정 창에서 회원 설정을 누르면 설정 창을 닫는다', async () => {
+  const menu = await renderSettings('team')
+  await userEvent
+    .setup()
+    .click(within(menu).getByRole('link', { name: /회원 설정/ }))
+  expect(useWorkspaceStore.getState().pane).toBeNull()
 })
 
 // 예전 링크(?settings=...)와 앱 안 링크가 여는 메뉴. office는 프로젝트 관리 아래쪽 시간대로 합쳤다.

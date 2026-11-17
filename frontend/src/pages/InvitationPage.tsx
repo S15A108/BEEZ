@@ -102,8 +102,9 @@ export default function InvitationPage() {
             <p className="text-[13px] font-medium text-muted-foreground">
               프로젝트 초대
             </p>
-            {/* MEM-A04 수정안 요청 필드(inviter·project_description·invited_email)는 서버가 줄 때만 보인다. */}
-            <div className="mt-3 rounded-2xl border p-5">
+            {/* MEM-A04 수정안 요청 필드(inviter·project_description·invited_email)는 서버가 줄 때만 보인다.
+                바깥 카드 안에 상자를 한 번 더 두지 않고 프로젝트 이름을 카드 제목으로 쓴다. */}
+            <div className="mt-1.5">
               <h2 className="text-2xl font-bold">
                 {invitation.data.project_name}
               </h2>

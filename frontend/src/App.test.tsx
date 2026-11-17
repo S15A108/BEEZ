@@ -43,10 +43,6 @@ function renderApp(path: string, me: MeResponse) {
         <Routes>
           <Route path="/" element={<App />}>
             <Route index element={<p>도시 화면</p>} />
-            <Route
-              path="account/password"
-              element={<p>비밀번호 변경 화면</p>}
-            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -60,7 +56,7 @@ it('임시 비밀번호로 로그인했으면 비밀번호 변경 화면으로 �
 
   expect(
     await screen.findByRole('link', { name: '비밀번호 변경' }),
-  ).toHaveAttribute('href', '/account/password')
+  ).toHaveAttribute('href', '/?account=password')
   expect(screen.getByText('도시 화면')).toBeInTheDocument()
 })
 
@@ -72,11 +68,12 @@ it('비밀번호를 바꿀 필요가 없으면 안내를 보여 주지 않는다
   ).not.toBeInTheDocument()
 })
 
-it('비밀번호 변경 화면에서는 안내를 다시 보여 주지 않는다', async () => {
-  renderApp('/account/password', account(true))
+// D48: 비밀번호 변경은 회원 설정 창의 하위 화면(?account=password)이다.
+it('비밀번호 변경 창이 열려 있으면 안내를 다시 보여 주지 않는다', async () => {
+  renderApp('/?account=password', account(true))
   expect(await screen.findByText('김동료')).toBeInTheDocument()
   expect(
-    screen.queryByRole('link', { name: '비밀번호 변경' }),
+    screen.queryByText(/임시 비밀번호로 로그인했어요/),
   ).not.toBeInTheDocument()
 })
 
@@ -87,22 +84,10 @@ it('이름 버튼을 누르면 회원 설정과 로그아웃 메뉴가 열린다
   renderApp('/', account(false))
 
   await user.click(await screen.findByRole('button', { name: '김동료' }))
+  // D48: 회원 설정은 지금 화면 위에 여는 창이다.
   expect(
     await screen.findByRole('menuitem', { name: '회원 설정' }),
-  ).toHaveAttribute('href', '/account')
+  ).toHaveAttribute('href', '/?account=profile')
   await user.click(screen.getByRole('menuitem', { name: '로그아웃' }))
   await waitFor(() => expect(logout).toHaveBeenCalled())
-})
-
-it('회원 설정 안에서는 이름 메뉴에 로그아웃만 있다', async () => {
-  const user = userEvent.setup()
-  renderApp('/account/password', account(false))
-
-  await user.click(await screen.findByRole('button', { name: '김동료' }))
-  expect(
-    await screen.findByRole('menuitem', { name: '로그아웃' }),
-  ).toBeInTheDocument()
-  expect(
-    screen.queryByRole('menuitem', { name: '회원 설정' }),
-  ).not.toBeInTheDocument()
 })
