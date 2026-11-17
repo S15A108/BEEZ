@@ -135,7 +135,10 @@ export function useRemembered<T>(
   key: string,
   initial: T | (() => T),
   fresh = false,
-  /** 기억한 값을 되살릴 때 고친다. 되살릴 때는 늘 대상(focusId) 없이 연 때다. */
+  /**
+   * 기억에 남길 모양으로 고친다. 남길 때와 되살릴 때 모두 쓴다(되살릴 때는 늘 대상 없이 연 때다).
+   * 잠깐 거치는 화면이나 큰 값(파일 본문 등)을 기억에 남기지 않을 때 쓴다(PR #321 리뷰).
+   */
   restore?: (value: T) => T,
 ) {
   const [value, setValue] = useState<T>(() => {
@@ -148,8 +151,13 @@ export function useRemembered<T>(
   })
   useEffect(() => {
     useWorkspaceStore.setState((state) => ({
-      paneMemory: { ...state.paneMemory, [key]: value },
+      paneMemory: {
+        ...state.paneMemory,
+        [key]: restore ? restore(value) : value,
+      },
     }))
+    // restore는 호출마다 새 함수일 수 있어 값이 바뀔 때만 남긴다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, value])
   return [value, setValue] as const
 }

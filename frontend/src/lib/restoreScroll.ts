@@ -29,3 +29,12 @@ export function restoreScrollWhenReady(
   }
   return stop
 }
+
+/**
+ * 창을 다시 열 때 되살릴 스크롤 위치. 알림·근거처럼 대상을 정해 열면(focusId) 옛 위치 대신 맨 위에서 연다.
+ * 문서 A를 내려 읽다 닫고 알림으로 문서 B를 열면 B가 A의 위치로 내려가 열렸고, 근거 인용의 scrollIntoView와도 부딪혔다(PR #321 리뷰).
+ */
+export const rememberedScrollTop = (
+  saved: number | undefined,
+  focusId: string | null,
+) => (focusId ? 0 : (saved ?? 0))

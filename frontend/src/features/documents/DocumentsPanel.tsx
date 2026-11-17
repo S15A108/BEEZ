@@ -150,6 +150,17 @@ type View =
       revision: number
     }
 
+// 문서함은 목록과 상세만 기억한다. 등록·다시 올리기·검토·잘못된 인용·기준 보기처럼 잠깐 거치는 화면과 파일 본문,
+// 근거 인용 위치는 남기지 않는다. 다시 열면 목록이나 보던 문서(인용 표시 없이)로 열린다(PR #321 리뷰).
+const rememberedView = (view: View): View =>
+  view.name === 'detail'
+    ? {
+        name: 'detail',
+        id: view.id,
+        ...(view.versionId ? { versionId: view.versionId } : {}),
+      }
+    : { name: 'list' }
+
 export function DocumentsPanel({
   projectId,
   isLeader,
@@ -161,35 +172,43 @@ export function DocumentsPanel({
   const session = useSession()
   // 알림·근거·가이드에서 들어오면 그 문서(또는 'upload:종류' 등록 화면)를 바로 연다.
   // 그냥 열면 이 프로젝트에서 마지막으로 보던 화면(연 문서 등)을 다시 연다(S15P31A108-431).
-  const [view, setView] = useRemembered<View>('documents.view', () => {
-    const focus = useWorkspaceStore.getState().focusId
-    if (focus?.startsWith('citation:')) {
-      const citation = parseCitationFocus(focus)
-      return citation
-        ? {
-            name: 'detail',
-            id: citation.document_id,
-            versionId: citation.document_version_id,
-            citation,
-          }
-        : { name: 'invalidCitation' }
-    }
-    // 시작 가이드의 '올리기'는 'upload:종류'로 들어온다. 종류는 그 칸으로 고정한다.
-    if (focus?.startsWith('upload:') && KINDS.includes(focus.slice(7) as Kind))
-      return { name: 'upload', kind: focus.slice(7) as Kind }
-    // 발행한 변경 제안의 '기준 vN 보기'는 'baseline:N'으로 들어와 그 기준의 문서를 보인다(ROUND2-DOC-02).
-    if (focus?.startsWith('baseline:'))
-      return { name: 'baseline', versionNo: Number(focus.slice(9)) }
-    // HUD 비비 줄의 '문서 검토 중'은 'review:문서 ID'로 들어와 검토 화면을 연다. 승인 전 문서는 상세(DOC-A03)로 열 수 없다.
-    if (focus?.startsWith('review:'))
-      return { name: 'review', id: focus.slice(7) }
-    // 비비·회의·기획 답의 근거는 'version:문서 ID:버전 ID'로 들어와 인용한 그 버전(초안 포함)을 연다.
-    if (focus?.startsWith('version:')) {
-      const [id, versionId] = focus.slice(8).split(':')
-      return { name: 'detail', id, versionId }
-    }
-    return focus ? { name: 'detail', id: focus } : { name: 'list' }
-  })
+  const [view, setView] = useRemembered<View>(
+    'documents.view',
+    () => {
+      const focus = useWorkspaceStore.getState().focusId
+      if (focus?.startsWith('citation:')) {
+        const citation = parseCitationFocus(focus)
+        return citation
+          ? {
+              name: 'detail',
+              id: citation.document_id,
+              versionId: citation.document_version_id,
+              citation,
+            }
+          : { name: 'invalidCitation' }
+      }
+      // 시작 가이드의 '올리기'는 'upload:종류'로 들어온다. 종류는 그 칸으로 고정한다.
+      if (
+        focus?.startsWith('upload:') &&
+        KINDS.includes(focus.slice(7) as Kind)
+      )
+        return { name: 'upload', kind: focus.slice(7) as Kind }
+      // 발행한 변경 제안의 '기준 vN 보기'는 'baseline:N'으로 들어와 그 기준의 문서를 보인다(ROUND2-DOC-02).
+      if (focus?.startsWith('baseline:'))
+        return { name: 'baseline', versionNo: Number(focus.slice(9)) }
+      // HUD 비비 줄의 '문서 검토 중'은 'review:문서 ID'로 들어와 검토 화면을 연다. 승인 전 문서는 상세(DOC-A03)로 열 수 없다.
+      if (focus?.startsWith('review:'))
+        return { name: 'review', id: focus.slice(7) }
+      // 비비·회의·기획 답의 근거는 'version:문서 ID:버전 ID'로 들어와 인용한 그 버전(초안 포함)을 연다.
+      if (focus?.startsWith('version:')) {
+        const [id, versionId] = focus.slice(8).split(':')
+        return { name: 'detail', id, versionId }
+      }
+      return focus ? { name: 'detail', id: focus } : { name: 'list' }
+    },
+    false,
+    rememberedView,
+  )
   const [query, setQuery] = useState('')
   const [notice, setNotice] = useState<{ title?: string; text: string }>()
   const documents = useQuery({

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { restoreScrollWhenReady } from './restoreScroll'
+import { rememberedScrollTop, restoreScrollWhenReady } from './restoreScroll'
 
 // jsdom에는 배치가 없어 본문 높이와 ResizeObserver를 흉내 낸다. scrollTop은 브라우저처럼 갈 수 있는 끝에서 잘린다.
 function fakeBody(height: number) {
@@ -65,4 +65,16 @@ it('본문이 이미 길면 바로 적용한다', () => {
   const { body } = fakeBody(5798)
   restoreScrollWhenReady(body, 500)
   expect(body.scrollTop).toBe(500)
+})
+
+// PR #321 리뷰: 문서 A를 내려 읽다 닫고 알림으로 문서 B를 열면 B가 A의 위치로 내려가 열렸다.
+it('대상을 정해 열면 옛 스크롤 대신 맨 위에서 연다', () => {
+  expect(rememberedScrollTop(2000, null)).toBe(2000)
+  expect(rememberedScrollTop(2000, '202')).toBe(0)
+  expect(rememberedScrollTop(undefined, null)).toBe(0)
+  const { body, grow } = fakeBody(820)
+  restoreScrollWhenReady(body, rememberedScrollTop(2000, '202'))
+  grow(5798)
+  resized?.()
+  expect(body.scrollTop).toBe(0)
 })

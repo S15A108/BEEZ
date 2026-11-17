@@ -72,7 +72,10 @@ import {
   useWorkspaceStore,
 } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
-import { restoreScrollWhenReady } from '@/lib/restoreScroll'
+import {
+  rememberedScrollTop,
+  restoreScrollWhenReady,
+} from '@/lib/restoreScroll'
 import NotFoundPage from './NotFoundPage'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
@@ -134,7 +137,10 @@ function Workspace({ projectId }: { projectId: string }) {
       if (!element || !pane) return
       const stopScroll = restoreScrollWhenReady(
         element,
-        scrolls.current.get(pane) ?? 0,
+        rememberedScrollTop(
+          scrolls.current.get(pane),
+          useWorkspaceStore.getState().focusId,
+        ),
       )
       const place = () => {
         const active = document.activeElement
