@@ -157,13 +157,23 @@ it('내 작업의 실제 ID와 기존 검증 절차를 에이전트 지시로 �
   expect(instructions).toContain('validate_task_plan')
 })
 
+// S15P31A108-416: 상세는 계획과 검증 결과를 탭으로 나눴다. 통과한 작업은 계획 탭부터 열려 검증 결과는 탭을 골라 본다.
+const openValidationTab = async () =>
+  userEvent.click(await screen.findByRole('tab', { name: /검증 결과/ }))
+
 it('계획 PASS가 있어도 실제 코드 검증이나 테스트 통과로 표시하지 않는다', async () => {
   task = { ...task, status: 'IN_PROGRESS' }
   show(false)
+  await openValidationTab()
+  // 검증 상태 알약은 S15P31A108-416부터 카드 머리 대신 검증 탭에 있다.
+  expect(
+    within(screen.getByRole('tab', { name: /검증 결과/ })).getByText(
+      '계획 통과',
+    ),
+  ).toBeInTheDocument()
   const card = (
     await screen.findByText('설계와 계획의 검증 결과')
   ).closest<HTMLElement>('[data-slot="card"]')!
-  expect(within(card).getByText('계획 통과')).toBeInTheDocument()
   expect(
     within(card).getByText(
       /계획 검증은 코드 품질이나 테스트 통과를 보장하지 않아요/,
@@ -375,6 +385,7 @@ it('정책 분석이 잘리면 안내한다', async () => {
     },
   }
   show(false)
+  await openValidationTab()
   const analysis = await screen.findByRole('region', { name: '정책 분석' })
   expect(
     within(analysis).getByText('분석할 정책이 많아 일부만 확인했어요.'),
@@ -395,6 +406,7 @@ it('정책이 필요 없다고 판단한 사유와 계획 근거를 보여 준�
     },
   }
   show(false)
+  await openValidationTab()
   const analysis = await screen.findByRole('region', { name: '정책 분석' })
   expect(within(analysis).getByText('맞춤법만 수정합니다.')).toBeInTheDocument()
   expect(
@@ -574,6 +586,7 @@ it('작업 A로 연 뒤 B를 고르고 B의 협의할 작업 A에서 작업 보�
 
 it('검증 결과에 BEEZ를 거치지 않은 작업은 검증하지 않는다고 적는다(AC-12)', async () => {
   show(false)
+  await openValidationTab()
   expect(
     await screen.findByText(/BEEZ를 거치지 않은 작업은 검증하지 않아요\./),
   ).toBeInTheDocument()
@@ -981,15 +994,19 @@ it('취소된 작업은 첫 줄에 취소 상태를 보이고 단계의 지금 �
   expect(screen.queryByText('지금')).toBeNull()
   expect(screen.getByText('취소 전 계획 r2')).toBeInTheDocument()
   expect(screen.getByText('승인된 응답 필드를 구현한다.')).toBeInTheDocument()
-  const record = screen.getByText('취소 전 검증 기록')
-  const card = record.closest<HTMLElement>('[data-slot="card"]')!
-  expect(within(card).queryByText('재검증 필요')).toBeNull()
-  const reason = within(card).getByText(
-    '작업이 취소되어 이 검증은 더 쓰지 않아요.',
-  )
-  expect(reason).not.toBeVisible()
-  await userEvent.click(record)
-  expect(reason).toBeVisible()
+  // S15P31A108-416: 검증은 '검증 기록' 탭에 있고, 취소된 작업은 계획 탭부터 연다.
+  expect(
+    screen.queryByText('작업이 취소되어 이 검증은 더 쓰지 않아요.'),
+  ).toBeNull()
+  const recordTab = screen.getByRole('tab', { name: '검증 기록' })
+  expect(within(recordTab).queryByText('재검증 필요')).toBeNull()
+  await userEvent.click(recordTab)
+  const card = screen
+    .getByText('취소 전 검증 기록')
+    .closest<HTMLElement>('[data-slot="card"]')!
+  expect(
+    within(card).getByText('작업이 취소되어 이 검증은 더 쓰지 않아요.'),
+  ).toBeVisible()
 })
 
 it('완료한 작업은 단계를 모두 지난 단계로 보이고 지금 강조가 없다', async () => {
@@ -1581,7 +1598,8 @@ it('완료 기준이 없던 계획을 고칠 때도 빈 줄 하나로 시작한�
 
 // PR #88 리뷰(재현 경로): 계획을 고쳐 저장하는 동안 머리의 '+ 작업 계획'으로 새 폼을 열면,
 // 앞의 저장이 끝나며 새 폼과 입력이 사라졌다. 계획 폼이 열려 있거나 저장 중이면 머리 버튼을 숨긴다.
-it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 버튼을 숨긴다', async () => {
+// S15P31A108-416: '+ 작업 계획'은 창 머리가 아니라 '내 작업'·'팀 전체' 줄의 오른쪽 끝에 있다. 계획 폼이 본문을 덮는 동안에는 보이지 않는다.
+it('작업 계획 버튼은 내 작업·팀 전체 줄에 있고 계획 폼이 열려 있거나 저장 중이면 숨는다', async () => {
   let finish = () => {}
   const save = vi.spyOn(tasksApi, 'savePlan').mockImplementation(
     () =>
@@ -1604,21 +1622,25 @@ it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 
       </PaneHeaderSlot>
     </QueryClientProvider>,
   )
+  const row = (
+    await screen.findByRole('tab', { name: '내 작업' })
+  ).closest<HTMLElement>('[data-slot="card-header"]')!
   expect(
-    await within(slot).findByRole('button', { name: '작업 계획' }),
+    within(row).getByRole('button', { name: '작업 계획' }),
   ).toBeInTheDocument()
+  expect(within(slot).queryByRole('button', { name: '작업 계획' })).toBeNull()
   await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
   await userEvent.click(
     await screen.findByRole('menuitem', { name: '계획 수정' }),
   )
   await screen.findByLabelText('어떻게 진행하나요?')
-  expect(within(slot).queryByRole('button', { name: '작업 계획' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '작업 계획' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
   await waitFor(() => expect(save).toHaveBeenCalled())
-  expect(within(slot).queryByRole('button', { name: '작업 계획' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '작업 계획' })).toBeNull()
   await act(async () => finish())
   expect(
-    await within(slot).findByRole('button', { name: '작업 계획' }),
+    await screen.findByRole('button', { name: '작업 계획' }),
   ).toBeInTheDocument()
   slot.remove()
 })
@@ -2000,6 +2022,7 @@ it('검증이 함께 비교한 작업을 키·제목·담당자로 보이고, �
       return task
     })
   show(false)
+  await openValidationTab()
   const section = await screen.findByRole('region', {
     name: '함께 비교한 작업',
   })
@@ -2068,6 +2091,48 @@ it('상태 타일은 할 것·진행 중·대기·끝남으로 불러온 목록�
   const done = screen.getByRole('region', { name: '끝남' })
   expect(within(done).getByText('끝난 작업')).toBeInTheDocument()
   expect(within(done).getByText('취소한 작업')).toBeInTheDocument()
+})
+
+// S15P31A108-416: 상태 타일은 버튼 모양 필터다. 누른 상태의 작업만 남고 다시 누르면 전체로 돌아간다.
+it('상태 필터를 누르면 그 상태의 작업만 보이고 첫 작업을 고르며, 다시 누르면 전체를 보인다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [
+      task,
+      listed('506', 'TASK-006', 'IN_PROGRESS', '진행 중인 작업'),
+      listed('509', 'TASK-009', 'COMPLETED', '끝난 작업'),
+    ],
+    has_more: false,
+  })
+  const get = vi.spyOn(tasksApi, 'get')
+  show(false)
+  const filters = await screen.findByRole('list', { name: '상태별 작업 수' })
+  const progress = within(filters).getByRole('button', { name: /진행 중/ })
+  expect(progress).toHaveAttribute('aria-pressed', 'false')
+  await userEvent.click(progress)
+  expect(progress).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByText('진행 중인 작업')).toBeInTheDocument()
+  expect(screen.queryByText('끝난 작업')).toBeNull()
+  expect(screen.queryByRole('region', { name: '지금 할 것' })).toBeNull()
+  await waitFor(() => expect(get).toHaveBeenLastCalledWith('101', '506'))
+  // 개수는 거르기 전 목록으로 센다.
+  expect(
+    within(filters)
+      .getAllByRole('listitem')
+      .map((tile) => tile.textContent),
+  ).toEqual(['1할 것', '1진행 중', '0대기', '1끝남'])
+  await userEvent.click(progress)
+  expect(progress).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByText('끝난 작업')).toBeInTheDocument()
+})
+
+it('고른 상태의 작업이 없으면 다른 상태를 고르라고 안내한다', async () => {
+  show(false)
+  const filters = await screen.findByRole('list', { name: '상태별 작업 수' })
+  await userEvent.click(within(filters).getByRole('button', { name: /대기/ }))
+  expect(
+    await screen.findByText(/대기 작업이 없어요\. 다른 상태를 고르거나/),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: '지금 할 것' })).toBeNull()
 })
 
 it('검색하면 키나 제목이 맞는 작업만 남기고, 없으면 안내한다', async () => {
@@ -2223,16 +2288,24 @@ it('작업이 한 페이지(50개)를 넘으면 뒤 페이지까지 받아 타�
   ).toBeNull()
 })
 
-it('검증을 통과하면 검증 결과를 접어 두고 단계는 번호 원과 상태 글로 보인다', async () => {
+// S15P31A108-416: 접힘 대신 탭이다. 통과하면 계획 탭부터 열고, 검증 탭에는 상태 알약을 달아 열지 않아도 결과가 보인다.
+it('검증을 통과하면 계획 탭부터 열고 단계는 번호 원과 상태 글로 보인다', async () => {
   show(false)
   const steps = await screen.findByRole('list', { name: '작업 단계' })
   expect(within(steps).getByText('완료')).toBeInTheDocument()
   expect(within(steps).getByText('통과')).toBeInTheDocument()
   expect(within(steps).getByText('지금')).toBeInTheDocument()
-  expect(screen.getByText('설계와 계획의 검증 결과')).toBeVisible()
+  expect(screen.getByRole('tab', { name: '계획' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  const validationTab = screen.getByRole('tab', { name: /검증 결과/ })
+  expect(within(validationTab).getByText('계획 통과')).toBeInTheDocument()
+  expect(screen.queryByText('설계와 계획의 검증 결과')).toBeNull()
+  await userEvent.click(validationTab)
   expect(
     await screen.findByText(/현재 계획과 입력에서 시작을 막는 항목을/),
-  ).not.toBeVisible()
+  ).toBeVisible()
 })
 
 it.each(['NEEDS_INPUT', 'NEEDS_REVIEW'] as const)(
