@@ -677,7 +677,7 @@ function UsageBars({
           </span>
           <span aria-hidden="true" className="h-2 rounded-full bg-muted">
             <span
-              className="block h-2 rounded-full bg-[#e0b400]"
+              className="block h-2 rounded-full bg-chart-1"
               style={{ width: `${(row.call_count / most) * 100}%` }}
             />
           </span>

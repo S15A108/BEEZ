@@ -573,7 +573,7 @@ export function DashboardOverview({
                       </span>
                       <span
                         aria-hidden="true"
-                        className="block h-2.5 rounded-r-[4px] bg-[#2a78d6]"
+                        className="block h-2.5 rounded-r-[4px] bg-chart-1"
                         style={{ width: `${(row.call_count / most) * 100}%` }}
                       />
                       <span className="text-right tabular-nums">
