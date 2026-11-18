@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { parseCitationFocus, type CitationTarget } from '@/lib/citationTarget'
@@ -148,6 +148,17 @@ type View =
       revision: number
     }
 
+// 문서함은 목록과 상세만 기억한다. 등록·다시 올리기·검토·잘못된 인용·기준 보기처럼 잠깐 거치는 화면과 파일 본문,
+// 근거 인용 위치는 남기지 않는다. 다시 열면 목록이나 보던 문서(인용 표시 없이)로 열린다(PR #321 리뷰).
+const rememberedView = (view: View): View =>
+  view.name === 'detail'
+    ? {
+        name: 'detail',
+        id: view.id,
+        ...(view.versionId ? { versionId: view.versionId } : {}),
+      }
+    : { name: 'list' }
+
 export function DocumentsPanel({
   projectId,
   isLeader,
@@ -158,35 +169,44 @@ export function DocumentsPanel({
   const openPane = useWorkspaceStore((state) => state.openPane)
   const session = useSession()
   // 알림·근거·가이드에서 들어오면 그 문서(또는 'upload:종류' 등록 화면)를 바로 연다.
-  const [view, setView] = useState<View>(() => {
-    const focus = useWorkspaceStore.getState().focusId
-    if (focus?.startsWith('citation:')) {
-      const citation = parseCitationFocus(focus)
-      return citation
-        ? {
-            name: 'detail',
-            id: citation.document_id,
-            versionId: citation.document_version_id,
-            citation,
-          }
-        : { name: 'invalidCitation' }
-    }
-    // 시작 가이드의 '올리기'는 'upload:종류'로 들어온다. 종류는 그 칸으로 고정한다.
-    if (focus?.startsWith('upload:') && KINDS.includes(focus.slice(7) as Kind))
-      return { name: 'upload', kind: focus.slice(7) as Kind }
-    // 발행한 변경 제안의 '기준 vN 보기'는 'baseline:N'으로 들어와 그 기준의 문서를 보인다(ROUND2-DOC-02).
-    if (focus?.startsWith('baseline:'))
-      return { name: 'baseline', versionNo: Number(focus.slice(9)) }
-    // HUD 비비 줄의 '문서 검토 중'은 'review:문서 ID'로 들어와 검토 화면을 연다. 승인 전 문서는 상세(DOC-A03)로 열 수 없다.
-    if (focus?.startsWith('review:'))
-      return { name: 'review', id: focus.slice(7) }
-    // 비비·회의·기획 답의 근거는 'version:문서 ID:버전 ID'로 들어와 인용한 그 버전(초안 포함)을 연다.
-    if (focus?.startsWith('version:')) {
-      const [id, versionId] = focus.slice(8).split(':')
-      return { name: 'detail', id, versionId }
-    }
-    return focus ? { name: 'detail', id: focus } : { name: 'list' }
-  })
+  // 그냥 열면 이 프로젝트에서 마지막으로 보던 화면(연 문서 등)을 다시 연다(S15P31A108-431).
+  const [view, setView] = useRemembered<View>(
+    'documents.view',
+    () => {
+      const focus = useWorkspaceStore.getState().focusId
+      if (focus?.startsWith('citation:')) {
+        const citation = parseCitationFocus(focus)
+        return citation
+          ? {
+              name: 'detail',
+              id: citation.document_id,
+              versionId: citation.document_version_id,
+              citation,
+            }
+          : { name: 'invalidCitation' }
+      }
+      // 시작 가이드의 '올리기'는 'upload:종류'로 들어온다. 종류는 그 칸으로 고정한다.
+      if (
+        focus?.startsWith('upload:') &&
+        KINDS.includes(focus.slice(7) as Kind)
+      )
+        return { name: 'upload', kind: focus.slice(7) as Kind }
+      // 발행한 변경 제안의 '기준 vN 보기'는 'baseline:N'으로 들어와 그 기준의 문서를 보인다(ROUND2-DOC-02).
+      if (focus?.startsWith('baseline:'))
+        return { name: 'baseline', versionNo: Number(focus.slice(9)) }
+      // HUD 비비 줄의 '문서 검토 중'은 'review:문서 ID'로 들어와 검토 화면을 연다. 승인 전 문서는 상세(DOC-A03)로 열 수 없다.
+      if (focus?.startsWith('review:'))
+        return { name: 'review', id: focus.slice(7) }
+      // 비비·회의·기획 답의 근거는 'version:문서 ID:버전 ID'로 들어와 인용한 그 버전(초안 포함)을 연다.
+      if (focus?.startsWith('version:')) {
+        const [id, versionId] = focus.slice(8).split(':')
+        return { name: 'detail', id, versionId }
+      }
+      return focus ? { name: 'detail', id: focus } : { name: 'list' }
+    },
+    false,
+    rememberedView,
+  )
   const [query, setQuery] = useState('')
   const [notice, setNotice] = useState<{ title?: string; text: string }>()
   const documents = useQuery({
@@ -238,7 +258,7 @@ export function DocumentsPanel({
     <Button
       variant="ghost"
       size="sm"
-      className="justify-self-start"
+      className="shrink-0 justify-self-start"
       onClick={() => setView({ name: 'list' })}
     >
       <ChevronLeft />
@@ -342,18 +362,16 @@ export function DocumentsPanel({
     )
   if (view.name === 'detail')
     return (
-      <div className="grid gap-4">
-        {back}
-        <DocumentDetail
-          key={view.id}
-          projectId={projectId}
-          documentId={view.id}
-          versionId={view.versionId}
-          citation={view.citation}
-          started={started}
-          onEdit={() => openPane('changes', `doc:${view.id}`)}
-        />
-      </div>
+      <DocumentDetail
+        key={view.id}
+        back={back}
+        projectId={projectId}
+        documentId={view.id}
+        versionId={view.versionId}
+        citation={view.citation}
+        started={started}
+        onEdit={() => openPane('changes', `doc:${view.id}`)}
+      />
     )
 
   return (
@@ -383,7 +401,7 @@ export function DocumentsPanel({
           {started ? null : (
             <section
               aria-labelledby="start-title"
-              className="grid gap-3.5 rounded-2xl border p-5"
+              className="grid gap-3.5 rounded-2xl border bg-card p-5 shadow-xs"
             >
               <div className="grid gap-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -504,12 +522,12 @@ export function DocumentsPanel({
                     </strong>
                     <span className="text-sm text-muted-foreground">
                       {isLeader
-                        ? '기획 분석에서 설계 항목을 검토하고 발행하면 기준 v1이 생기고 프로젝트가 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요.'
+                        ? "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 설계 기준 v1이 생기고 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요."
                         : '팀장이 프로젝트를 시작하면 알려 드려요.'}
                     </span>
                   </div>
-                  {/* 기준 v1 발행(PLN-A10)은 기획 분석의 '검토한 설계 승인·발행' 한 곳에서 한다.
-                      '설계 초안 만들기'는 그 창을 연다. 남은 후보 안내도 발행 확인 창이 보여 준다. */}
+                  {/* 기준 v1 발행(PLN-A10)은 기획 분석의 '프로젝트 시작' 한 곳에서 한다.
+                      '설계 초안 만들기'는 그 창을 연다. 남은 후보 안내도 기획 분석의 '프로젝트 시작' 위에 보인다. */}
                   {isLeader && (
                     <Button onClick={() => openPane('planning')}>
                       <Sparkles />
@@ -532,7 +550,7 @@ export function DocumentsPanel({
           )}
           <section
             aria-labelledby="current-title"
-            className="rounded-2xl border"
+            className="overflow-hidden rounded-2xl border bg-card shadow-xs"
           >
             <div className="flex flex-wrap items-baseline gap-x-2 px-5 pt-4 pb-2.5">
               <h3 id="current-title" className="font-semibold">
@@ -1177,6 +1195,7 @@ function BaselineDocuments({
 // 문서 상세 (F-20) · 보기 전용. 탭 두 개: 문서 내용 · 버전 이력. 버전 비교는 팀장 승인 화면의 '변경 내용'에서 본다.
 // versionId를 주면(기준 vN 문서나 근거에서 열면) 그 버전부터 보인다.
 function DocumentDetail({
+  back,
   projectId,
   documentId,
   versionId,
@@ -1184,6 +1203,8 @@ function DocumentDetail({
   started,
   onEdit,
 }: {
+  /** 문서 목록으로 돌아가는 버튼. 창 머리 줄 맨 앞에 둔다. */
+  back: ReactNode
   projectId: string
   documentId: string
   versionId?: string
@@ -1202,7 +1223,10 @@ function DocumentDetail({
         )?.name ?? '팀원')
       : undefined
   const [picked, setVersionNo] = useState<number>()
-  const [tab, setTab] = useState<'content' | 'history'>('content')
+  const [tab, setTab] = useRemembered<'content' | 'history'>(
+    `documents.${documentId}.tab`,
+    'content',
+  )
   const [classification, setClassification] = useState(false)
   // 분류 수정(DOC-A07)은 서버가 문서를 등록한 사람만 허용하고, 팀장 검토를 요청한 동안(SUBMITTED)은 409 submission_locked다.
   // 작성 건의 owner_account_id로 등록한 사람에게만 버튼을 보인다(PR #72 4차 조사 FOURTH-DOC-01).
@@ -1235,6 +1259,8 @@ function DocumentDetail({
     queryFn: () =>
       documentsApi.get(projectId, documentId, { version_no: versionNo }),
     enabled: !unresolved,
+    // 다른 버전을 고르는 동안 머리 줄(탭·버전 고르기)이 사라졌다 나타나지 않게 보던 버전을 둔다.
+    placeholderData: (previous) => previous,
   })
   const download = async (version: DocumentVersion) => {
     await action.run(async () => {
@@ -1253,259 +1279,285 @@ function DocumentDetail({
   }
   const tabClass = (on: boolean) =>
     cn(
-      '-mb-px h-11 border-b-2 px-0.5 text-sm',
+      '-mb-px h-10 border-b-2 px-0.5 text-sm',
       on
         ? 'border-primary font-semibold'
-        : 'border-transparent text-muted-foreground',
+        : 'border-transparent text-muted-foreground hover:text-foreground',
     )
+  // 문서 머리(돌아가기·제목·버튼 줄과 탭·버전 줄)는 본문 위에 붙여 두고 본문은 창의 스크롤 하나로 읽는다(디자인 검수 F04).
+  // 창 본문의 안쪽 여백만큼(-top-5 sm:-top-8) 올려 붙여, 문서를 내려도 창 머리 바로 아래에 제목과 돌아가기가 남는다.
+  const shown = unresolved ? undefined : document.data
+  const header = (
+    <div className="sticky -top-5 z-10 -mt-5 grid gap-2 border-b bg-background pt-5 sm:-top-8 sm:-mt-8 sm:pt-8">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {back}
+        {shown && (
+          <>
+            <span aria-hidden="true" className="h-6 w-px shrink-0 bg-border" />
+            <KindTile kind={shown.document.kind} />
+            <div
+              className="min-w-0 flex-[1_1_12rem]"
+              title={`${shown.document.title} v${shown.version.version_no}`}
+            >
+              <h3 className="truncate text-base leading-6 font-semibold">
+                {shown.document.title} v{shown.version.version_no}
+              </h3>
+              <p className="truncate text-xs leading-4 text-muted-foreground">
+                담당 {shown.document.domain || '공통'} ·{' '}
+                {shown.document.approved_version
+                  ? `현재 기준 v${shown.document.approved_version.version_no}`
+                  : '승인 전'}{' '}
+                · {stamp(shown.version.created_at)}
+              </p>
+            </div>
+            <div className="ml-auto flex shrink-0 gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={action.busy}
+                onClick={() =>
+                  void download(shown.version).catch(() => undefined)
+                }
+              >
+                <Download />
+                원본 다운로드
+              </Button>
+              {author && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={locked}
+                  title={
+                    locked
+                      ? '팀장 검토를 요청한 뒤에는 고칠 수 없어요.'
+                      : undefined
+                  }
+                  onClick={() => setClassification(true)}
+                >
+                  분류 수정
+                </Button>
+              )}
+              {started && (
+                <Button size="sm" onClick={onEdit}>
+                  수정 제안하기
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+      {shown && (
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+          <div role="tablist" aria-label="문서 보기" className="flex gap-5">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'content'}
+              className={tabClass(tab === 'content')}
+              onClick={() => setTab('content')}
+            >
+              문서 내용
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'history'}
+              className={tabClass(tab === 'history')}
+              onClick={() => setTab('history')}
+            >
+              버전 이력 {versions.data?.items.length ?? ''}
+            </button>
+          </div>
+          {tab === 'content' && (
+            <div className="pb-1.5">
+              <NativeSelect
+                size="sm"
+                aria-label="열람할 버전"
+                value={String(shown.version.version_no)}
+                onChange={(event) => setVersionNo(Number(event.target.value))}
+              >
+                {(versions.data?.items ?? [shown.version]).map((version) => (
+                  <NativeSelectOption
+                    key={version.id}
+                    value={String(version.version_no)}
+                  >
+                    v{version.version_no} · {versionStatusLabel(version.status)}
+                    {version.id === shown.document.approved_version?.id
+                      ? ' (기준)'
+                      : ''}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+  // 문서 읽기는 넓은 창에서도 읽기 좋은 폭(920px)으로 두고, 왼쪽을 창 머리 제목과 같은 선에 맞춘다.
   if (unresolved)
     // 이력을 읽는 중이면 불러오는 중, 실패하면 오류와 다시 불러오기를 AsyncState가 보인다.
-    return versions.isSuccess ? (
-      <p
-        role="alert"
-        className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm"
-      >
-        열려던 버전을 버전 이력에서 찾을 수 없어요. 지워졌거나 볼 수 없는
-        버전이에요. 위의 &lsquo;현재 문서&rsquo;로 돌아가 문서를 다시 열어
-        주세요.
-      </p>
-    ) : (
-      <AsyncState query={versions}>{() => null}</AsyncState>
+    return (
+      <div className="grid w-full max-w-[920px] min-w-0 gap-4">
+        {header}
+        {versions.isSuccess ? (
+          <p
+            role="alert"
+            className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm"
+          >
+            열려던 버전을 버전 이력에서 찾을 수 없어요. 지워졌거나 볼 수 없는
+            버전이에요. 위의 &lsquo;현재 문서&rsquo;로 돌아가 문서를 다시 열어
+            주세요.
+          </p>
+        ) : (
+          <AsyncState query={versions}>{() => null}</AsyncState>
+        )}
+      </div>
     )
   return (
-    <AsyncState query={document}>
-      {(data) => {
-        const base = data.document.approved_version
-        return (
-          <div className="grid min-w-0 gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <KindTile kind={data.document.kind} />
-                <div className="min-w-0">
-                  <h3 className="text-lg font-semibold">
-                    {data.document.title} v{data.version.version_no}
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    담당 {data.document.domain || '공통'} ·{' '}
-                    {base ? `현재 기준 v${base.version_no}` : '승인 전'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={action.busy}
-                  onClick={() =>
-                    void download(data.version).catch(() => undefined)
-                  }
-                >
-                  <Download />
-                  원본 다운로드
-                </Button>
-                {author && (
+    <div className="grid w-full max-w-[920px] min-w-0 gap-4">
+      {header}
+      <AsyncState query={document}>
+        {(data) => {
+          const base = data.document.approved_version
+          return (
+            <div className="grid min-w-0 gap-4">
+              {!started && (
+                <p className="rounded-xl bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
+                  승인된 버전은 바뀌지 않아요. 고칠 내용은 새 .md를 올려 비비
+                  검토와 팀장 승인을 거쳐요.
+                </p>
+              )}
+              {base && base.id !== data.version.id && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-orange-50 p-3 text-sm">
+                  v{data.version.version_no}를 보고 있어요. 팀의 기준은 v
+                  {base.version_no}예요.
                   <Button
-                    variant="ghost"
                     size="sm"
-                    disabled={locked}
-                    title={
-                      locked
-                        ? '팀장 검토를 요청한 뒤에는 고칠 수 없어요.'
-                        : undefined
-                    }
-                    onClick={() => setClassification(true)}
+                    variant="outline"
+                    onClick={() => setVersionNo(base.version_no)}
                   >
-                    분류 수정
+                    기준 v{base.version_no}로 돌아가기
                   </Button>
-                )}
-                {started && <Button onClick={onEdit}>수정 제안하기</Button>}
-              </div>
-            </div>
-            {!started && (
-              <p className="rounded-xl bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
-                승인된 버전은 바뀌지 않아요. 고칠 내용은 새 .md를 올려 비비
-                검토와 팀장 승인을 거쳐요.
-              </p>
-            )}
-            {base && base.id !== data.version.id && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-orange-50 p-3 text-sm">
-                v{data.version.version_no}를 보고 있어요. 팀의 기준은 v
-                {base.version_no}예요.
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setVersionNo(base.version_no)}
-                >
-                  기준 v{base.version_no}로 돌아가기
-                </Button>
-              </div>
-            )}
-            <div
-              role="tablist"
-              aria-label="문서 보기"
-              className="flex gap-5 border-b"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'content'}
-                className={tabClass(tab === 'content')}
-                onClick={() => setTab('content')}
-              >
-                문서 내용
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'history'}
-                className={tabClass(tab === 'history')}
-                onClick={() => setTab('history')}
-              >
-                버전 이력 {versions.data?.items.length ?? ''}
-              </button>
-            </div>
-            {tab === 'content' ? (
-              <div className="grid gap-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Label htmlFor="document-version" className="sr-only">
-                    열람할 버전
-                  </Label>
-                  <NativeSelect
-                    id="document-version"
-                    value={String(data.version.version_no)}
-                    onChange={(event) =>
-                      setVersionNo(Number(event.target.value))
-                    }
-                  >
-                    {(versions.data?.items ?? [data.version]).map((version) => (
-                      <NativeSelectOption
-                        key={version.id}
-                        value={String(version.version_no)}
-                      >
-                        v{version.version_no} ·{' '}
-                        {versionStatusLabel(version.status)}
-                        {version.id === base?.id ? ' (기준)' : ''}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                  <span className="text-xs text-muted-foreground">
-                    {stamp(data.version.created_at)}
-                  </span>
                 </div>
-                {citation &&
-                data.version.id === citation.document_version_id ? (
-                  <VerifiedCitation
-                    content={data.version.content}
-                    target={citation}
-                  />
-                ) : (
-                  <>
-                    {citation && (
-                      <p className="text-xs text-muted-foreground">
-                        인용한 버전이 아니므로 인용 위치를 표시하지 않아요.
-                      </p>
-                    )}
-                    {data.version.content !== undefined ? (
-                      <MarkdownView
-                        source={data.version.content}
-                        className="max-h-[32rem]"
-                      />
-                    ) : (
-                      <EmptyState>
-                        이 파일은 본문 미리보기를 제공하지 않아요. 원본 파일을
-                        내려받아 확인해 주세요.
-                      </EmptyState>
-                    )}
-                  </>
-                )}
-              </div>
-            ) : (
-              <AsyncState query={versions}>
-                {(history) => (
-                  <ul className="rounded-xl border">
-                    {history.items.map((version) => (
-                      <li
-                        key={version.id}
-                        className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-sm last:border-b-0"
-                      >
-                        <span className="flex flex-wrap items-center gap-2">
-                          <strong>v{version.version_no}</strong>
-                          <Chip tone={versionTone[version.status]}>
-                            {versionStatusLabel(version.status)}
-                          </Chip>
-                          {(version.is_current_baseline === true ||
-                            (!history.items.some(
-                              (item) => item.is_current_baseline,
-                            ) &&
-                              version.id === base?.id)) && (
-                            <Chip tone="muted">현재 기준</Chip>
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            {stamp(version.created_at)}
-                            {uploaderName(version) &&
-                              ` · ${uploaderName(version)}`}
+              )}
+              {tab === 'content' ? (
+                <div className="grid gap-3">
+                  {citation &&
+                  data.version.id === citation.document_version_id ? (
+                    <VerifiedCitation
+                      content={data.version.content}
+                      target={citation}
+                    />
+                  ) : (
+                    <>
+                      {citation && (
+                        <p className="text-xs text-muted-foreground">
+                          인용한 버전이 아니므로 인용 위치를 표시하지 않아요.
+                        </p>
+                      )}
+                      {data.version.content !== undefined ? (
+                        <MarkdownView source={data.version.content} />
+                      ) : (
+                        <EmptyState>
+                          이 파일은 본문 미리보기를 제공하지 않아요. 원본 파일을
+                          내려받아 확인해 주세요.
+                        </EmptyState>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <AsyncState query={versions}>
+                  {(history) => (
+                    <ul className="rounded-xl border">
+                      {history.items.map((version) => (
+                        <li
+                          key={version.id}
+                          className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-sm last:border-b-0"
+                        >
+                          <span className="flex flex-wrap items-center gap-2">
+                            <strong>v{version.version_no}</strong>
+                            <Chip tone={versionTone[version.status]}>
+                              {versionStatusLabel(version.status)}
+                            </Chip>
+                            {(version.is_current_baseline === true ||
+                              (!history.items.some(
+                                (item) => item.is_current_baseline,
+                              ) &&
+                                version.id === base?.id)) && (
+                              <Chip tone="muted">현재 기준</Chip>
+                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {stamp(version.created_at)}
+                              {uploaderName(version) &&
+                                ` · ${uploaderName(version)}`}
+                            </span>
                           </span>
-                        </span>
-                        <span className="flex flex-wrap gap-2">
-                          {version.change_proposal_id && (
+                          <span className="flex flex-wrap gap-2">
+                            {version.change_proposal_id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  openPane(
+                                    'changes',
+                                    version.change_proposal_id,
+                                  )
+                                }
+                              >
+                                변경 제안 보기
+                              </Button>
+                            )}
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() =>
-                                openPane('changes', version.change_proposal_id)
-                              }
+                              onClick={() => {
+                                setVersionNo(version.version_no)
+                                setTab('content')
+                              }}
                             >
-                              변경 제안 보기
+                              보기
                             </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setVersionNo(version.version_no)
-                              setTab('content')
-                            }}
-                          >
-                            보기
-                          </Button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </AsyncState>
-            )}
-            {action.error && (
-              <p className="text-sm text-destructive" role="alert">
-                {action.error}
-              </p>
-            )}
-            {classification && (
-              <FormDialog
-                title="문서 분류 수정"
-                fields={[
-                  {
-                    name: 'domain',
-                    label: '담당 도메인',
-                    value: data.document.domain ?? '',
-                  },
-                ]}
-                onClose={() => setClassification(false)}
-                onSubmit={async (values) => {
-                  await action.run(
-                    () =>
-                      documentsApi.update(projectId, documentId, {
-                        domain: values.domain.trim(),
-                      }),
-                    '담당 도메인을 저장했어요.',
-                  )
-                  setClassification(false)
-                }}
-              />
-            )}
-          </div>
-        )
-      }}
-    </AsyncState>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </AsyncState>
+              )}
+              {action.error && (
+                <p className="text-sm text-destructive" role="alert">
+                  {action.error}
+                </p>
+              )}
+              {classification && (
+                <FormDialog
+                  title="문서 분류 수정"
+                  fields={[
+                    {
+                      name: 'domain',
+                      label: '담당 도메인',
+                      value: data.document.domain ?? '',
+                    },
+                  ]}
+                  onClose={() => setClassification(false)}
+                  onSubmit={async (values) => {
+                    await action.run(
+                      () =>
+                        documentsApi.update(projectId, documentId, {
+                          domain: values.domain.trim(),
+                        }),
+                      '담당 도메인을 저장했어요.',
+                    )
+                    setClassification(false)
+                  }}
+                />
+              )}
+            </div>
+          )
+        }}
+      </AsyncState>
+    </div>
   )
 }

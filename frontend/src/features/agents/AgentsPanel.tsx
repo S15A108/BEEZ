@@ -32,7 +32,7 @@ function Step({
 }) {
   return (
     <li className="grid grid-cols-[24px_minmax(0,1fr)] gap-3">
-      <span className="grid size-6 place-items-center rounded-full bg-[#f3f1eb] text-xs font-bold">
+      <span className="grid size-6 place-items-center rounded-full bg-[#f3f1eb] text-caption font-bold">
         {number}
       </span>
       <div className="grid min-w-0 gap-2">
@@ -57,7 +57,7 @@ function CodeLine({
   return (
     <div className="flex items-center justify-between gap-3 rounded-[10px] bg-foreground px-3 py-2.5">
       {/* w-0: 줄바꿈 없는 긴 코드가 바깥 grid 칸의 최소 너비를 늘려 '복사'를 창 밖으로 밀지 않게 한다. */}
-      <code className="w-0 flex-1 truncate font-mono text-[12.5px] text-[#f5f1e3] select-text">
+      <code className="w-0 flex-1 truncate font-mono text-sub text-[#f5f1e3] select-text">
         {value.split('\n')[0]}
         {value.includes('\n') && ' …'}
       </code>
@@ -65,7 +65,7 @@ function CodeLine({
         type="button"
         aria-label={label}
         disabled={disabled}
-        className="shrink-0 text-xs font-semibold text-primary disabled:opacity-40"
+        className="shrink-0 text-sub font-semibold text-primary disabled:opacity-40"
         onClick={() =>
           void navigator.clipboard
             .writeText(value)
@@ -86,7 +86,7 @@ function HelpLink({ section, label }: { section: string; label: string }) {
       href={`/help/agent-connection#${section}`}
       target="_blank"
       rel="noreferrer"
-      className="shrink-0 text-[12.5px] font-semibold whitespace-nowrap underline underline-offset-3"
+      className="shrink-0 text-sub font-semibold whitespace-nowrap underline underline-offset-3"
     >
       {label}
       <span aria-hidden="true"> ↗</span>
@@ -135,7 +135,7 @@ function TokenForm({ onIssue }: { onIssue: (label: string) => Promise<void> }) {
         </Button>
       </div>
       {message && (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-sub text-destructive">
           {message}
         </p>
       )}
@@ -199,7 +199,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
     <div className="space-y-5">
       <div>
         <h3 className="text-xl font-bold">내 에이전트</h3>
-        <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+        <p className="mt-1 text-sub text-muted-foreground">
           이 프로젝트에서만 쓰는 개인 토큰으로 로컬 Claude Code를 연결해요. 연결
           상태는 에이전트가 보낸 보고를 기준으로 보여 줘요.
         </p>
@@ -223,14 +223,14 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
               <div
                 role="status"
                 className={cn(
-                  'flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl px-3.5 py-3 text-[13px]',
+                  'flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl px-3.5 py-3 text-sub',
                   tone === 'connected'
                     ? 'bg-emerald-50'
                     : tone === 'failed'
                       ? 'bg-[#fdecec]'
                       : idle
                         ? 'bg-muted'
-                        : 'bg-primary/14',
+                        : 'bg-amber-50',
                 )}
               >
                 <span
@@ -243,7 +243,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                         ? 'bg-[#c10007]'
                         : idle
                           ? 'bg-[#c4c4c4]'
-                          : 'bg-[#e0b400]',
+                          : 'bg-amber-500',
                   )}
                 />
                 <strong
@@ -298,7 +298,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                 {(statusReady || statusFailed) && (
                   <button
                     type="button"
-                    className="ml-auto shrink-0 text-[12.5px] font-semibold whitespace-nowrap hover:underline"
+                    className="ml-auto shrink-0 text-sub font-semibold whitespace-nowrap hover:underline"
                     disabled={agents.isFetching || !me}
                     onClick={() =>
                       void agents
@@ -321,7 +321,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   </button>
                 )}
               </div>
-              <p className="-mt-3 text-xs text-muted-foreground">
+              <p className="-mt-3 text-sub text-muted-foreground">
                 같은 계정의 연결은 프로젝트마다 하나만 살아 있어요. 다른 PC나
                 터미널에서 새로 연결하면 나중 연결이 이기고 먼저 붙어 있던
                 연결은 끊겨요.
@@ -337,14 +337,14 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                 >
                   {fresh ? (
                     <div
-                      className="grid gap-2 rounded-xl border border-[#f0dc9a] bg-primary/10 px-3.5 py-3"
+                      className="grid gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3"
                       aria-label="한 번만 표시하는 새 토큰"
                     >
-                      <strong className="text-[13px]">
+                      <strong className="text-sm">
                         이 화면을 닫으면 토큰 값을 다시 볼 수 없어요.
                       </strong>
                       <CodeLine value={fresh.token} label="토큰 복사" />
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-caption text-muted-foreground">
                         이 프로젝트에서만 써요 · 발급{' '}
                         {formatDate(fresh.token_info.created_at)}
                         {/* API 없음: 토큰이 쓸 수 있는 범위와 만료일(리뷰 M16)이 응답에 없다. */}
@@ -353,7 +353,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                       </span>
                       <button
                         type="button"
-                        className="justify-self-start text-xs text-muted-foreground underline"
+                        className="justify-self-start text-sub text-muted-foreground underline"
                         onClick={() => setFresh(null)}
                       >
                         값 숨기기
@@ -370,7 +370,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                           }, '토큰을 발급했어요.')
                         }}
                       />
-                      <p className="text-xs text-muted-foreground/70">
+                      <p className="text-sub text-muted-foreground/70">
                         토큰 값은 발급할 때 한 번만 보여요. 잃어버리면 폐기하고
                         다시 발급해요.
                       </p>
@@ -383,20 +383,20 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                     label="MCP 주소 복사"
                     disabled={!mcpUrl}
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sub text-muted-foreground">
                     명령은 등록만 하고 끝나요. 대화 창이 뜨지 않는 게
                     정상이에요.{' '}
                     <HelpLink section="add" label="자세한 연결 방법" />
                   </p>
                   {mcpUrl && !fresh && (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-sub text-muted-foreground">
                       &lt;에이전트 토큰&gt; 자리에 발급할 때 받은 토큰을 넣어요.
                       토큰 값은 다시 볼 수 없어서, 잃어버렸으면 폐기하고 새로
                       발급해요.
                     </p>
                   )}
                   {!shownGuide && (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-sub text-muted-foreground">
                       토큰을 발급하면 연결 안내가 나와요.
                     </p>
                   )}
@@ -408,7 +408,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                       label="CLAUDE.md 내용 복사"
                     />
                   ) : (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-sub text-muted-foreground">
                       토큰을 발급하면 붙여넣을 내용이 나와요.
                     </p>
                   )}
@@ -421,13 +421,13 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                     {tokens.map((token) => (
                       <li
                         key={token.id}
-                        className="flex items-center justify-between gap-3 border-b px-1 py-3 text-[13px]"
+                        className="flex items-center justify-between gap-3 border-b px-1 py-3 text-sm"
                       >
                         <span>
                           <strong className="font-semibold">
                             {token.label || '내 에이전트 토큰'}
                           </strong>
-                          <span className="text-muted-foreground">
+                          <span className="text-caption text-muted-foreground">
                             {' '}
                             · 발급 {formatDate(token.created_at)} ·{' '}
                             {token.last_used_at
@@ -452,7 +452,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   </ul>
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sub text-muted-foreground">
                 팀원들의 에이전트 연결과 작업은 대시보드 › 에이전트 현황에서
                 봐요.
                 {apiMode === 'mock' &&
@@ -467,7 +467,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   busy={action.busy}
                   onClose={() => setRevoking(null)}
                 >
-                  <div className="grid gap-4 rounded-xl border border-destructive/30 p-4 text-[13px]">
+                  <div className="grid gap-4 rounded-xl border border-destructive/30 p-4 text-sm">
                     <ul className="grid list-disc gap-1 pl-5">
                       <li>
                         폐기하면 이 토큰을 쓰는 에이전트는 바로 연결이 끊겨요.

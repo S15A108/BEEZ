@@ -41,7 +41,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { statusLabel } from '@/lib/display'
 import { formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { membersQuery } from '@/features/members/membersQuery'
@@ -89,9 +89,12 @@ export function ActivityPanel({
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [usageView, setUsageView] = useState<UsageView>('by_agent')
-  const [tab, setTab] = useState<DashboardTab>('overview')
+  const [tab, setTab] = useRemembered<DashboardTab>(`${view}.tab`, 'overview')
   // 한눈에 보기와 사용량 탭이 같은 기간을 쓴다. 이름으로 고른 기간은 날이 바뀌어도 그 뜻을 지키고, 직접 넣은 기간은 날짜 그대로 둔다.
-  const [period, setPeriod] = useState<Period | DayRange>('this_month')
+  const [period, setPeriod] = useRemembered<Period | DayRange>(
+    `${view}.period`,
+    'this_month',
+  )
   const range = typeof period === 'string' ? periodRange(period) : period
   const [workCursor, setWorkCursor] = useState<string>()
   const usage = useQuery({
@@ -677,7 +680,7 @@ function UsageBars({
           </span>
           <span aria-hidden="true" className="h-2 rounded-full bg-muted">
             <span
-              className="block h-2 rounded-full bg-[#e0b400]"
+              className="block h-2 rounded-full bg-chart-1"
               style={{ width: `${(row.call_count / most) * 100}%` }}
             />
           </span>

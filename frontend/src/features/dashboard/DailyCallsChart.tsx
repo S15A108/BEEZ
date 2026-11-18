@@ -69,7 +69,7 @@ export function DailyCallsChart({
                 >
                   {row.call_count > 0 && (
                     <span
-                      className="block w-full max-w-6 min-w-px rounded-t-[4px] bg-[#2a78d6]"
+                      className="block w-full max-w-6 min-w-px rounded-t-[4px] bg-chart-1"
                       style={{
                         height: `${(row.call_count / top) * 100}%`,
                         minHeight: 2,

@@ -75,15 +75,16 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
 
-// 발행 창을 연 뒤 검토 내용이 바뀌어 지금은 발행할 수 없을 때. 글자를 틀린 것이 아니므로 따로 알린다.
-class StaleReviewError extends Error {}
+// '프로젝트 시작'을 눌렀는데 화면에서 검토한 원본·초안이 서버의 최신과 달라 발행하지 않았을 때.
 const STALE_REVIEW_MESSAGE =
-  '검토 후 내용이 바뀌었어요. 창을 닫고 최신 내용을 다시 검토해 주세요.'
+  '검토 후 내용이 바뀌었어요. 최신 내용을 다시 검토한 뒤 시작해 주세요.'
 
 const DRAFT_ACCEPTED =
   '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.'
 
-// 설계 초안을 만드는 흐름 순서의 탭. 기준 설계를 발행한 뒤에는 후보 탭이 없다.
+const STARTED = '첫 기준 설계를 발행했어요.'
+
+// 설계 초안을 만드는 흐름 순서의 탭. 기준 설계를 발행한 뒤에는 후보 탭이 없고, items 탭은 '기준 설계 vN'(승인 항목 읽기 전용)이 된다.
 type PlanningTab = 'documents' | 'questions' | 'answers' | 'items'
 const TAB_LABEL: Record<PlanningTab, string> = {
   documents: '문서 후보',
@@ -111,11 +112,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     }
   }
   const [editing, setEditing] = useState<DesignItemVersion | null>(null)
-  const [publishing, setPublishing] = useState<{
-    hash: string
-    documents: string[]
-    items: string[]
-  } | null>(null)
+  // '프로젝트 시작' 진행 중(최신 확인 + 발행)과 그 실패 안내. 진행 중에는 버튼을 꺼 두 번 발행하지 않는다.
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
   const [adding, setAdding] = useState(false)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const documents = useQuery({
@@ -183,6 +182,21 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         : false,
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
+  // 발행 뒤에는 초안이 기준으로 넘어가 비므로, 지금 기준의 승인 항목(PLN-A06 status=APPROVED)을 읽기만 한다.
+  // 작업 현황과 같은 키로 캐시를 나눠 쓴다.
+  const approved = useInfiniteQuery({
+    queryKey: ['projects', projectId, 'approved-design-items'],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      planningApi.items(projectId, {
+        status: 'APPROVED',
+        cursor: pageParam,
+        limit: 100,
+      }),
+    getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    enabled: !!baseline.data,
+  })
+  const approvedItems = approved.data?.pages.flatMap((page) => page.items) ?? []
   const versionIds = versions.map((version) => version.id)
   // 발행 조건과 스냅샷 해시는 받아 둔 전체 초안을 기준으로 한다.
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
@@ -214,7 +228,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const analysesReady =
     versions.length > 0 &&
     analyses.every((query) => query.data?.status === 'COMPLETED')
-  // 최초 기준 설계 생성(PLN-A10)이 프로젝트 시작이다. 서버 거절 코드(analysis_not_completed·document_not_approved·baseline_exists)는 승인 창이 알려 준다.
+  // 최초 기준 설계 생성(PLN-A10)이 프로젝트 시작이다. 서버 거절 코드(analysis_not_completed·document_not_approved·baseline_exists)는 위쪽 오류 띠가 알려 준다.
   // API 없음: 문서별 색인 완료(index_ready)가 dev 명세에 없어 분석 완료(analysesReady)로 대신 판단한다(PR #42 요청 중).
   const canPublish =
     isLeader &&
@@ -271,7 +285,62 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       '실패한 부분만 다시 만들도록 접수했어요.',
     )
   const perform = (operation: () => Promise<unknown>, message: string) => {
+    setStartError('')
     void action.run(operation, message).catch(() => undefined)
+  }
+  // '프로젝트 시작'(PLN-A10)은 확인 창 없이 바로 발행한다(11-17 사용자 결정, S15P31A108-460). 서버는 확인 입력을 받지 않는다.
+  // 다만 화면에서 검토한 원본 문서·설계 초안이 서버의 최신과 같은지 먼저 다시 읽어 보고, 다르면 발행하지 않는다.
+  // 바뀐 내용은 다시 읽은 화면에 보이므로 팀장이 검토한 뒤 다시 누른다.
+  const startProject = async () => {
+    const reviewed = {
+      hash: snapshotHash,
+      documents: versionIds,
+      items: items.map((item) => item.id),
+    }
+    setStarting(true)
+    setStartError('')
+    action.clearMessage()
+    try {
+      const [latestDocuments, latestDrafts] = await Promise.all([
+        documents.refetch({ throwOnError: true }),
+        drafts.refetch({ throwOnError: true }),
+      ])
+      const latestVersions =
+        latestDocuments.data?.items.flatMap((document) => {
+          const version = versionOf(document)
+          return version ? [version.id] : []
+        }) ?? []
+      const pages = latestDrafts.data?.pages ?? []
+      const unchanged =
+        canPublish &&
+        !!reviewed.hash &&
+        !latestDocuments.data?.has_more &&
+        !pages.at(-1)?.has_more &&
+        pages.length > 0 &&
+        pages.every((page) => page.draft_snapshot_hash === reviewed.hash) &&
+        latestVersions.length === reviewed.documents.length &&
+        latestVersions.every((id) => reviewed.documents.includes(id))
+      if (!unchanged) {
+        setStartError(STALE_REVIEW_MESSAGE)
+        return
+      }
+      await action.run(
+        () =>
+          planningApi.publishBaseline({
+            project_id: projectId,
+            document_version_ids: reviewed.documents,
+            design_item_version_ids: reviewed.items,
+            draft_snapshot_hash: reviewed.hash!,
+          }),
+        STARTED,
+      )
+    } catch (cause) {
+      // 일반 오류 띠 대신 서버가 알려 준 거절 이유(analysis_not_completed·document_not_approved·baseline_exists 등)를 보인다.
+      action.reset()
+      setStartError(getValidationMessage(cause))
+    } finally {
+      setStarting(false)
+    }
   }
   // 분석이 끝나지 않은 문서의 안내(실패 이유, 진행 상황)는 마우스를 올리지 않아도 읽히게 문서 줄 아래에 글자로 보인다.
   // 완료된 문서의 안내(검색 준비 완료 등)는 문서 줄의 title 로만 둔다(PR #303 재검토).
@@ -404,11 +473,18 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       count: pendingIn(candidateJobs(answerWork)),
       state: jobStateOf(latestJobs(answerWork)),
     },
-    // 초안은 100개씩 받는다. 더 있으면 받아 둔 수에 +를 붙인다.
-    items: {
-      count: drafts.hasNextPage ? `${items.length}+` : items.length,
-      state: undefined,
-    },
+    // 초안·승인 항목은 100개씩 받는다. 더 있으면 받아 둔 수에 +를 붙인다.
+    items: baseline.data
+      ? {
+          count: approved.hasNextPage
+            ? `${approvedItems.length}+`
+            : approvedItems.length,
+          state: undefined,
+        }
+      : {
+          count: drafts.hasNextPage ? `${items.length}+` : items.length,
+          state: undefined,
+        },
   }
   const tabs: PlanningTab[] = baseline.data
     ? ['questions', 'items']
@@ -444,14 +520,18 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     ],
   ]
   const doneChecks = checks.filter(([ok]) => ok).length
-  const publishHint = canPublish
-    ? publishNotice(jobs).trim()
-    : doneChecks === checks.length
-      ? '설계 항목 초안을 모두 불러오고 최신인지 확인한 뒤 발행할 수 있어요.'
+  const publishHint =
+    !canPublish && doneChecks === checks.length
+      ? '설계 항목 초안을 모두 불러오고 최신인지 확인한 뒤 시작할 수 있어요.'
       : ''
+  // 시작하기 전에 알 것(채택하지 않은 후보, 후보를 다 만들지 못한 문서). 누르면 바로 발행되므로 펼치지 않아도 보이게 둔다.
+  const startNotice = canPublish ? publishNotice(jobs).trim() : ''
   const drafting = !baseline.isPending && !baseline.data
   // 발행 뒤 팀장 화면은 탭 위에 작업 만들기가 들어와 패널 높이를 고정하지 않는다.
   const breakdown = isLeader && !!baseline.data
+  // 이 창에서 방금 프로젝트를 시작했으면 성공 안내를 다음 할 일(작업 만들기) 카드 안에 한 덩어리로 보인다.
+  const startedHere = breakdown && action.message === STARTED
+  const baselineVersion = baseline.data?.version_no
   const panels: Record<PlanningTab, ReactNode> = {
     documents: drafting && (
       <AsyncState query={draftJobs}>
@@ -561,7 +641,21 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         )}
       </AsyncState>
     ),
-    items: (
+    items: baselineVersion ? (
+      <AsyncState query={approved}>
+        {() => (
+          <DesignItemList
+            items={approvedItems}
+            hasNextPage={approved.hasNextPage}
+            loadingNext={approved.isFetchingNextPage}
+            loadNext={() => void approved.fetchNextPage()}
+            isLeader={isLeader}
+            busy={action.busy}
+            baselineVersion={baselineVersion}
+          />
+        )}
+      </AsyncState>
+    ) : (
       <AsyncState query={drafts}>
         {() => (
           <DesignItemList
@@ -594,9 +688,17 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     // 창 높이를 채우고, 탭 안의 목록·상세가 남은 높이를 차지한다.
     <section className={cn('flex flex-col gap-4', !breakdown && PANEL_HEIGHT)}>
       {breakdown && baseline.data && (
-        <TaskBreakdown key={baseline.data.id} projectId={projectId} />
+        <TaskBreakdown
+          key={baseline.data.id}
+          projectId={projectId}
+          notice={
+            startedHere
+              ? `${STARTED} 이제 승인 설계에서 작업을 만들어 배정해요.`
+              : undefined
+          }
+        />
       )}
-      {action.message && (
+      {action.message && !startedHere && (
         <p
           role="status"
           className="rounded-lg bg-primary/10 px-3.5 py-2 text-sm"
@@ -604,12 +706,12 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           {action.message}
         </p>
       )}
-      {action.error && (
+      {(startError || action.error) && (
         <p
           role="alert"
           className="rounded-lg bg-destructive/5 px-3.5 py-2 text-sm text-destructive"
         >
-          {action.error}
+          {startError || action.error}
         </p>
       )}
       <AsyncState query={documents}>
@@ -737,8 +839,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           role="status"
           className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
         >
-          문서 4종이 모두 팀장 승인을 받아야 발행할 수 있어요. 승인 전:{' '}
-          {unapproved.map((document) => document.title).join(', ')}
+          문서 4종이 모두 팀장 승인을 받아야 프로젝트를 시작할 수 있어요. 승인
+          전: {unapproved.map((document) => document.title).join(', ')}
           <Button
             size="xs"
             variant="outline"
@@ -746,6 +848,15 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           >
             공용 문서함에서 승인하기
           </Button>
+        </p>
+      )}
+      {startNotice && (
+        <p className="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
+          <CircleAlert
+            aria-hidden
+            className="mt-0.5 size-3.5 shrink-0 text-amber-600"
+          />
+          {startNotice}
         </p>
       )}
       <div className="flex flex-wrap items-end gap-x-7 gap-y-2 border-b">
@@ -792,7 +903,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                     : 'border-transparent font-medium text-muted-foreground hover:text-foreground',
                 )}
               >
-                {TAB_LABEL[key]}
+                {key === 'items' && baseline.data
+                  ? `기준 설계 v${baseline.data.version_no}`
+                  : TAB_LABEL[key]}
                 <span
                   className={cn(
                     'text-[13px] tabular-nums',
@@ -879,16 +992,13 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                 </PopoverContent>
               </Popover>
               <Button
-                disabled={!canPublish || action.busy}
-                onClick={() =>
-                  setPublishing({
-                    hash: snapshotHash!,
-                    documents: versions.map((version) => version.id),
-                    items: items.map((item) => item.id),
-                  })
-                }
+                disabled={!canPublish || action.busy || starting}
+                onClick={() => void startProject()}
               >
-                검토한 설계 승인·발행
+                {starting && (
+                  <LoaderCircle className="animate-spin motion-reduce:animate-none" />
+                )}
+                프로젝트 시작
               </Button>
             </>
           ) : (
@@ -1002,52 +1112,6 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
             {DESIGN_CONTENT_EXAMPLES}
           </pre>
         </FormDialog>
-      )}
-      {publishing && (
-        <FormDialog
-          title="최초 기준 설계 승인·발행"
-          description={`문서 ${publishing.documents.length}개와 검토한 항목 ${publishing.items.length}개를 함께 승인해요. 승인할 원본·항목·초안이 달라지면 최신 내용을 다시 검토해야 해요.${publishNotice(currentVersionJobs(draftJobs.data?.jobs ?? [], versionIds))}`}
-          fields={[
-            {
-              name: 'confirmation',
-              label: '검토를 마쳤다면 ‘승인’을 입력해 주세요.',
-              required: true,
-              check: (value) =>
-                value.trim() === '승인' ? undefined : "'승인'을 입력해 주세요.",
-            },
-          ]}
-          submitLabel="승인하고 기준 발행"
-          errorMessage={(cause) =>
-            cause instanceof StaleReviewError
-              ? STALE_REVIEW_MESSAGE
-              : getValidationMessage(cause)
-          }
-          onClose={() => setPublishing(null)}
-          onSubmit={async () => {
-            if (
-              snapshotHash !== publishing.hash ||
-              publishing.documents.length !== versions.length ||
-              !versions.every((version) =>
-                publishing.documents.includes(version.id),
-              ) ||
-              !canPublish
-            )
-              throw new StaleReviewError()
-            await inForm(() =>
-              action.run(
-                () =>
-                  planningApi.publishBaseline({
-                    project_id: projectId,
-                    document_version_ids: publishing.documents,
-                    design_item_version_ids: publishing.items,
-                    draft_snapshot_hash: publishing.hash,
-                  }),
-                '첫 기준 설계를 발행했어요.',
-              ),
-            )
-            setPublishing(null)
-          }}
-        />
       )}
     </section>
   )

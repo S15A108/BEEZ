@@ -53,7 +53,7 @@ export function OfficeTimeSettings() {
                   onChange={() => setValue(item.value)}
                 />
                 <span className="text-sm font-semibold">{item.label}</span>
-                <span className="text-xs leading-[17px] break-keep text-[#6b6658]">
+                <span className="text-sub break-keep text-[#6b6658]">
                   {item.hint}
                 </span>
                 {checked && (

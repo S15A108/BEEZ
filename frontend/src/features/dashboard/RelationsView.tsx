@@ -9,14 +9,22 @@ import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { edgeLabel, nodeKind } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
-import { LIST_SELECTED } from '@/lib/display'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  LIST_ROW,
+  LIST_SELECTED,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
+} from '@/lib/display'
+import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
+import { statusGroupOf, statusGroups } from '@/features/tasks/statusGroups'
 import { RelationGraph } from './RelationGraph'
 
 // 작업·설계 관계 · 단축 바 5번 단독 창. 왼쪽에서 작업을 고르면 그 작업 기준으로 설계 항목·검증·변경 제안 관계를 그린다.
+// 같은 관계를 그래프·펼침 목록·관계 목록으로 세 번 보이던 것을 목록 하나로 두고, 그래프는 보기 전환으로 연다(S15P31A108-449).
 // 관계 API(MON-A03)는 기준 작업이나 설계 항목이 있어야 조회돼서 작업 목록에서 골라 그린다(백엔드 메모 4).
 export function RelationsView({
   projectId,
@@ -28,7 +36,15 @@ export function RelationsView({
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [search, setSearch] = useState('')
-  const [picked, setPicked] = useState<string | null>(null)
+  const [picked, setPicked] = useRemembered<string | null>(
+    'relations.picked',
+    null,
+  )
+  // 목록 보기·그래프 보기(S15P31A108-449)도 메뉴를 갔다 와도 잇는다.
+  const [view, setView] = useRemembered<'list' | 'graph'>(
+    'relations.view',
+    'list',
+  )
   const tasks = useQuery({
     queryKey: ['projects', projectId, 'relation-tasks'],
     // 작업 목록 API에는 검색 조건이 없어 마지막 페이지까지 읽고 화면에서 찾는다. 100개만 읽으면 101번째 이후 작업의
@@ -44,7 +60,11 @@ export function RelationsView({
       search.trim(),
     ),
   )
-  const selected = picked ?? shown[0]?.id
+  // 왼쪽 목록은 작업 현황처럼 상태 묶음 순서로 보인다. 처음 고르는 작업도 맨 위 줄이다.
+  const ordered = statusGroups.flatMap((group) =>
+    shown.filter((task) => statusGroupOf(task.status) === group),
+  )
+  const selected = picked ?? ordered[0]?.id
   const selectedTask = all.find((task) => task.id === selected)
   const relations = useQuery({
     queryKey: ['projects', projectId, 'relations', selected],
@@ -111,53 +131,90 @@ export function RelationsView({
         : // 선행 작업 같은 작업 대상은 누른 작업을, 검증은 지금 고른 작업을 연다.
           openPane('tasks', type === 'TASK' ? id : selected)
   return (
-    <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
-      <div className="grid content-start gap-2">
-        <label className="relative">
-          <span className="sr-only">작업 찾기</span>
-          <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="작업 번호·제목"
-            disabled={!all.length}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <AsyncState query={tasks}>
-          {() =>
-            shown.length ? (
-              <ul className="grid gap-1.5">
-                {shown.map((task) => (
-                  <li key={task.id}>
-                    <button
-                      type="button"
-                      aria-current={task.id === selected}
-                      onClick={() => setPicked(task.id)}
-                      className={cn(
-                        'grid w-full gap-0.5 rounded-xl border bg-card px-3 py-2.5 text-left text-sm shadow-xs hover:bg-muted/40',
-                        task.id === selected && LIST_SELECTED,
-                      )}
+    <div
+      className={cn(
+        'grid gap-6 lg:h-0 lg:min-h-full lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+        SPLIT_COLUMNS,
+      )}
+    >
+      {/* 왼쪽 목록은 작업 현황과 같은 흰 카드: 검색칸, 상태 묶음 머리글, 번호·제목·상태 칩 카드 */}
+      <Card className="lg:max-h-full lg:overflow-y-auto">
+        <CardContent className="space-y-3">
+          <label className="relative block">
+            <span className="sr-only">작업 찾기</span>
+            <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="작업 번호·제목"
+              disabled={!all.length}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+          <AsyncState query={tasks}>
+            {() =>
+              shown.length ? (
+                statusGroups.map((group) => {
+                  const items = shown.filter(
+                    (task) => statusGroupOf(task.status) === group,
+                  )
+                  if (!items.length) return null
+                  return (
+                    <section
+                      key={group.label}
+                      aria-label={group.heading}
+                      className="space-y-1.5"
                     >
-                      <span className="text-xs text-muted-foreground">
-                        {task.key}
-                      </span>
-                      <strong className="font-semibold">
-                        {task.current_plan_revision.plan.title}
-                      </strong>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {all.length ? '찾는 작업이 없어요.' : '아직 작업이 없어요.'}
-              </p>
-            )
-          }
-        </AsyncState>
-      </div>
-      <div className="grid min-w-0 content-start gap-4">
+                      <div className="flex justify-between text-[11px] leading-4 font-bold text-muted-foreground">
+                        <h3 className="tracking-[0.04em]">{group.heading}</h3>
+                        <span className="font-semibold">{items.length}</span>
+                      </div>
+                      <ul className="space-y-2">
+                        {items.map((task) => (
+                          <li key={task.id}>
+                            <button
+                              type="button"
+                              aria-current={task.id === selected}
+                              onClick={() => setPicked(task.id)}
+                              className={cn(
+                                LIST_ROW,
+                                task.id === selected
+                                  ? LIST_SELECTED
+                                  : 'hover:bg-muted/50',
+                              )}
+                            >
+                              <span className="block text-xs text-muted-foreground">
+                                {task.key}
+                              </span>
+                              <strong className="my-1 block text-sm font-medium">
+                                {task.current_plan_revision.plan.title}
+                              </strong>
+                              <span className="flex flex-wrap gap-2">
+                                <StatusPill value={task.status} />
+                                <StatusPill value={task.validation_status} />
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )
+                })
+              ) : (
+                <p className="py-6 text-center text-sm break-keep text-muted-foreground">
+                  {all.length ? '찾는 작업이 없어요.' : '아직 작업이 없어요.'}
+                </p>
+              )
+            }
+          </AsyncState>
+        </CardContent>
+      </Card>
+      <div
+        className={cn(
+          'grid min-w-0 content-start gap-4 lg:max-h-full lg:overflow-y-auto lg:p-px',
+          SPLIT_DETAIL,
+        )}
+      >
         {/* 캔버스 PNL-09-v2-relations 오른쪽 위. 관계를 못 읽어도 작업 현황으로 갈 수 있게 관계 응답 밖에 둔다. */}
         {selectedTask && (
           <div className="flex items-start justify-between gap-4">
@@ -183,7 +240,7 @@ export function RelationsView({
             제안을 이어서 그려요.
             {/* 기준이 이미 있으면 이 안내는 틀린 말이라 기준이 없을 때만 붙인다(S15P31A108-346). */}
             {hasBaseline === false &&
-              ' 기준 v1이 생기기 전에는 작업 계획을 올릴 수 없어요.'}
+              ' 설계 기준 v1이 생기기 전에는 작업 계획을 올릴 수 없어요.'}
             <Button size="sm" onClick={() => openPane('tasks')}>
               작업 계획 등록
             </Button>
@@ -221,71 +278,104 @@ export function RelationsView({
                         </Button>
                       </div>
                     ))}
-                  <RelationGraph data={data} onOpen={go} />
-                  <section
-                    aria-labelledby="relation-list"
-                    className="grid gap-2"
+                  <div
+                    role="group"
+                    aria-label="관계 보기"
+                    className="flex gap-1.5"
                   >
-                    <h3 id="relation-list" className="text-sm font-semibold">
-                      관계 목록
-                    </h3>
-                    {data.edges.length ? (
-                      <ul className="grid gap-1.5 text-[13px]">
-                        {data.edges.map((edge, index) => (
-                          <li
-                            key={index}
-                            className={cn(
-                              'grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-xl border bg-card px-3.5 py-2.5',
-                              !edge.confirmed && 'border-dashed',
-                            )}
-                          >
-                            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold">
-                              {edgeLabel(edge)}
-                            </span>
-                            {label(edge.from_type, edge.from_id)} →{' '}
-                            {label(edge.to_type, edge.to_id)}
-                            <span
-                              className={cn(
-                                'rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                                edge.confirmed
-                                  ? 'bg-[#e8f3ec] text-[#00753a]'
-                                  : 'bg-muted text-muted-foreground',
-                              )}
-                            >
-                              {edge.confirmed
-                                ? '확인된 관계'
-                                : '검토할 후보 · 확정 아님'}
-                            </span>
-                            {/* API 없음: 비비가 이 후보를 본 이유는 관계 응답(MON-A03)에 아직 없다. */}
-                            {edge.confirmed ? (
-                              nodeKind(edge.to_type).link && (
-                                <button
-                                  type="button"
-                                  className="text-xs font-semibold whitespace-nowrap hover:underline"
-                                  onClick={() => go(edge.to_type, edge.to_id)}
-                                >
-                                  {nodeKind(edge.to_type).link} ›
-                                </button>
-                              )
-                            ) : (
-                              <Button
-                                size="xs"
-                                variant="outline"
-                                title="계획에 근거 설계로 넣으면 확정돼요"
-                                onClick={() => openPane('tasks')}
+                    {(
+                      [
+                        ['list', '목록'],
+                        ['graph', '그래프'],
+                      ] as const
+                    ).map(([value, name]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={view === value}
+                        onClick={() => setView(value)}
+                        className={cn(
+                          'h-7 rounded-full px-3 text-xs font-semibold',
+                          view === value
+                            ? 'bg-foreground text-background'
+                            : 'bg-muted text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                  {view === 'graph' ? (
+                    <RelationGraph data={data} onOpen={go} />
+                  ) : (
+                    <section aria-label="관계 목록" className="grid gap-2">
+                      {data.edges.length ? (
+                        <ul className="grid gap-1.5 text-[13px]">
+                          {data.edges.map((edge, index) => {
+                            // 지금 고른 작업 쪽이 아닌 끝으로 간다. 이 작업에서 나온 제안이면 그 제안을 연다.
+                            const [toType, toId] =
+                              edge.to_type === 'TASK' && edge.to_id === selected
+                                ? [edge.from_type, edge.from_id]
+                                : [edge.to_type, edge.to_id]
+                            return (
+                              <li
+                                key={index}
+                                className={cn(
+                                  'grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-xl border bg-card px-3.5 py-2.5',
+                                  !edge.confirmed && 'border-dashed',
+                                )}
                               >
-                                작업 계획 등록
-                              </Button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        이 작업에 이어진 관계가 아직 없어요.
-                      </p>
-                    )}
-                  </section>
+                                <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold">
+                                  {edgeLabel(edge)}
+                                </span>
+                                {label(edge.from_type, edge.from_id)} →{' '}
+                                {label(edge.to_type, edge.to_id)}
+                                <span
+                                  className={cn(
+                                    'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                                    edge.confirmed
+                                      ? 'bg-[#e8f3ec] text-[#00753a]'
+                                      : 'bg-muted text-muted-foreground',
+                                  )}
+                                >
+                                  {edge.confirmed
+                                    ? '확인된 관계'
+                                    : '검토할 후보 · 확정 아님'}
+                                </span>
+                                {/* API 없음: 비비가 이 후보를 본 이유는 관계 응답(MON-A03)에 아직 없다. */}
+                                {/* 후보 줄에도 이동 버튼을 둔다. 그래프 상자는 마우스로만 눌려 키보드로 후보 대상을 여는 길이 여기뿐이다(PR #327 리뷰). */}
+                                <span className="flex items-center justify-end gap-2">
+                                  {nodeKind(toType).link && (
+                                    <button
+                                      type="button"
+                                      className="text-xs font-semibold whitespace-nowrap hover:underline"
+                                      onClick={() => go(toType, toId)}
+                                    >
+                                      {nodeKind(toType).link} ›
+                                    </button>
+                                  )}
+                                  {!edge.confirmed && (
+                                    <Button
+                                      size="xs"
+                                      variant="outline"
+                                      title="계획에 근거 설계로 넣으면 확정돼요"
+                                      onClick={() => openPane('tasks')}
+                                    >
+                                      작업 계획 등록
+                                    </Button>
+                                  )}
+                                </span>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          이 작업에 이어진 관계가 아직 없어요.
+                        </p>
+                      )}
+                    </section>
+                  )}
                 </div>
               )}
             </AsyncState>

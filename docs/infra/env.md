@@ -18,7 +18,7 @@ BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 
 | 로컬 frontend `npm run dev` | `frontend/.env` (`frontend/.env.example` 복사, 선택) | 없음 (`VITE_` 값은 공개됩니다) |
 | 로컬 전체 스택 compose | `infra/local.env` (더미값, 커밋됨) | GMS 키가 필요하면 셸 환경변수로 |
 | CI (`ci.yml`) | `application-test.yml` + Testcontainers | 없음 |
-| CD 이미지 빌드 (`cd.yml`) | 저장소 변수 `VITE_API_MODE` (지금 없음 → `mock`) | `GITHUB_TOKEN` (자동 발급) |
+| CD 이미지 빌드 (`cd.yml`) | 저장소 변수 `VITE_API_MODE` (`live`, 없으면 `mock`) | `GITHUB_TOKEN` (자동 발급) |
 | CD 배포 호출 (`cd.yml` deploy 잡) | Environment `dev` 시크릿 | `JENKINS_API_TOKEN` |
 | 서버 컨테이너 | `/opt/beez/.env.<환경>` → `deploy.sh` 가 `--env-file` 로 넘김 | 그 파일 (`640 ubuntu:beez-deploy`) |
 | Jenkins | `/etc/jenkins/casc.env` | 그 파일 (`600 root:root`) |
@@ -301,7 +301,7 @@ docker exec beez-ai-1 env | grep -E '_ENABLED=|^IMPACT_LLM_MODEL=' | sort
 
 - `VITE_` 값은 빌드 결과(JS)에 글자로 들어가 누구나 볼 수 있습니다. **비밀값을 넣지 않습니다.**
 - 빌드할 때 굳습니다. 서버에서 바꾸려면 다시 빌드해야 합니다. CD 는 저장소 변수 `VITE_API_MODE` 를 빌드 인자로
-  넘기고, 변수가 없으면 `mock` 입니다(2026-10-30 기준 없음). `live` 전환은 프론트 연동 PR 때 합니다.
+  넘기고, 변수가 없으면 `mock` 입니다. 2026-11-02부터 저장소 변수가 `live` 라 dev 서버는 실제 API를 부릅니다.
 
 ### CI·CD·Jenkins
 

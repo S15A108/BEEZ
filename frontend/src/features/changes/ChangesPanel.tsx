@@ -9,6 +9,7 @@ import {
 } from '@tanstack/react-query'
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   ChevronDown,
   CircleAlert,
@@ -34,9 +35,19 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
-import { describeContent, LIST_SELECTED } from '@/lib/display'
+import {
+  describeContent,
+  LIST_ROW,
+  LIST_SELECTED,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
+} from '@/lib/display'
 import { cn } from '@/lib/utils'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  useRemembered,
+  useRememberedSelection,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalCommentForm } from './ProposalCommentForm'
 import { ProposalForm } from './ProposalForm'
@@ -62,7 +73,7 @@ interface Props {
   isLeader: boolean
 }
 type ChangeStatus = ChangeProposal['status']
-type Tab = 'overview' | 'diff' | 'impact' | 'comments' | 'activity'
+type Tab = 'diff' | 'impact' | 'comments' | 'activity'
 type Mode =
   | { kind: 'detail' }
   | { kind: 'approve' }
@@ -83,8 +94,8 @@ const statusTabs = [
   ['PUBLISHED', '발행됨'],
   ['REJECTED', '반려'],
 ] as const
+// 개요 탭은 다른 탭의 요약(바뀌는 내용·영향·의견 카드)뿐이라 빼고 바뀌는 내용을 첫 탭으로 둔다(S15P31A108-449).
 const tabs = [
-  ['overview', '개요'],
   ['diff', '바뀌는 내용'],
   ['impact', '영향'],
   ['comments', '의견'],
@@ -129,13 +140,12 @@ function publishedImpact(analysis?: PublishedAnalysis) {
   if (analysis?.status === 'PENDING' || analysis?.status === 'RUNNING')
     return {
       label: '영향 분석 중',
-      message:
-        '발행 후 분석이 끝나기 전이라 영향은 아직 확정되지 않았어요. 이 승인으로 상태가 바뀐 검증과 작업은 작업 현황에서 확인하세요.',
+      message: '발행 후 분석이 끝나야 영향이 확정돼요.',
     }
   return {
     label: '영향 확인 필요',
     message:
-      '발행 후 분석으로 영향이 확정되지 않았어요. 관련 작업과 검증을 작업 현황에서 직접 확인해 주세요.',
+      '발행 후 분석으로 영향이 확정되지 않았어요. 관련 작업을 직접 확인해 주세요.',
   }
 }
 function impactMessage(
@@ -186,14 +196,18 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const focus = useWorkspaceStore((state) => state.focusId)
   const focusId = focus?.startsWith('doc:') ? null : focus
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const [selected, setSelected] = useState<{
-    id: string
-    focus: string | null
-  } | null>(null)
-  const [filter, setFilter] = useState<ChangeStatus | ''>('')
+  const [selected, setSelected] = useRememberedSelection('changes.selected')
+  const [filter, setFilter] = useRemembered<ChangeStatus | ''>(
+    'changes.filter',
+    '',
+  )
   const [search, setSearch] = useState('')
-  const [sort, setSort] = useState<'recent' | 'status'>('recent')
-  const [tab, setTab] = useState<Tab>('overview')
+  const [sort, setSort] = useRemembered<'recent' | 'status'>(
+    'changes.sort',
+    'recent',
+  )
+  // 개요 탭을 없애 첫 탭은 '바뀌는 내용'이다(S15P31A108-449).
+  const [tab, setTab] = useRemembered<Tab>('changes.tab', 'diff')
   const [mode, setMode] = useState<Mode>(() =>
     focus?.startsWith('doc:')
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
@@ -408,7 +422,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       : found
   const select = (id: string) => {
     setSelected({ id, focus: focusId })
-    setTab('overview')
+    setTab('diff')
     setMode({ kind: 'detail' })
   }
   const publishedVersion = (id: string) =>
@@ -541,14 +555,20 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   }
 
   return (
-    <section className="space-y-4">
+    <section
+      className={cn(
+        'space-y-4',
+        // 목록·상세는 왼쪽과 오른쪽이 따로 스크롤하고 창 전체는 움직이지 않는다(사용자 요청 11-17). 높이 0에 창 높이만큼의 최소 높이를 줘서 내용이 길어도 창 본문 높이에 맞춘다(회의실과 같은 방식).
+        mode.kind === 'detail' && 'lg:flex lg:h-0 lg:min-h-full lg:flex-col',
+      )}
+    >
       {/* 설명 문구는 캔버스 PNL-04-v2-changes(v461 이후)처럼 두지 않고, 제안하러 가는 버튼만 업무 창 머리 줄에 둔다.
           새 제안·승인·반려·이력 화면에서는 숨긴다. 누르면 창이 바뀌어 쓰던 내용을 잃는다(PR #88 리뷰). */}
       {mode.kind === 'detail' && (
         <PaneHeaderAction>
           <Button variant="outline" onClick={() => openPane('documents')}>
             <FolderOpen />
-            공용 문서함에서 제안하기
+            제안하기
           </Button>
         </PaneHeaderAction>
       )}
@@ -574,12 +594,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       <div
         className={cn(
           'grid gap-5',
-          mode.kind === 'detail' && 'lg:grid-cols-[290px_minmax(0,1fr)]',
+          mode.kind === 'detail' && [
+            'lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+            SPLIT_COLUMNS,
+          ],
         )}
       >
+        {/* 왼쪽 목록과 오른쪽 상세는 작업 현황처럼 흰 카드로 나눈다(사용자 요청 11-17). */}
         <div
           hidden={mode.kind !== 'detail'}
-          className="grid content-start gap-2.5"
+          className="grid content-start gap-2.5 rounded-xl bg-card p-4 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto"
         >
           <div className="flex gap-2">
             <label className="relative flex-1">
@@ -638,20 +662,24 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         aria-current={selectedId === entry.id}
                         onClick={() => select(entry.id)}
                         className={cn(
-                          'grid w-full gap-[3px] rounded-xl border px-3 py-2.5 text-left hover:bg-muted/40',
-                          selectedId === entry.id && LIST_SELECTED,
+                          'grid gap-[3px]',
+                          LIST_ROW,
+                          // 고른 항목은 마우스를 올려도 선택 바탕을 그대로 둔다(S15P31A108-456).
+                          selectedId === entry.id
+                            ? LIST_SELECTED
+                            : 'hover:bg-muted/40',
                         )}
                       >
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <StatusTag value={entry.status} />
-                          {baseline.data &&
-                            entry.base_baseline_id !== baseline.data.id &&
-                            ['PROPOSED', 'IN_REVIEW', 'APPROVED'].includes(
-                              entry.status,
-                            ) && (
+                        {/* 상태 알약은 상세 제목 옆에만 둔다. 목록은 상태 탭으로 거른다(S15P31A108-449). */}
+                        {baseline.data &&
+                          entry.base_baseline_id !== baseline.data.id &&
+                          ['PROPOSED', 'IN_REVIEW', 'APPROVED'].includes(
+                            entry.status,
+                          ) && (
+                            <span className="flex">
                               <Tag tone={operationTone.RETIRE}>기준 바뀜</Tag>
-                            )}
-                        </span>
+                            </span>
+                          )}
                         <strong className="line-clamp-2 text-sm leading-5 font-semibold">
                           {entry.title}
                         </strong>
@@ -684,7 +712,20 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
             </Button>
           )}
         </div>
-        <div className="min-w-0">
+        <div
+          className={cn(
+            'min-w-0',
+            // 상세는 흰 카드, 승인·반려는 가운데에 놓은 흰 결정 시트(머리·내용·아래 버튼 줄)다(사용자 요청 11-17).
+            mode.kind === 'detail' && [
+              'rounded-xl bg-card p-5 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto',
+              SPLIT_DETAIL,
+            ],
+            (mode.kind === 'approve' || mode.kind === 'reject') &&
+              'mx-auto w-full overflow-hidden rounded-2xl bg-card shadow-xs ring-1 ring-foreground/10',
+            mode.kind === 'approve' && 'max-w-3xl',
+            mode.kind === 'reject' && 'max-w-2xl',
+          )}
+        >
           {mode.kind === 'form' && !mode.source ? (
             <ProposeFlow
               projectId={projectId}
@@ -904,162 +945,176 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                 if (mode.kind === 'approve') {
                   const documentOnly = isDocumentOnly(current)
                   return (
-                    <div className="grid content-start gap-4">
-                      <Back onClick={() => setMode({ kind: 'detail' })}>
-                        {current.title}
-                      </Back>
-                      <h3 className="text-lg font-bold">
-                        기준 v{nextVersion} 발행을 승인할까요?
-                      </h3>
-                      <p className="text-sm font-semibold">
-                        기준 v{nextVersion}에 들어가는 것
-                      </p>
-                      {current.items.length > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          설계 항목
-                        </p>
-                      )}
-                      <ul className="grid gap-1.5 text-sm">
-                        {current.items.map((item, index) => (
-                          <li
-                            key={index}
-                            className="rounded-lg border px-3 py-2"
-                          >
-                            {operationLabel[item.operation]} ·{' '}
-                            {item.operation === 'CREATE'
-                              ? '새 항목'
-                              : `${itemKey(item.design_item_id)} 승인 v${approved.find((entry) => entry.design_item_id === item.design_item_id)?.version_no ?? '?'}`}
-                            {item.operation === 'UPDATE' && ' → 새 버전'}
-                          </li>
-                        ))}
-                      </ul>
-                      {current.documents.length > 0 && (
-                        <>
-                          <p className="text-xs text-muted-foreground">문서</p>
-                          <ul className="grid gap-1.5 text-sm">
-                            {current.documents.map((change) => {
-                              const document = documentOptions.find(
-                                (item) => item.id === change.document_id,
-                              )
-                              const next = proposedVersionNo(
-                                change.proposed_document_version_id,
-                              )
-                              const after = next ? `v${next}` : '새 버전'
-                              return (
-                                <li
-                                  key={change.document_id}
-                                  className="rounded-lg border px-3 py-2"
-                                >
-                                  {document
-                                    ? `${document.title} v${document.versionNo} → ${after}`
-                                    : `문서 → ${after}`}
-                                </li>
-                              )
-                            })}
-                          </ul>
-                        </>
-                      )}
-                      {/* 문서만 발행할 때는 새 문서 버전과 설계 항목의 영향을 구분한다. */}
-                      {(documentOnly || !preview.data) && (
-                        <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
-                          {documentOnly
-                            ? '승인하면 새 문서 버전이 공용 문서함에 발행돼요. 설계 항목과 기존 작업 상태·검증 결과는 유지돼요.'
-                            : '승인하면 이 항목을 쓰는 검증은 ‘다시 검증 필요’, 진행 중 작업은 ‘대기 · 재검증’으로 바뀌어요. 문서 원문도 함께 새 기준이 돼요.'}
-                        </p>
-                      )}
-                      {preview.isLoading && (
-                        <p
-                          role="status"
-                          className="text-sm text-muted-foreground"
-                        >
-                          승인하면 같이 바뀌는 것을 계산하는 중이에요…
-                        </p>
-                      )}
-                      {preview.data && (
-                        <ApprovalPreview
-                          preview={preview.data}
-                          changedDocuments={current.documents.length}
-                          nameOfMember={nameOfMember}
-                        />
-                      )}
-                      {preview.error && (
-                        <div
-                          role="alert"
-                          className="grid gap-2 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-                        >
-                          <p>
-                            {previewBlockedMessage ??
-                              '승인하면 같이 바뀌는 것을 불러오지 못했어요. 영향을 직접 확인한 뒤 승인해 주세요.'}
+                    <div className="grid content-start">
+                      <div className="grid gap-3 border-b px-6 py-5">
+                        <Back onClick={() => setMode({ kind: 'detail' })}>
+                          {current.title}
+                        </Back>
+                        <div className="grid gap-1.5">
+                          {/* 이 결정이 바꾸는 것: 팀의 기준 버전 */}
+                          <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-primary/20 px-2.5 py-1 text-xs font-semibold">
+                            기준 v{nextVersion - 1}
+                            <ArrowRight aria-hidden="true" className="size-3" />
+                            v{nextVersion}
+                          </span>
+                          <h3 className="text-xl font-bold">
+                            기준 v{nextVersion} 발행을 승인할까요?
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {current.key} · {current.title}
                           </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="justify-self-start"
-                            onClick={() => void preview.refetch()}
-                          >
-                            다시 불러오기
-                          </Button>
                         </div>
-                      )}
-                      {approveNotice && (
-                        <p
-                          role="alert"
-                          className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-                        >
-                          {approveNotice}
+                      </div>
+                      <div className="grid gap-4 px-6 py-5">
+                        <p className="text-sm font-semibold">
+                          기준 v{nextVersion}에 들어가는 것
                         </p>
-                      )}
-                      {overrideNeeded && (
-                        <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
-                          <strong className="text-sm">
-                            {documentOnly
-                              ? '문서 변경을 직접 확인해 주세요'
-                              : 'AI 영향 분석이 끝나지 않았어요'}
-                          </strong>
-                          <p className="text-sm leading-6">
-                            {documentOnly
-                              ? '문서 본문만 바꾸는 제안은 AI 영향 분석 대상이 아니에요. 바뀐 내용을 직접 확인하고 승인 사유를 남겨 주세요. 사유는 승인 이력에 남아요.'
-                              : '이 제안의 영향 분석이 끝나지 않았거나(실패·근거 부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못 함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향 0건으로 보지 않아요. 영향 범위를 직접 확인했다면 사유를 남기고 승인할 수 있어요. 사유는 승인 이력에 남아요.'}
+                        {current.items.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            설계 항목
                           </p>
-                          {!documentOnly && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="justify-self-start"
-                              disabled={action.busy}
-                              onClick={() =>
-                                void perform(
-                                  () =>
-                                    changesApi.retryImpact(
-                                      projectId,
-                                      current.id,
-                                    ),
-                                  IMPACT_RETRIED,
+                        )}
+                        <ul className="divide-y rounded-xl border text-sm empty:hidden">
+                          {current.items.map((item, index) => (
+                            <li key={index} className="px-3.5 py-2.5">
+                              {operationLabel[item.operation]} ·{' '}
+                              {item.operation === 'CREATE'
+                                ? '새 항목'
+                                : `${itemKey(item.design_item_id)} 승인 v${approved.find((entry) => entry.design_item_id === item.design_item_id)?.version_no ?? '?'}`}
+                              {item.operation === 'UPDATE' && ' → 새 버전'}
+                            </li>
+                          ))}
+                        </ul>
+                        {current.documents.length > 0 && (
+                          <>
+                            <p className="text-xs text-muted-foreground">
+                              문서
+                            </p>
+                            <ul className="divide-y rounded-xl border text-sm">
+                              {current.documents.map((change) => {
+                                const document = documentOptions.find(
+                                  (item) => item.id === change.document_id,
                                 )
-                              }
-                            >
-                              영향 다시 분석
-                            </Button>
-                          )}
-                          <label
-                            htmlFor="impact-override-reason"
-                            className="text-sm font-semibold"
-                          >
+                                const next = proposedVersionNo(
+                                  change.proposed_document_version_id,
+                                )
+                                const after = next ? `v${next}` : '새 버전'
+                                return (
+                                  <li
+                                    key={change.document_id}
+                                    className="px-3.5 py-2.5"
+                                  >
+                                    {document
+                                      ? `${document.title} v${document.versionNo} → ${after}`
+                                      : `문서 → ${after}`}
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </>
+                        )}
+                        {/* 문서만 발행할 때는 새 문서 버전과 설계 항목의 영향을 구분한다. */}
+                        {(documentOnly || !preview.data) && (
+                          <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
                             {documentOnly
-                              ? '문서 변경 승인 사유'
-                              : '영향 분석 없이 승인하는 사유'}
-                          </label>
-                          <Textarea
-                            id="impact-override-reason"
-                            maxLength={1000}
-                            value={approveReason}
-                            onChange={(event) =>
-                              setApproveReason(event.target.value)
-                            }
+                              ? '승인하면 새 문서 버전이 공용 문서함에 발행돼요. 설계 항목과 기존 작업 상태·검증 결과는 유지돼요.'
+                              : '승인하면 이 항목을 쓰는 검증은 ‘다시 검증 필요’, 진행 중 작업은 ‘대기 · 재검증’으로 바뀌어요. 문서 원문도 함께 새 기준이 돼요.'}
+                          </p>
+                        )}
+                        {preview.isLoading && (
+                          <p
+                            role="status"
+                            className="text-sm text-muted-foreground"
+                          >
+                            승인하면 같이 바뀌는 것을 계산하는 중이에요…
+                          </p>
+                        )}
+                        {preview.data && (
+                          <ApprovalPreview
+                            preview={preview.data}
+                            changedDocuments={current.documents.length}
+                            nameOfMember={nameOfMember}
                           />
-                        </div>
-                      )}
-                      <div className="flex justify-end gap-2">
+                        )}
+                        {preview.error && (
+                          <div
+                            role="alert"
+                            className="grid gap-2 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                          >
+                            <p>
+                              {previewBlockedMessage ??
+                                '승인하면 같이 바뀌는 것을 불러오지 못했어요. 영향을 직접 확인한 뒤 승인해 주세요.'}
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="justify-self-start"
+                              onClick={() => void preview.refetch()}
+                            >
+                              다시 불러오기
+                            </Button>
+                          </div>
+                        )}
+                        {approveNotice && (
+                          <p
+                            role="alert"
+                            className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                          >
+                            {approveNotice}
+                          </p>
+                        )}
+                        {overrideNeeded && (
+                          <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                            <strong className="text-sm">
+                              {documentOnly
+                                ? '문서 변경을 직접 확인해 주세요'
+                                : 'AI 영향 분석이 끝나지 않았어요'}
+                            </strong>
+                            <p className="text-sm leading-6">
+                              {documentOnly
+                                ? '문서 본문만 바꾸는 제안은 AI 영향 분석 대상이 아니에요. 바뀐 내용을 직접 확인하고 승인 사유를 남겨 주세요. 사유는 승인 이력에 남아요.'
+                                : '이 제안의 영향 분석이 끝나지 않았거나(실패·근거 부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못 함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향 0건으로 보지 않아요. 영향 범위를 직접 확인했다면 사유를 남기고 승인할 수 있어요. 사유는 승인 이력에 남아요.'}
+                            </p>
+                            {!documentOnly && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="justify-self-start"
+                                disabled={action.busy}
+                                onClick={() =>
+                                  void perform(
+                                    () =>
+                                      changesApi.retryImpact(
+                                        projectId,
+                                        current.id,
+                                      ),
+                                    IMPACT_RETRIED,
+                                  )
+                                }
+                              >
+                                영향 다시 분석
+                              </Button>
+                            )}
+                            <label
+                              htmlFor="impact-override-reason"
+                              className="text-sm font-semibold"
+                            >
+                              {documentOnly
+                                ? '문서 변경 승인 사유'
+                                : '영향 분석 없이 승인하는 사유'}
+                            </label>
+                            <Textarea
+                              id="impact-override-reason"
+                              maxLength={1000}
+                              value={approveReason}
+                              onChange={(event) =>
+                                setApproveReason(event.target.value)
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex justify-end gap-2 border-t bg-muted/40 px-6 py-4">
                         <Button
                           variant="outline"
                           onClick={() => setMode({ kind: 'detail' })}
@@ -1086,44 +1141,57 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                 }
                 if (mode.kind === 'reject')
                   return (
-                    <div className="grid content-start gap-4">
-                      <Back onClick={() => setMode({ kind: 'detail' })}>
-                        {current.title}
-                      </Back>
-                      <h3 className="text-lg font-bold">제안을 반려할까요?</h3>
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        반려하면 제안자가 같은 제안을 고쳐 다시 올릴 수 있어요.
-                        제안자와 검토 요청을 보낸 팀원에게 알려요.
-                      </p>
-                      <ActionForm
-                        fields={[
-                          {
-                            name: 'reason',
-                            label: '반려 사유',
-                            type: 'textarea',
-                            required: true,
-                            max: 2000,
-                            // 기준이 바뀐 제안은 돌려보내는 이유를 채워 둔다(PNL-04 수정안 기준 바뀜).
-                            value: current.requires_refresh
-                              ? '기준이 바뀌었어요. 최신 기준으로 고쳐 다시 올려 주세요.'
-                              : undefined,
-                          },
-                        ]}
-                        submitLabel="반려하기"
-                        destructive
-                        onSubmit={async (values) => {
-                          await action.run(
-                            () =>
-                              changesApi.reject(projectId, current.id, {
-                                reason: values.reason,
-                                expected_revision: current.revision,
-                                expected_snapshot_hash: current.snapshot_hash,
-                              }),
-                            '제안을 반려했어요.',
-                          )
-                          setMode({ kind: 'detail' })
-                        }}
-                      />
+                    <div className="grid content-start">
+                      <div className="grid gap-3 border-b px-6 py-5">
+                        <Back onClick={() => setMode({ kind: 'detail' })}>
+                          {current.title}
+                        </Back>
+                        <div className="grid gap-1.5">
+                          <h3 className="text-xl font-bold">
+                            제안을 반려할까요?
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {current.key} · {current.title}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid gap-4 px-6 py-5">
+                        <p className="text-sm leading-6 text-balance break-keep text-muted-foreground">
+                          반려하면 제안자가 같은 제안을 고쳐 다시 올릴 수
+                          있어요. 제안자와 검토 요청을 보낸 팀원에게 알려요.
+                        </p>
+                        <ActionForm
+                          fields={[
+                            {
+                              name: 'reason',
+                              label: '반려 사유',
+                              type: 'textarea',
+                              required: true,
+                              max: 2000,
+                              // 기준이 바뀐 제안은 돌려보내는 이유를 채워 둔다(PNL-04 수정안 기준 바뀜).
+                              value: current.requires_refresh
+                                ? '기준이 바뀌었어요. 최신 기준으로 고쳐 다시 올려 주세요.'
+                                : undefined,
+                            },
+                          ]}
+                          submitLabel="반려하기"
+                          destructive
+                          // 승인 화면처럼 '취소'로 상세에 돌아간다(사용자 요청 11-17).
+                          onCancel={() => setMode({ kind: 'detail' })}
+                          onSubmit={async (values) => {
+                            await action.run(
+                              () =>
+                                changesApi.reject(projectId, current.id, {
+                                  reason: values.reason,
+                                  expected_revision: current.revision,
+                                  expected_snapshot_hash: current.snapshot_hash,
+                                }),
+                              '제안을 반려했어요.',
+                            )
+                            setMode({ kind: 'detail' })
+                          }}
+                        />
+                      </div>
                     </div>
                   )
                 const baseVersion = current.requires_refresh
@@ -1178,7 +1246,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         {current.key} ·{' '}
                         {nameOfAccount(current.proposer_account_id)} 제안 · r
                         {current.revision} · {formatDate(current.created_at)}
+                        {current.task_id &&
+                          ` · 관련 작업 ${taskKey(current.task_id)}`}
                         {/* API 없음: 회의·작업 중 어디서 올렸는지 출처, 에이전트 제안이면 에이전트 이름(백엔드 메모 3·7) */}
+                      </p>
+                      {/* 개요 탭에만 있던 제안 이유는 제목 아래로 옮긴다. */}
+                      <p className="mt-2 text-sm leading-[21px] whitespace-pre-wrap">
+                        {current.reason}
                       </p>
                     </div>
                     {mine && editable && !isLeader && (
@@ -1248,15 +1322,55 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           )
                           const version = publishedVersion(result.baseline_id)
                           return (
-                            <div className="grid gap-2 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
-                              <h4 className="font-semibold">
-                                발행 완료{impact && ` · ${impact.label}`}
-                              </h4>
-                              <p>
-                                {version && `기준 v${version} · `}
-                                {nameOfAccount(result.approved_by)} 승인 ·{' '}
-                                {formatDate(result.approved_at)}
-                              </p>
+                            // 제목·승인 정보·버튼을 한 줄에 두고, 영향이 확정되지 않았을 때만 한 문장을 더한다(S15P31A108-456).
+                            <div className="grid gap-1 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-[13px] leading-5">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <h4 className="text-sm font-semibold">
+                                  발행 완료{impact && ` · ${impact.label}`}
+                                </h4>
+                                <span className="text-muted-foreground">
+                                  {version && `기준 v${version} · `}
+                                  {nameOfAccount(result.approved_by)} 승인 ·{' '}
+                                  {formatDate(result.approved_at)}
+                                </span>
+                                <span className="ml-auto flex flex-wrap gap-1.5">
+                                  {/* 발행 후 분석은 수동 재처리 API가 없다(CHG-A03 guidance, #243). 다시 시도 버튼은 두지 않는다. */}
+                                  <Button
+                                    size="xs"
+                                    variant={
+                                      impact?.label === '영향 확인 필요'
+                                        ? 'default'
+                                        : 'outline'
+                                    }
+                                    onClick={() => openPane('tasks')}
+                                  >
+                                    관련 작업 확인
+                                  </Button>
+                                  {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
+                                  <Button
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() =>
+                                      openPane(
+                                        'documents',
+                                        version ? `baseline:${version}` : null,
+                                      )
+                                    }
+                                  >
+                                    {version
+                                      ? `기준 v${version} 보기`
+                                      : '기준 보기'}
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() => setMode({ kind: 'history' })}
+                                  >
+                                    승인 이력
+                                  </Button>
+                                </span>
+                              </div>
+                              {impact && <p>{impact.message}</p>}
                               {result.impact_override_reason && (
                                 <p className="whitespace-pre-wrap">
                                   <span className="font-semibold">
@@ -1266,46 +1380,6 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                   {result.impact_override_reason}
                                 </p>
                               )}
-                              <p>
-                                {impact?.message ??
-                                  '이 승인으로 상태가 바뀐 검증과 작업은 작업 현황에서 확인하세요.'}
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {/* 발행 후 분석은 수동 재처리 API가 없다(CHG-A03 guidance, #243). 다시 시도 버튼은 두지 않는다. */}
-                                <Button
-                                  size="sm"
-                                  variant={
-                                    impact?.label === '영향 확인 필요'
-                                      ? 'default'
-                                      : 'outline'
-                                  }
-                                  onClick={() => openPane('tasks')}
-                                >
-                                  관련 작업 확인
-                                </Button>
-                                {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    openPane(
-                                      'documents',
-                                      version ? `baseline:${version}` : null,
-                                    )
-                                  }
-                                >
-                                  {version
-                                    ? `기준 v${version} 보기`
-                                    : '기준 보기'}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setMode({ kind: 'history' })}
-                                >
-                                  승인 이력
-                                </Button>
-                              </div>
                             </div>
                           )
                         }}
@@ -1319,450 +1393,313 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         onRefresh={() => void detail.refetch()}
                       />
                     )}
-                    <div
-                      role="tablist"
-                      aria-label="제안 보기"
-                      className="flex gap-1 border-b"
-                    >
-                      {tabs.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          role="tab"
-                          aria-selected={tab === value}
-                          onClick={() => setTab(value)}
-                          className={cn(
-                            '-mb-px border-b-2 px-3 py-2 text-sm',
-                            tab === value
-                              ? 'border-foreground font-bold'
-                              : 'border-transparent font-medium text-muted-foreground',
-                          )}
-                        >
-                          {label}
-                          {value === 'impact' &&
-                            impactCount !== undefined &&
-                            ` ${impactCount}`}
-                          {value === 'comments' && ` ${commentList.length}`}
-                        </button>
-                      ))}
-                    </div>
-                    <div role="tabpanel" className="min-h-40">
-                      {tab === 'overview' && (
-                        <div className="grid gap-3 text-sm">
-                          <p className="leading-[21px] whitespace-pre-wrap">
-                            {current.reason}
-                          </p>
-                          {/* 캔버스 PNL-04-v2 개요: 모서리 14px·안쪽 16/18px 카드, 15px·700 머리와 노란 글자 이동 버튼 */}
-                          {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
-                          <section className={overviewCard}>
-                            <h4 className={overviewHead}>
-                              바뀌는 내용{' '}
-                              {current.items.length + current.documents.length}
-                              <span className="flex items-center gap-2 font-medium">
-                                <span className="text-xs text-muted-foreground">
-                                  {(['UPDATE', 'CREATE', 'RETIRE'] as const)
-                                    .map(
-                                      (operation) =>
-                                        [
-                                          operation,
-                                          current.items.filter(
-                                            (item) =>
-                                              item.operation === operation,
-                                          ).length,
-                                        ] as const,
-                                    )
-                                    .filter(([, count]) => count)
-                                    .map(
-                                      ([operation, count]) =>
-                                        `${operationLabel[operation]} ${count}`,
-                                    )
-                                    .concat(
-                                      current.documents.length
-                                        ? [`문서 ${current.documents.length}`]
-                                        : [],
-                                    )
-                                    .join(' · ')}
-                                </span>
-                                <button
-                                  type="button"
-                                  className={overviewLink}
-                                  onClick={() => setTab('diff')}
-                                >
-                                  자세히
-                                </button>
-                              </span>
-                            </h4>
-                            <ul>
-                              {current.items.map((item, index) => (
-                                <li
-                                  key={index}
-                                  className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
-                                >
-                                  <Tag tone={operationTone[item.operation]}>
-                                    {operationLabel[item.operation]}
-                                  </Tag>
-                                  <strong className="truncate font-semibold">
-                                    {item.operation === 'CREATE'
-                                      ? item.kind
-                                        ? kindLabel[item.kind]
-                                        : '설계 항목'
-                                      : itemKey(item.design_item_id)}
-                                  </strong>
-                                  <span className="truncate">
-                                    {item.proposed_content
-                                      ? describeContent(item.proposed_content)
-                                      : ''}
-                                  </span>
-                                </li>
-                              ))}
-                              {current.documents.map((change) => {
-                                const document = documentOptions.find(
-                                  (item) => item.id === change.document_id,
-                                )
-                                // 승인 확인창처럼 '문서 vN → 새 버전'. 제안의 기준이 지금 승인본과 다르면 번호를 짐작하지 않는다.
-                                const from =
-                                  document?.versionId ===
-                                  change.base_document_version_id
-                                    ? ` v${document.versionNo}`
-                                    : ''
-                                return (
-                                  <li
-                                    key={change.document_id}
-                                    className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
-                                  >
-                                    <Tag tone={operationTone.UPDATE}>
-                                      {operationLabel.UPDATE}
-                                    </Tag>
-                                    <strong className="truncate font-semibold">
-                                      문서
-                                    </strong>
-                                    <span className="truncate">
-                                      {`${document?.title ?? '문서'}${from} → 새 버전`}
-                                    </span>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          </section>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <section className={overviewCard}>
-                              <h4 className={overviewHead}>
-                                영향
-                                <button
-                                  type="button"
-                                  aria-label="영향 보기"
-                                  className={overviewLink}
-                                  onClick={() => setTab('impact')}
-                                >
-                                  보기
-                                </button>
-                              </h4>
-                              <p className="text-[13px] leading-[19px]">
-                                {impact.error
-                                  ? '영향 분석 상태를 불러오지 못했어요.'
-                                  : impact.data && hasCurrentImpact(impact.data)
-                                    ? `확인된 관계 ${impact.data.explicit.length} · AI 후보 ${impact.data.candidates.length}`
-                                    : impact.data
-                                      ? impactMessage(
-                                          impact.data,
-                                          editable,
-                                          isDocumentOnly(current),
-                                        )
-                                      : '영향 분석 상태를 확인하는 중이에요.'}
-                              </p>
-                            </section>
-                            <section className={overviewCard}>
-                              <h4 className={overviewHead}>
-                                의견
-                                <button
-                                  type="button"
-                                  aria-label="의견 보기"
-                                  className={overviewLink}
-                                  onClick={() => setTab('comments')}
-                                >
-                                  보기
-                                </button>
-                              </h4>
-                              <div className="grid gap-1 text-[13px] leading-[19px]">
-                                <span>의견 {commentList.length}</span>
-                                {commentList[0] && (
-                                  <span className="truncate text-xs leading-[18px] text-muted-foreground">
-                                    {nameOfAccount(
-                                      commentList[0].author_account_id,
-                                    )}
-                                    : {commentList[0].body}
-                                  </span>
-                                )}
-                              </div>
-                            </section>
-                          </div>
-                          {current.task_id && (
-                            <p className="text-xs text-muted-foreground">
-                              관련 작업 {taskKey(current.task_id)}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                      {tab === 'diff' && (
-                        <div className="grid gap-2">
-                          <p
+                    {/* 탭 줄은 회색 띠, 고른 탭은 아래 내용과 이어 붙인다(S15P31A108-456). 상세가 이미 흰 카드라(S15P31A108-431)
+                        탭 묶음에 바깥 테두리를 또 두르지 않는다. 카드 안에 카드가 겹쳐 보였다. */}
+                    <div>
+                      <div
+                        role="tablist"
+                        aria-label="제안 보기"
+                        className="flex gap-1 rounded-t-xl border-b bg-muted px-2 pt-1.5"
+                      >
+                        {tabs.map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="tab"
+                            aria-selected={tab === value}
+                            onClick={() => setTab(value)}
                             className={cn(
-                              'flex items-center gap-2 rounded-[10px] px-3 py-2 text-[13px]',
-                              current.requires_refresh
-                                ? 'bg-[#fdf8e6] text-[#6e5200]'
-                                : 'bg-[#f3f8f4] text-[#00532a]',
+                              '-mb-px rounded-t-lg border px-3 py-2 text-sm',
+                              tab === value
+                                ? 'border-border border-b-card bg-card font-bold'
+                                : 'border-transparent font-medium text-muted-foreground hover:text-foreground',
                             )}
                           >
-                            {current.requires_refresh ? (
-                              <CircleAlert className="size-4 shrink-0" />
-                            ) : (
-                              <Check className="size-4 shrink-0" />
-                            )}
-                            제안을 만든 기준
-                            {baseVersion ? `(v${baseVersion})` : ''}과 지금
-                            기준이{' '}
-                            {current.requires_refresh ? '달라요' : '같아요'}.
-                          </p>
-                          {data.comparisons.length ? (
-                            <ul className="grid gap-2">
-                              {data.comparisons.map((comparison, index) => {
-                                const change = current.items.find(
-                                  (item) =>
-                                    item.design_item_id ===
-                                    comparison.target_id,
-                                )
-                                const kind = approved.find(
-                                  (item) =>
-                                    item.design_item_id ===
-                                    comparison.target_id,
-                                )?.kind
-                                return (
-                                  <Diff
-                                    key={`${comparison.target_id}-${index}`}
-                                    open={index === 0}
-                                    comparison={comparison}
-                                    operation={
-                                      comparison.target_id
-                                        ? (change?.operation ?? 'UPDATE')
-                                        : 'CREATE'
-                                    }
-                                    label={
-                                      comparison.target_type === 'DOCUMENT'
-                                        ? (documentOptions.find(
-                                            (item) =>
-                                              item.id === comparison.target_id,
-                                          )?.title ?? '문서')
-                                        : comparison.target_id
-                                          ? itemKey(comparison.target_id)
-                                          : ''
-                                    }
-                                    kind={
-                                      comparison.target_type === 'DOCUMENT'
-                                        ? '문서'
-                                        : kind && kindLabel[kind]
-                                    }
-                                  />
-                                )
-                              })}
-                            </ul>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">
-                              비교할 내용이 없어요.
+                            {label}
+                            {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
+                            {value === 'diff' &&
+                              ` ${current.items.length + current.documents.length}`}
+                            {value === 'impact' &&
+                              impactCount !== undefined &&
+                              ` ${impactCount}`}
+                            {value === 'comments' && ` ${commentList.length}`}
+                          </button>
+                        ))}
+                      </div>
+                      <div role="tabpanel" className="min-h-40 py-4">
+                        {tab === 'diff' && (
+                          <div className="grid gap-2">
+                            <p
+                              className={cn(
+                                'flex items-center gap-2 rounded-[10px] px-3 py-2 text-[13px]',
+                                current.requires_refresh
+                                  ? 'bg-[#fdf8e6] text-[#6e5200]'
+                                  : 'bg-[#f3f8f4] text-[#00532a]',
+                              )}
+                            >
+                              {current.requires_refresh ? (
+                                <CircleAlert className="size-4 shrink-0" />
+                              ) : (
+                                <Check className="size-4 shrink-0" />
+                              )}
+                              제안을 만든 기준
+                              {baseVersion ? `(v${baseVersion})` : ''}과 지금
+                              기준이{' '}
+                              {current.requires_refresh ? '달라요' : '같아요'}.
                             </p>
-                          )}
-                        </div>
-                      )}
-                      {tab === 'impact' && (
-                        <AsyncState query={impact}>
-                          {(result) => {
-                            const running = isImpactRunning(result)
-                            const notStarted = isImpactNotStarted(result)
-                            const unavailable = isDocumentOnly(current)
-                            return (
-                              <div className="grid gap-3 text-sm">
-                                {current.status === 'PUBLISHED' && (
-                                  <p className="text-muted-foreground">
-                                    발행 전 영향 분석 결과예요. 발행 후 처리
-                                    상태는 위에서 확인해 주세요.
-                                  </p>
-                                )}
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="text-muted-foreground">
-                                    {impactMessage(
-                                      result,
-                                      editable,
-                                      isDocumentOnly(current),
-                                    )}
-                                  </p>
-                                  {editable && !unavailable && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={action.busy || running}
-                                      onClick={() =>
-                                        void perform(
-                                          () =>
-                                            changesApi.retryImpact(
-                                              projectId,
-                                              current.id,
-                                            ),
-                                          notStarted
-                                            ? IMPACT_STARTED
-                                            : IMPACT_RETRIED,
-                                        )
+                            {data.comparisons.length ? (
+                              <ul className="grid gap-2">
+                                {data.comparisons.map((comparison, index) => {
+                                  const change = current.items.find(
+                                    (item) =>
+                                      item.design_item_id ===
+                                      comparison.target_id,
+                                  )
+                                  const kind = approved.find(
+                                    (item) =>
+                                      item.design_item_id ===
+                                      comparison.target_id,
+                                  )?.kind
+                                  return (
+                                    <Diff
+                                      key={`${comparison.target_id}-${index}`}
+                                      open={index === 0}
+                                      comparison={comparison}
+                                      operation={
+                                        comparison.target_id
+                                          ? (change?.operation ?? 'UPDATE')
+                                          : 'CREATE'
                                       }
-                                    >
-                                      {notStarted
-                                        ? '영향 분석 시작'
-                                        : '다시 분석'}
-                                    </Button>
-                                  )}
-                                </div>
-                                <div
-                                  className={cn(
-                                    'grid gap-2',
-                                    running && 'opacity-50',
-                                  )}
-                                >
-                                  <h4 className="font-semibold">확인된 관계</h4>
-                                  {result.explicit.length ? (
-                                    result.explicit.map((entry, index) => (
-                                      <p
-                                        key={index}
-                                        className="rounded-lg border px-3 py-2"
-                                      >
-                                        {taskKey(entry.task_id)} ·{' '}
-                                        {entry.member_id
-                                          ? nameOfMember(entry.member_id)
-                                          : '미배정'}{' '}
-                                        · {itemKey(entry.design_item_id)}
-                                        {entry.validation_id &&
-                                          ' · 관련 검증 있음'}
-                                      </p>
-                                    ))
-                                  ) : (
+                                      label={
+                                        comparison.target_type === 'DOCUMENT'
+                                          ? (documentOptions.find(
+                                              (item) =>
+                                                item.id ===
+                                                comparison.target_id,
+                                            )?.title ?? '문서')
+                                          : comparison.target_id
+                                            ? itemKey(comparison.target_id)
+                                            : ''
+                                      }
+                                      kind={
+                                        comparison.target_type === 'DOCUMENT'
+                                          ? '문서'
+                                          : kind && kindLabel[kind]
+                                      }
+                                    />
+                                  )
+                                })}
+                              </ul>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                비교할 내용이 없어요.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {tab === 'impact' && (
+                          <AsyncState query={impact}>
+                            {(result) => {
+                              const running = isImpactRunning(result)
+                              const notStarted = isImpactNotStarted(result)
+                              const unavailable = isDocumentOnly(current)
+                              return (
+                                <div className="grid gap-3 text-sm">
+                                  {current.status === 'PUBLISHED' && (
                                     <p className="text-muted-foreground">
-                                      {hasCurrentImpact(result)
-                                        ? '확인된 관계가 없어요.'
-                                        : '확인된 관계를 아직 판단할 수 없어요.'}
+                                      발행 전 영향 분석 결과예요. 발행 후 처리
+                                      상태는 위에서 확인해 주세요.
                                     </p>
                                   )}
-                                  <h4 className="font-semibold">
-                                    AI 후보 · 확정이나 승인이 아니에요
-                                  </h4>
-                                  {result.candidates.map((candidate, index) => (
-                                    <p
-                                      key={index}
-                                      className="rounded-lg border border-dashed px-3 py-2 leading-6"
-                                    >
-                                      {candidate.reason}
-                                      {candidate.member_id &&
-                                        ` · ${nameOfMember(candidate.member_id)}`}
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-muted-foreground">
+                                      {impactMessage(
+                                        result,
+                                        editable,
+                                        isDocumentOnly(current),
+                                      )}
                                     </p>
-                                  ))}
-                                  <p className="text-xs text-muted-foreground">
-                                    후보가 없어도 영향이 없다는 뜻은 아니에요.
-                                    {result.generation?.origin === 'TEMPLATE' &&
-                                      ' 지금 결과는 모델 분석이 아닌 예시 설명이에요.'}
-                                  </p>
+                                    {editable && !unavailable && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={action.busy || running}
+                                        onClick={() =>
+                                          void perform(
+                                            () =>
+                                              changesApi.retryImpact(
+                                                projectId,
+                                                current.id,
+                                              ),
+                                            notStarted
+                                              ? IMPACT_STARTED
+                                              : IMPACT_RETRIED,
+                                          )
+                                        }
+                                      >
+                                        {notStarted
+                                          ? '영향 분석 시작'
+                                          : '다시 분석'}
+                                      </Button>
+                                    )}
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      'grid gap-2',
+                                      running && 'opacity-50',
+                                    )}
+                                  >
+                                    <h4 className="font-semibold">
+                                      확인된 관계
+                                    </h4>
+                                    {result.explicit.length ? (
+                                      result.explicit.map((entry, index) => (
+                                        <p
+                                          key={index}
+                                          className="rounded-lg border px-3 py-2"
+                                        >
+                                          {taskKey(entry.task_id)} ·{' '}
+                                          {entry.member_id
+                                            ? nameOfMember(entry.member_id)
+                                            : '미배정'}{' '}
+                                          · {itemKey(entry.design_item_id)}
+                                          {entry.validation_id &&
+                                            ' · 관련 검증 있음'}
+                                        </p>
+                                      ))
+                                    ) : (
+                                      <p className="text-muted-foreground">
+                                        {hasCurrentImpact(result)
+                                          ? '확인된 관계가 없어요.'
+                                          : '확인된 관계를 아직 판단할 수 없어요.'}
+                                      </p>
+                                    )}
+                                    <h4 className="font-semibold">
+                                      AI 후보 · 확정이나 승인이 아니에요
+                                    </h4>
+                                    {result.candidates.map(
+                                      (candidate, index) => (
+                                        <p
+                                          key={index}
+                                          className="rounded-lg border border-dashed px-3 py-2 leading-6"
+                                        >
+                                          {candidate.reason}
+                                          {candidate.member_id &&
+                                            ` · ${nameOfMember(candidate.member_id)}`}
+                                        </p>
+                                      ),
+                                    )}
+                                    <p className="text-xs text-muted-foreground">
+                                      후보가 없어도 영향이 없다는 뜻은 아니에요.
+                                      {result.generation?.origin ===
+                                        'TEMPLATE' &&
+                                        ' 지금 결과는 모델 분석이 아닌 예시 설명이에요.'}
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
-                            )
-                          }}
-                        </AsyncState>
-                      )}
-                      {tab === 'comments' && (
-                        <div className="grid gap-3 text-sm">
-                          {commentList.map((comment) => (
-                            <article
-                              key={comment.id}
-                              className="grid gap-0.5 rounded-xl border border-[#e7e9ee] px-3 py-[9px] text-[13px] leading-[19px]"
-                            >
-                              <p className="flex flex-wrap items-center gap-1.5">
-                                <strong className="font-semibold">
-                                  {nameOfAccount(comment.author_account_id)}
-                                </strong>
-                                {comment.kind === 'REVIEW_REQUEST' && (
-                                  <Tag tone={statusTone.IN_REVIEW}>
-                                    검토 요청
-                                  </Tag>
-                                )}
-                                {comment.mentioned_member_ids.length > 0 && (
+                              )
+                            }}
+                          </AsyncState>
+                        )}
+                        {tab === 'comments' && (
+                          <div className="grid gap-3 text-sm">
+                            {commentList.map((comment) => (
+                              <article
+                                key={comment.id}
+                                className="grid gap-0.5 rounded-xl border border-[#e7e9ee] px-3 py-[9px] text-[13px] leading-[19px]"
+                              >
+                                <p className="flex flex-wrap items-center gap-1.5">
+                                  <strong className="font-semibold">
+                                    {nameOfAccount(comment.author_account_id)}
+                                  </strong>
+                                  {comment.kind === 'REVIEW_REQUEST' && (
+                                    <Tag tone={statusTone.IN_REVIEW}>
+                                      검토 요청
+                                    </Tag>
+                                  )}
+                                  {comment.mentioned_member_ids.length > 0 && (
+                                    <span className="text-xs leading-[18px] text-muted-foreground">
+                                      →{' '}
+                                      {comment.mentioned_member_ids
+                                        .map(nameOfMember)
+                                        .join(', ')}
+                                    </span>
+                                  )}
+                                  <span className="flex-1" />
                                   <span className="text-xs leading-[18px] text-muted-foreground">
-                                    →{' '}
-                                    {comment.mentioned_member_ids
-                                      .map(nameOfMember)
-                                      .join(', ')}
+                                    {formatDate(comment.created_at)}
                                   </span>
-                                )}
-                                <span className="flex-1" />
-                                <span className="text-xs leading-[18px] text-muted-foreground">
-                                  {formatDate(comment.created_at)}
-                                </span>
+                                </p>
+                                <p className="whitespace-pre-wrap">
+                                  {comment.body}
+                                </p>
+                              </article>
+                            ))}
+                            {comments.hasNextPage && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void comments.fetchNextPage()}
+                              >
+                                의견 더 보기
+                              </Button>
+                            )}
+                            {/* 서버는 발행·철회된 제안의 의견을 409 invalid_transition으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-6). */}
+                            {['PUBLISHED', 'WITHDRAWN'].includes(
+                              current.status,
+                            ) ? (
+                              <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+                                끝난 제안이라 댓글을 달 수 없어요.
                               </p>
-                              <p className="whitespace-pre-wrap">
-                                {comment.body}
-                              </p>
-                            </article>
-                          ))}
-                          {comments.hasNextPage && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void comments.fetchNextPage()}
-                            >
-                              의견 더 보기
-                            </Button>
-                          )}
-                          {/* 서버는 발행·철회된 제안의 의견을 409 invalid_transition으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-6). */}
-                          {['PUBLISHED', 'WITHDRAWN'].includes(
-                            current.status,
-                          ) ? (
-                            <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
-                              끝난 제안이라 댓글을 달 수 없어요.
+                            ) : (
+                              // 서버는 대상이 없는 검토 요청을 400으로 거절하므로(DOC-LIVE-5) 폼이 한 명 이상 고르게 한다. 받을 팀원은 본인을 뺀다.
+                              <ProposalCommentForm
+                                members={people
+                                  .filter(
+                                    (member) =>
+                                      member.account_id !== session.data?.id,
+                                  )
+                                  .map((member) => ({
+                                    id: member.id,
+                                    name: member.name,
+                                  }))}
+                                onSubmit={({ kind, body, memberIds }) =>
+                                  action.run(
+                                    () =>
+                                      changesApi.comment(
+                                        projectId,
+                                        current.id,
+                                        {
+                                          body,
+                                          kind,
+                                          ...(memberIds.length
+                                            ? {
+                                                mentioned_member_ids: memberIds,
+                                              }
+                                            : {}),
+                                        },
+                                      ),
+                                    kind === 'REVIEW_REQUEST'
+                                      ? `${memberIds.length}명에게 검토를 요청했어요.`
+                                      : '의견을 남겼어요.',
+                                  )
+                                }
+                              />
+                            )}
+                            <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              의견은 승인과 달라요. 승인은 팀장이 해요.
                             </p>
-                          ) : (
-                            // 서버는 대상이 없는 검토 요청을 400으로 거절하므로(DOC-LIVE-5) 폼이 한 명 이상 고르게 한다. 받을 팀원은 본인을 뺀다.
-                            <ProposalCommentForm
-                              members={people
-                                .filter(
-                                  (member) =>
-                                    member.account_id !== session.data?.id,
-                                )
-                                .map((member) => ({
-                                  id: member.id,
-                                  name: member.name,
-                                }))}
-                              onSubmit={({ kind, body, memberIds }) =>
-                                action.run(
-                                  () =>
-                                    changesApi.comment(projectId, current.id, {
-                                      body,
-                                      kind,
-                                      ...(memberIds.length
-                                        ? { mentioned_member_ids: memberIds }
-                                        : {}),
-                                    }),
-                                  kind === 'REVIEW_REQUEST'
-                                    ? `${memberIds.length}명에게 검토를 요청했어요.`
-                                    : '의견을 남겼어요.',
-                                )
-                              }
-                            />
-                          )}
-                          <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            의견은 승인과 달라요. 승인은 팀장이 해요.
-                          </p>
-                        </div>
-                      )}
-                      {tab === 'activity' && (
-                        <ProposalActivity
-                          key={current.id}
-                          projectId={projectId}
-                          proposalId={current.id}
-                          onShowComments={() => setTab('comments')}
-                        />
-                      )}
+                          </div>
+                        )}
+                        {tab === 'activity' && (
+                          <ProposalActivity
+                            key={current.id}
+                            projectId={projectId}
+                            proposalId={current.id}
+                            onShowComments={() => setTab('comments')}
+                          />
+                        )}
+                      </div>
                     </div>
                     {/* 서버는 팀장이어도 작성자면 거두게 한다(PR #72 5차 조사 FIFTH-DOC-02). */}
                     {mine && (editable || current.status === 'REJECTED') && (
@@ -1814,8 +1751,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         )}
                       </div>
                     )}
+                    {/* 승인·반려는 탭 내용이 길어도 상세 카드 바닥에 붙어 있다. 상세 카드가 스크롤하는 칸이라(S15P31A108-431) 카드 안쪽 여백(p-5)만큼
+                        내려 카드 끝까지 덮고, 바탕도 카드와 같은 흰색이다. */}
                     {isLeader && editable && (
-                      <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
+                      <div className="sticky -bottom-5 z-10 -mx-5 -mb-5 flex flex-wrap items-center justify-end gap-2 border-t bg-card px-5 pt-3 pb-5">
                         {current.requires_refresh && (
                           <span className="mr-auto text-xs text-muted-foreground">
                             제안자가 최신 기준으로 맞춘 뒤 승인할 수 있어요.
@@ -1889,12 +1828,6 @@ function Back({
   )
 }
 
-// 개요 카드(캔버스 PNL-04-v2 통일감 개선: 모서리 14px, 안쪽 16/18px, 머리 15px·700, 이동 버튼 13px·600 노란 글자)
-const overviewCard = 'rounded-[14px] border px-[18px] py-4'
-const overviewHead =
-  'mb-2.5 flex items-center justify-between gap-2 text-[15px] leading-[22px] font-bold'
-const overviewLink =
-  'text-[13px] font-semibold whitespace-nowrap text-[#8a6a00] hover:underline'
 // 바뀌는 내용 · 항목마다 한 줄로 접어 두고, 펼치면 기준 문장과 제안 문장을 −/+로 보여 준다.
 
 function Diff({

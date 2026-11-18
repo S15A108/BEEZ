@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { officeTimeAt, type OfficeTime } from '@/three/office/officeLook'
@@ -35,6 +35,8 @@ interface WorkspaceState {
   openTeamTasks: () => void
   /** 창 안에 열린 하위 화면(PaneSheet) 수. 열려 있으면 단축 바 숫자 키를 무시한다(D46). 저장하지 않는다. */
   sheets: number
+  /** 업무 창마다 보던 자리(연 문서·작업, 탭). useRemembered가 쓴다. 프로젝트를 떠나면 비우고 저장하지 않는다. */
+  paneMemory: Record<string, unknown>
   trackSheet: (open: boolean) => void
   setViewMode: (viewMode: 'first' | 'third') => void
   setOutdoor: (outdoor: boolean) => void
@@ -64,6 +66,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       openTeamTasks: () =>
         set({ pane: 'tasks', focusId: null, initialTaskTab: 'team' }),
       sheets: 0,
+      paneMemory: {},
       trackSheet: (open) =>
         set((state) => ({ sheets: state.sheets + (open ? 1 : -1) })),
       setViewMode: (viewMode) => set({ viewMode }),
@@ -115,7 +118,61 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 // 비운다. 남아 있으면 다음 프로젝트에서 이전 프로젝트의 작업 id로 상세를 열어 404 창이 뜬다(PR #72 4차 조사 FOURTH-UI-01).
 export function useClearPaneOnLeave() {
   const openPane = useWorkspaceStore((state) => state.openPane)
-  useEffect(() => () => openPane(null), [openPane])
+  useEffect(
+    () => () => {
+      openPane(null)
+      useWorkspaceStore.setState({ paneMemory: {} })
+    },
+    [openPane],
+  )
+}
+
+/**
+ * 업무 창을 다른 메뉴로 바꾸거나 닫았다 다시 열어도 보던 자리(연 문서·작업, 탭)를 잇는 useState(S15P31A108-431).
+ * 알림·근거처럼 대상을 정해 열면(focusId) 또는 fresh면 기억 대신 initial로 연다.
+ */
+export function useRemembered<T>(
+  key: string,
+  initial: T | (() => T),
+  fresh = false,
+  /**
+   * 기억에 남길 모양으로 고친다. 남길 때와 되살릴 때 모두 쓴다(되살릴 때는 늘 대상 없이 연 때다).
+   * 잠깐 거치는 화면이나 큰 값(파일 본문 등)을 기억에 남기지 않을 때 쓴다(PR #321 리뷰).
+   */
+  restore?: (value: T) => T,
+) {
+  const [value, setValue] = useState<T>(() => {
+    const { paneMemory, focusId } = useWorkspaceStore.getState()
+    if (!fresh && !focusId && key in paneMemory) {
+      const remembered = paneMemory[key] as T
+      return restore ? restore(remembered) : remembered
+    }
+    return initial instanceof Function ? initial() : initial
+  })
+  useEffect(() => {
+    useWorkspaceStore.setState((state) => ({
+      paneMemory: {
+        ...state.paneMemory,
+        [key]: restore ? restore(value) : value,
+      },
+    }))
+    // restore는 호출마다 새 함수일 수 있어 값이 바뀔 때만 남긴다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, value])
+  return [value, setValue] as const
+}
+
+/**
+ * 목록에서 고른 항목 {id, focus}. focus는 고를 때 열려 있던 알림·근거 대상이고, 패널은 지금 대상과 같을 때만 고른 항목을 쓴다.
+ * 다시 열 때는 대상 없이 열리므로 focus를 비워 되살린다. 알림으로 501을 연 뒤 502를 골랐다가 다시 열면 502가 열린다(PR #321 리뷰).
+ */
+export function useRememberedSelection(key: string) {
+  return useRemembered<{ id: string; focus: string | null } | null>(
+    key,
+    null,
+    false,
+    (value) => value && { ...value, focus: null },
+  )
 }
 
 const everyMinute = (onChange: () => void) => {

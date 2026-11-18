@@ -275,7 +275,7 @@ export function TeamPanel({
                           {/* 개인 색은 테두리와 옅은 바탕에만 쓰고, 글자는 기본 글자색으로 대비 4.5:1을 지킨다(S15P31A108-447). */}
                           <span
                             aria-hidden="true"
-                            className="grid size-8 shrink-0 place-items-center rounded-full border-2 text-xs font-bold text-foreground"
+                            className="grid size-8 shrink-0 place-items-center rounded-full border-2 text-caption font-bold text-foreground"
                             style={{
                               backgroundColor: `${member.color ?? '#e5b743'}25`,
                               borderColor: member.color ?? '#e5b743',
@@ -288,7 +288,7 @@ export function TeamPanel({
                               {member.name}
                               {mine ? ' · 나' : ''}
                             </strong>
-                            <span className="text-xs text-muted-foreground">
+                            <span className="text-caption text-muted-foreground">
                               {member.role === 'LEADER' ? '인간 팀장' : '팀원'}
                               {member.role_label
                                 ? ` · ${member.role_label}`
@@ -305,7 +305,7 @@ export function TeamPanel({
                         >
                           {member.domain ?? '담당 도메인 미등록'}
                         </span>
-                        <span className="inline-flex items-center gap-1.5 text-xs">
+                        <span className="inline-flex items-center gap-1.5 text-sub">
                           <span
                             aria-hidden="true"
                             className={`size-1.5 rounded-full ${agentDots[statusOf(member).status]}`}
@@ -429,11 +429,11 @@ export function TeamPanel({
                               </b>
                               {!invitation.accepted_at &&
                                 !invitation.revoked_at && (
-                                  <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-xs font-semibold">
+                                  <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-sub font-semibold">
                                     초대 중
                                   </span>
                                 )}
-                              <small className="mt-1 block text-muted-foreground">
+                              <small className="mt-1 block text-sub text-muted-foreground">
                                 {/* Q05(2026-10-29 확정): 초대받은 사람이 로그인·가입해야 팀원이 된다. 만료는 없다. */}
                                 {invitation.accepted_at
                                   ? `참여함 · ${formatDate(invitation.accepted_at)}`
@@ -511,8 +511,8 @@ export function TeamPanel({
                     small
                     note={
                       typeof lot === 'number' && (
-                        <p className="grid justify-items-center gap-1 text-center text-xs leading-[17px] text-[#6b6658]">
-                          <span className="inline-flex h-[22px] items-center rounded-full bg-white px-2 font-semibold text-foreground">
+                        <p className="grid justify-items-center gap-1 text-center text-sub text-[#6b6658]">
+                          <span className="inline-flex min-h-[22px] items-center rounded-full bg-white px-2 font-semibold text-foreground">
                             지금 부지 {lot + 1}
                           </span>
                           자리는 그대로예요. 건물 디자인은 이 브라우저에만
@@ -591,7 +591,7 @@ export function TeamPanel({
                       </dd>
                     </div>
                   </dl>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sub text-muted-foreground">
                     프로젝트 이름·소개·건물은 팀장만 바꿀 수 있어요.
                   </p>
                 </div>
@@ -951,9 +951,9 @@ function HandoverTasks({ name, query }: { name: string; query: OpenTasks }) {
               {name}님이 맡은 열린 작업 {openTaskCount(page)}
             </p>
             {page.items.length > 0 && (
-              <ul className="grid gap-1">
+              <ul className="divide-y border-y">
                 {page.items.map((task) => (
-                  <li key={task.id} className="rounded-lg border px-3 py-2">
+                  <li key={task.id} className="py-2">
                     {task.key} · {task.current_plan_revision.plan.title}
                   </li>
                 ))}
@@ -962,7 +962,7 @@ function HandoverTasks({ name, query }: { name: string; query: OpenTasks }) {
           </>
         )}
       </AsyncState>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-sub text-muted-foreground">
         넘기면 진행 중인 작업은 대기(재검증)로 바뀌고 넘겨받은 동료가 다시
         검증받아요. 고르지 않으면 상태는 그대로 두고 담당자만 비워요.
       </p>
@@ -981,7 +981,7 @@ function LeaveWarning({ query }: { query: OpenTasks }) {
     )
   if (!query.data?.items.length) return null
   return (
-    <div className="flex gap-2.5 rounded-xl border border-primary/50 bg-primary/10 p-4 text-sm">
+    <div className="flex gap-2.5 rounded-xl bg-muted p-4 text-sm">
       <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" />
       <div>
         <strong className="font-semibold">
@@ -1079,17 +1079,17 @@ function InviteForm({ projectId }: { projectId: string }) {
         {...register('message')}
       />
       {error ? (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-sub text-destructive">
           {error.message}
         </p>
       ) : (
-        <span className="text-xs text-muted-foreground">
+        <span className="text-sub text-muted-foreground">
           받은 사람이 같은 이메일로 로그인하거나 가입하면 팀원이 돼요. 들어오기
           전까지는 &apos;초대 중&apos;으로 보여요.
         </span>
       )}
       {results.length > 0 && (
-        <ul aria-label="초대 결과" className="grid gap-0.5 text-xs">
+        <ul aria-label="초대 결과" className="grid gap-0.5 text-sub">
           {results.map((result) => (
             <li key={result.email}>
               {result.email} · {inviteResultLabels[result.status]}

@@ -145,14 +145,14 @@ function City() {
                     type="search"
                     aria-label="프로젝트 검색"
                     placeholder="프로젝트 이름 검색"
-                    className="w-[220px] max-w-full pl-8 text-[12.5px] md:text-[12.5px]"
+                    className="w-[220px] max-w-full pl-8 text-sub md:text-sub"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                   />
                 </div>
                 <NativeSelect
                   aria-label="정렬"
-                  className="[&_select]:text-[12.5px]"
+                  className="[&_select]:text-sub"
                   value={sort}
                   onChange={(event) =>
                     setSort(event.target.value as typeof sort)
@@ -231,7 +231,7 @@ function City() {
               )}
             </section>
             {/* 조작 안내는 도시 밖 아래 한 줄. 도시 위에 두면 나무·건물에 가렸다(S15P31A108-446). */}
-            <p className="mt-2 text-xs break-keep text-muted-foreground">
+            <p className="mt-2 text-sub break-keep text-muted-foreground">
               끌거나 휠로 고리 돌리기 · 새 프로젝트 다음은 다시 1번 · 부지를
               눌러 선택
             </p>
@@ -274,7 +274,7 @@ function City() {
                       <strong className="truncate text-base font-bold">
                         {project.name}
                       </strong>
-                      <span className="line-clamp-2 text-[13px] leading-[19px] wrap-anywhere break-keep text-[#57534e]">
+                      <span className="line-clamp-2 text-sub leading-[19px] wrap-anywhere break-keep text-[#57534e]">
                         {project.description || NO_DESCRIPTION}
                       </span>
                     </span>
@@ -363,7 +363,7 @@ function City() {
                 },
               ]}
               footer={
-                <p className="rounded-[10px] bg-[#fbfaf6] px-3 py-2.5 text-[13px] leading-5 text-[#57534e]">
+                <p className="rounded-[10px] bg-[#fbfaf6] px-3 py-2.5 text-sub text-[#57534e]">
                   만든 뒤 문서 초안 4종(기획안 · ERD · 요구사항 명세서 · API
                   명세서)을 올리고 팀장이 모두 승인하면 '설계 초안 만들기'로
                   기획 분석에서 설계를 정하고 시작해요.

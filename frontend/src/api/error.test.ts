@@ -28,7 +28,7 @@ it('최초 기준 만들기 거절 코드마다 할 일을 알려 준다', () =>
     '아직 승인하지 않은 문서가 있어요',
   )
   expect(getApiErrorMessage(failure('baseline_exists'))).toContain(
-    '이미 기준 v1이 있어요',
+    '이미 설계 기준 v1이 있어요',
   )
 })
 

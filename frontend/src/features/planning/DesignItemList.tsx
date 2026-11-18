@@ -16,6 +16,7 @@ const descriptionOf = (item: DesignItemVersion) =>
     : JSON.stringify(item.content, null, 2)
 
 // 기획 분석의 '설계 항목 초안' 탭. 왼쪽은 항목 키와 한 줄 설명, 오른쪽은 고른 항목의 내용과 수정·제외다.
+// 기준 설계가 발행된 뒤에는 baselineVersion 을 넘겨 그 기준의 승인 항목을 읽기만 한다. 바꾸는 길은 변경 제안뿐이다.
 export function DesignItemList({
   items,
   hasNextPage,
@@ -23,6 +24,7 @@ export function DesignItemList({
   loadNext,
   isLeader,
   busy,
+  baselineVersion,
   onAdd,
   onEdit,
   onRemove,
@@ -33,17 +35,19 @@ export function DesignItemList({
   loadNext: () => void
   isLeader: boolean
   busy: boolean
-  onAdd: () => void
-  onEdit: (item: DesignItemVersion) => void
-  onRemove: (item: DesignItemVersion) => void
+  baselineVersion?: number
+  onAdd?: () => void
+  onEdit?: (item: DesignItemVersion) => void
+  onRemove?: (item: DesignItemVersion) => void
 }) {
+  const editable = isLeader && baselineVersion === undefined
   // 고른 항목은 항목 ID로 기억한다. 내용을 고치면 버전 ID가 바뀌어도 같은 항목을 계속 보인다.
   const [focusedId, setFocusedId] = useState<string>()
   const list = useShowMore(items, 20)
   const focused =
     items.find((item) => item.design_item_id === focusedId) ?? items[0]
-  const add = isLeader && (
-    <Button size="sm" variant="outline" onClick={onAdd}>
+  const add = editable && (
+    <Button size="sm" variant="outline" onClick={() => onAdd?.()}>
       <Plus />
       항목 추가
     </Button>
@@ -52,8 +56,9 @@ export function DesignItemList({
     return (
       <EmptyState className={SPLIT_HEIGHT}>
         <p>
-          아직 설계 항목 초안이 없어요. 후보를 채택하거나 항목을 직접 추가하면
-          여기에 쌓여요.
+          {baselineVersion === undefined
+            ? '아직 설계 항목 초안이 없어요. 후보를 채택하거나 항목을 직접 추가하면 여기에 쌓여요.'
+            : `기준 설계 v${baselineVersion}에 든 설계 항목이 없어요.`}
         </p>
         {add}
       </EmptyState>
@@ -63,7 +68,10 @@ export function DesignItemList({
       header={
         <>
           <span className="text-[13px] text-muted-foreground">
-            초안 {items.length}
+            {baselineVersion === undefined
+              ? '초안'
+              : `기준 v${baselineVersion} 항목`}{' '}
+            {items.length}
             {hasNextPage ? '개 이상' : '개'}
           </span>
           {add && <span className="ml-auto">{add}</span>}
@@ -113,7 +121,9 @@ export function DesignItemList({
                   if (list.hidden === 0 && hasNextPage) loadNext()
                 }}
               >
-                다음 항목 검토
+                {baselineVersion === undefined
+                  ? '다음 항목 검토'
+                  : '다음 항목 보기'}
                 {list.hidden > 0 ? ` (${list.hidden}개 남음)` : ''}
               </Button>
             </div>
@@ -128,7 +138,9 @@ export function DesignItemList({
                 <Tag>{statusLabel(focused.kind)}</Tag>
                 <StatusPill value={focused.status} />
                 <span className="ml-1 text-xs text-muted-foreground">
-                  승인 전까지 프로젝트 정책으로 쓰지 않아요.
+                  {baselineVersion === undefined
+                    ? '승인 전까지 프로젝트 정책으로 쓰지 않아요.'
+                    : `기준 설계 v${baselineVersion}의 승인 항목이에요. 바꾸려면 변경 제안을 올려 주세요.`}
                 </span>
               </div>
               <h3 className="mt-3 text-xl leading-8 font-semibold tracking-tight break-words">
@@ -144,12 +156,12 @@ export function DesignItemList({
                 </p>
               )}
             </div>
-            {isLeader && (
+            {editable && (
               <div className={DETAIL_FOOTER}>
                 <Button
                   variant="ghost"
                   disabled={busy || !focused.content_hash}
-                  onClick={() => onRemove(focused)}
+                  onClick={() => onRemove?.(focused)}
                 >
                   발행 대상에서 제외
                 </Button>
@@ -157,7 +169,7 @@ export function DesignItemList({
                   variant="outline"
                   className="ml-auto"
                   disabled={busy || !focused.content_hash}
-                  onClick={() => onEdit(focused)}
+                  onClick={() => onEdit?.(focused)}
                 >
                   <Pencil />
                   내용 수정
