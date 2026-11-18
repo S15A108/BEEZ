@@ -414,6 +414,12 @@ export function WorkspaceHud({
   const [picked, setPicked] = useState<string>()
   const [showDone, setShowDone] = useState(false)
   const [teamOpen, setTeamOpen] = useState(false)
+  // 1280px 미만에서는 '지금 할 일'을 접은 채 시작해 3D 장면과 이름표를 덜 가린다(S15P31A108-443). matchMedia 가 없는 jsdom 은 펼친다.
+  const [todoOpen, setTodoOpen] = useState(
+    () =>
+      typeof window.matchMedia !== 'function' ||
+      window.matchMedia('(min-width: 1280px)').matches,
+  )
   const doneSteps = steps.filter((step) => step.done)
   // 남은 단계가 모두 잠겼으면(시작을 기다리는 팀원) 첫 잠긴 단계를 기다림 카드로 크게 보이고 잠긴 이유를 적는다.
   const focus =
@@ -879,7 +885,8 @@ export function WorkspaceHud({
         aria-labelledby="todo-title"
         data-tour="todo"
         hidden={chatOpen}
-        className="pointer-events-auto absolute top-17 right-4 z-10 w-85 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur"
+        // 304px: 1024에서 두 패널 사이 3D 장면을 넓힌다(S15P31A108-443, 전에는 340px).
+        className="pointer-events-auto absolute top-17 right-4 z-10 w-76 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur"
       >
         {guideOpen ? (
           <>
@@ -1074,16 +1081,33 @@ export function WorkspaceHud({
           </>
         ) : (
           <>
-            <h2
-              id="todo-title"
-              className="flex items-center justify-between px-1 text-sm font-bold"
-            >
-              지금 할 일
-              <span className="text-xs text-muted-foreground">
-                {todos.length}
-              </span>
+            <h2 id="todo-title" className="text-sm font-bold">
+              <button
+                type="button"
+                aria-expanded={todoOpen}
+                aria-controls="hud-todo-list"
+                onClick={() => setTodoOpen((value) => !value)}
+                className="flex w-full items-center justify-between rounded-lg px-1 py-0.5 hover:bg-muted"
+              >
+                지금 할 일
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  {todos.length}
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={cn(
+                      'size-3.5 transition-transform',
+                      todoOpen && 'rotate-180',
+                    )}
+                  />
+                </span>
+              </button>
             </h2>
-            <ul className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-1">
+            <ul
+              id="hud-todo-list"
+              aria-label="지금 할 일 목록"
+              hidden={!todoOpen}
+              className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-1"
+            >
               {todos.map((todo) => (
                 <li
                   key={todo.key}

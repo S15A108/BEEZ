@@ -53,6 +53,7 @@ beforeEach(async () => {
 afterEach(() => {
   restore()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 // 예시 데이터를 읽고 상황에 맞게 바꿔 HUD를 그린다. 102는 문서 4종을 초안으로 올린 시작 전 프로젝트, 101은 시작한 프로젝트다.
@@ -403,4 +404,43 @@ it('사람 줄은 접속 상태를, 에이전트 줄은 연결 상태를 이름�
   const recheck = lineOf('박팀원의 에이전트')
   expect(recheck).toMatch(/^연결 미확인 · 마지막 보고 /)
   expect(recheck).not.toMatch(/오프라인|연결 끊김/)
+})
+
+// S15P31A108-443: 1024px에서 340px '지금 할 일'이 3D 장면과 이름표를 가렸다.
+it('1280px 미만에서는 지금 할 일이 접힌 채 시작하고 제목을 누르면 펼쳐진다', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
+  const user = userEvent.setup()
+  await renderHud()
+  const toggle = screen.getByRole('button', { name: /^지금 할 일/ })
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(
+    screen.queryByRole('list', { name: '지금 할 일 목록' }),
+  ).not.toBeInTheDocument()
+  await user.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(
+    screen.getByRole('list', { name: '지금 할 일 목록' }),
+  ).toBeInTheDocument()
+})
+
+it('1280px 이상에서는 지금 할 일이 펼쳐진 채 시작한다', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: true,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
+  await renderHud()
+  expect(screen.getByRole('button', { name: /^지금 할 일/ })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  expect(
+    screen.getByRole('list', { name: '지금 할 일 목록' }),
+  ).toBeInTheDocument()
 })
