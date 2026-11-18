@@ -1,11 +1,11 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { authApi } from '@/api/services'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { agentsApi, authApi } from '@/api/services'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -27,7 +27,10 @@ beforeEach(async () => {
   restore = setupMockApi()
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
 })
-afterEach(() => restore())
+afterEach(() => {
+  restore()
+  vi.restoreAllMocks()
+})
 
 // 헤더·설정 창의 '회원 설정' 링크처럼 지금 주소에서 창을 연다.
 function Screen() {
@@ -174,4 +177,36 @@ it("프로필을 고치던 중에 탈퇴 화면의 '팀장 위임'을 누르면 
   await user.click(screen.getByRole('button', { name: '버리고 닫기' }))
   expect(address()).toHaveTextContent(/^주소 \/projects\/101\?settings=team$/)
   expect(dialog()).not.toBeInTheDocument()
+})
+
+// PR #316 머지 뒤 리뷰: 저장 중에 링크로 떠나며 '버리고 닫기'를 고르면, 창이 닫힌 뒤 저장이 끝나 바꾼 캐릭터가 그대로 저장됐다.
+it('프로필을 저장하는 중에는 토큰의 프로젝트 링크를 눌러도 묻지 않고 창에 남는다', async () => {
+  await agentsApi.issueToken('101', { label: '내 PC' })
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const updateMe = authApi.updateMe
+  vi.spyOn(authApi, 'updateMe').mockImplementation(async (...args) => {
+    await held
+    return updateMe(...args)
+  })
+  const { user } = renderAt('/?account=profile')
+  await user.click(await screen.findByRole('radio', { name: '로봇' }))
+  await user.click(screen.getByRole('button', { name: '프로필 저장' }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '닫기' })).toBeDisabled(),
+  )
+  const project = within(await screen.findByRole('table')).getByRole('link')
+  await user.click(project)
+  expect(
+    screen.queryByRole('dialog', { name: '고치던 프로필을 닫을까요?' }),
+  ).not.toBeInTheDocument()
+  expect(address()).toHaveTextContent(/^주소 \/\?account=profile$/)
+
+  // 저장이 끝나면 고치던 것이 없으니 링크가 바로 그 프로젝트로 간다.
+  act(() => release())
+  expect(await screen.findByText('저장했어요')).toBeInTheDocument()
+  await user.click(project)
+  expect(address()).toHaveTextContent(/^주소 \/projects\/101$/)
 })
