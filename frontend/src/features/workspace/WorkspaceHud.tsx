@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
   ChevronLeft,
+  ChevronRight,
   CircleHelp,
   Lock,
   MapPin,
@@ -598,9 +599,97 @@ export function WorkspaceHud({
         .filter(Boolean)
         .join(' · ')
     : '승인을 기다리는 제안이 있어요'
-  const firstUnread = unreadItems[0]
   const firstReady = readyTasks[0]
   const orphans = unassigned.data?.items ?? []
+  // [시제품 444] 할 일 = 상태에서 나온 항목만. 같은 대상의 안 읽은 알림은 항목에 접고, 나머지는 '새 소식'.
+  const openReviews = (reviewList.data?.items ?? []).filter((item) =>
+    ['PROPOSED', 'IN_REVIEW'].includes(item.status),
+  )
+  const myMeetings = (
+    meetingList.data?.pages.flatMap((page) => page.items) ?? []
+  ).filter(
+    (meeting) =>
+      meeting.status !== 'CLOSED' &&
+      meeting.participants.some(
+        (item) => item.member_id === me?.id && item.status !== 'DECLINED',
+      ),
+  )
+  type Item = {
+    key: string
+    kind: string
+    title: string
+    meta: string
+    targets: string[]
+    open: () => void
+  }
+  const unreadOf = (targets: string[]) =>
+    unreadItems.filter((item) =>
+      targets.includes(`${item.target_type}:${item.target_id}`),
+    )
+  const items = (
+    [
+      unassigned.data &&
+        orphans.length > 0 && {
+          key: 'unassigned',
+          kind: '담당자 정하기',
+          title: `담당자 없는 작업 ${openTaskCount(unassigned.data)}`,
+          meta: orphans
+            .slice(0, 3)
+            .map((task) => task.key)
+            .join(', '),
+          targets: orphans.map((task) => `TASK:${task.id}`),
+          open: () => openPane('tasks', orphans[0].id),
+        },
+      isLeader &&
+        reviewCount > 0 && {
+          key: 'review',
+          kind: '변경 검토',
+          title: firstReview?.title ?? `변경 제안 ${reviewCount}건`,
+          meta: [reviewSummary, reviewCount > 1 && `외 ${reviewCount - 1}건`]
+            .filter(Boolean)
+            .join(' · '),
+          targets: openReviews.map((item) => `CHANGE_PROPOSAL:${item.id}`),
+          open: () => openPane('changes', firstReview?.id),
+        },
+      ...myMeetings.map((meeting) => ({
+        key: `meeting-${meeting.id}`,
+        kind: '회의',
+        title: meeting.title,
+        meta: meeting.origin === 'BEE_CONFLICT' ? '비비가 엶' : '진행 중',
+        targets: [`MEETING:${meeting.id}`],
+        open: () => openPane('meetings', meeting.id),
+      })),
+      firstReady && {
+        key: 'ready',
+        kind: '작업 시작',
+        title: `${firstReady.key} ${firstReady.current_plan_revision.plan.title}`,
+        meta: [
+          `계획 r${firstReady.current_plan_revision.revision_no} 검증 통과`,
+          readyTasks.length > 1 && `외 ${readyTasks.length - 1}건`,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        targets: readyTasks.map((task) => `TASK:${task.id}`),
+        open: () => openPane('tasks', firstReady.id),
+      },
+    ] satisfies (Item | false | undefined)[]
+  ).flatMap((item) => (item ? [item] : []))
+  // 가이드가 할 일 자리를 차지하는 동안은 할 일 줄이 없으니 접지 않고 모두 새 소식으로 보인다.
+  const folded = new Set(
+    guideOpen
+      ? []
+      : items.flatMap((item) => unreadOf(item.targets).map((n) => n.id)),
+  )
+  const news = unreadItems.filter((item) => !folded.has(item.id))
+  const markRead = (ids: string[]) => {
+    if (!ids.length) return
+    void inboxApi
+      .markRead({ ids })
+      .then(() =>
+        queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      )
+  }
+  const firstUnread = undefined as (typeof unreadItems)[number] | undefined
   const todos = (
     [
       // 담당자가 나가거나 제외돼 빈 열린 작업(SCR-06-v2-workspace-unassigned). 팀장은 정하고, 팀원은 열어서 맡는다.
@@ -856,7 +945,7 @@ export function WorkspaceHud({
         shortcutsOff={tour !== null}
         locked={started ? [] : ['changes', 'meetings', 'tasks', 'relations']}
         lockedReason="프로젝트를 시작하면 열려요"
-        badges={{ changes: reviewCount, meetings: meetingCount }}
+        badges={{}}
         highlight={isLeader && !allUploaded ? 'documents' : undefined}
       />
       <div
@@ -872,7 +961,6 @@ export function WorkspaceHud({
         >
           <CircleHelp />
         </Button>
-        <InboxPopover projectId={project.id} />
         <span className="relative">
           <Button
             size="icon"
@@ -1066,96 +1154,120 @@ export function WorkspaceHud({
           </>
         ) : (
           <>
-            <h2
-              id="todo-title"
-              className="flex items-center justify-between px-1 text-sm font-bold"
-            >
-              지금 할 일
-              <span className="text-xs text-muted-foreground">
-                {todos.length}
-              </span>
-            </h2>
-            <ul className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-1">
-              {todos.map((todo) => (
-                <li
-                  key={todo.key}
-                  className={cn(
-                    'flex min-w-0 gap-2.5 rounded-xl p-2.5',
-                    todo.tone === 'review' && 'bg-primary/15',
-                  )}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-extrabold',
-                      todo.tone === 'review' &&
-                        'bg-primary text-primary-foreground',
-                      todo.tone === 'alert' && 'bg-red-100 text-red-700',
-                      todo.tone === 'done' && 'bg-green-100 text-green-700',
-                    )}
+            {!guideOpen && (
+              <h2
+                id="todo-title"
+                className="flex items-baseline justify-between px-1 text-sm font-bold"
+              >
+                할 일
+                <span className="text-xs font-normal text-muted-foreground">
+                  {items.length}
+                </span>
+              </h2>
+            )}
+            <ul className="mt-1 grid grid-cols-[minmax(0,1fr)]">
+              {items.map((item) => {
+                const related = unreadOf(item.targets)
+                return (
+                  <li
+                    key={item.key}
+                    className="border-b border-border/70 last:border-0"
                   >
-                    {todo.mark}
-                  </span>
-                  <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-1">
-                    <strong
-                      title={todo.title}
-                      className="truncate text-[13px] leading-[18px]"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        markRead(related.map((n) => n.id))
+                        item.open()
+                      }}
+                      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-2 py-2.5 text-left hover:bg-muted"
                     >
-                      {todo.title}
-                    </strong>
-                    <span
-                      title={todo.detail}
-                      className="truncate text-xs text-muted-foreground"
-                    >
-                      {todo.detail}
-                    </span>
-                    {todo.preview && (
-                      <div className="rounded-lg bg-card px-2 py-1.5 text-xs leading-[17px]">
-                        {todo.preview.before && (
-                          <span
-                            title={todo.preview.before}
-                            className="block truncate text-red-700"
-                          >
-                            − {todo.preview.before}
+                      <span className="col-start-1 text-xs font-semibold text-[#7a5d00]">
+                        {item.kind}
+                        {related.length > 0 && (
+                          <span className="ml-1.5 font-normal text-muted-foreground">
+                            새 알림 {related.length}
                           </span>
                         )}
-                        {todo.preview.after && (
-                          <span
-                            title={todo.preview.after}
-                            className="block truncate text-green-700"
-                          >
-                            + {todo.preview.after}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {todo.note && (
-                      <span
-                        title={todo.note}
-                        className="truncate text-xs text-muted-foreground"
-                      >
-                        {todo.note}
                       </span>
-                    )}
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="justify-self-end"
-                      onClick={todo.open}
-                    >
-                      {todo.action}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-              {!todos.length && (
-                <li className="p-2 text-xs text-muted-foreground">
+                      <ChevronRight
+                        aria-hidden="true"
+                        className="col-start-2 row-span-3 row-start-1 size-4 text-muted-foreground"
+                      />
+                      <strong
+                        title={item.title}
+                        className="col-start-1 truncate text-sm"
+                      >
+                        {item.title}
+                      </strong>
+                      <span
+                        title={item.meta}
+                        className="col-start-1 truncate text-xs text-muted-foreground"
+                      >
+                        {item.meta}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+              {!items.length && (
+                <li className="px-2 py-3 text-xs text-muted-foreground">
                   지금 처리할 일이 없어요.
                 </li>
               )}
             </ul>
           </>
         )}
+        <div className="mt-1 grid gap-0.5 border-t pt-2">
+          {news.length > 0 && (
+            <>
+              <p className="px-2 text-xs font-semibold">
+                새 소식{' '}
+                <span className="font-normal text-muted-foreground">
+                  {news.length}
+                  {unread.data?.has_more ? '+' : ''}
+                </span>
+              </p>
+              <ul className="grid grid-cols-[minmax(0,1fr)]">
+                {news.slice(0, 2).map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        markRead([item.id])
+                        openPane(targetPane[item.target_type], targetFocus(item))
+                      }}
+                      className="flex w-full min-w-0 gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="mt-1.5 size-1.5 shrink-0 rounded-full bg-foreground/70"
+                      />
+                      <span className="grid min-w-0">
+                        <span className="truncate text-[13px]">
+                          {item.title}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {targetLabel[item.target_type]} ·{' '}
+                          {formatAgo(item.created_at)}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => openPane('inbox')}
+            className="flex items-center justify-between rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {news.length > 2
+              ? `알림함에서 ${news.length - 2}건 더 보기`
+              : '알림함 열기'}
+            <ChevronRight aria-hidden="true" className="size-3.5" />
+          </button>
+        </div>
       </section>
       <TourGuide accountId={me?.account_id} mode={tour} onChange={setTour} />
       {notice && (
