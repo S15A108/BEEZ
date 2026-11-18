@@ -23,10 +23,9 @@ const hotbarSlots = [
 ] satisfies { pane: WorkspacePane; label: string; icon: typeof FileText }[]
 
 // 단축 바 D안(캔버스 v437~438 이름 보이는 얇은 핫바): 높이 44 바에 칸을 하나씩 떼어 숫자 키캡·아이콘·이름을 늘 보이고,
-// 비비는 가운데 80px 둥근 버튼(Enter, 캔버스 v483). 배지는 칸 오른쪽 위.
+// 비비는 가운데 80px 둥근 버튼(Enter, 캔버스 v483). 숫자 배지는 두지 않는다. 검토·회의는 사무실 '할 일'에서 본다(S15P31A108-444).
 export function Hotbar({
   locked,
-  badges,
   highlight,
   lockedReason = '문서 4종을 올리면 열려요',
   shortcutsOff,
@@ -37,7 +36,6 @@ export function Hotbar({
   locked: WorkspacePane[]
   /** 잠긴 칸을 눌렀을 때 알려 줄 이유 */
   lockedReason?: string
-  badges: Partial<Record<WorkspacePane, number>>
   /** '여기부터 시작' 표시를 붙일 칸 */
   highlight?: WorkspacePane
 }) {
@@ -82,7 +80,6 @@ export function Hotbar({
     // '여기부터 시작' 강조 칸은 밝은 노란 바탕이라, 열린 칸이어도 열린 칸의 흰 글자·번호 대신 검정 글자를 쓴다(사용자 요청 11-02).
     const highlighted = highlight === item.pane
     const dark = isOpen && !highlighted
-    const badge = badges[item.pane]
     return (
       <button
         key={item.pane}
@@ -132,14 +129,6 @@ export function Hotbar({
             />
           </span>
         )}
-        {badge ? (
-          <span
-            aria-label={`새 항목 ${badge}개`}
-            className="absolute -top-2 -right-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[#e7000b] px-[5px] text-[11px] font-bold text-white shadow-[0_0_0_2px_#fff]"
-          >
-            {badge}
-          </span>
-        ) : null}
       </button>
     )
   }

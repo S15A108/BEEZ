@@ -20,7 +20,7 @@ function Workspace() {
   const pane = useWorkspaceStore((state) => state.pane)
   return (
     <QueryClientProvider client={client}>
-      <Hotbar locked={[]} badges={{}} />
+      <Hotbar locked={[]} />
       <Dialog open={pane === 'chat'}>
         <DialogContent>
           <DialogTitle>비비와 대화</DialogTitle>

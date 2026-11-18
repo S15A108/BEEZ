@@ -1,7 +1,7 @@
 import type { Notification } from '@/api/contracts/common'
 import type { WorkspacePane } from '@/stores/workspaceStore'
 
-// 알림 대상별로 여는 창과 그 이름. 벨 팝오버와 '지금 할 일'이 같이 쓴다.
+// 알림 대상별로 여는 창과 그 이름. 사무실 '할 일'의 새 소식과 알림함 창이 같이 쓴다.
 export const targetPane: Record<Notification['target_type'], WorkspacePane> = {
   CHANGE_PROPOSAL: 'changes',
   MEETING: 'meetings',
