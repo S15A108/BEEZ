@@ -42,7 +42,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-const rowClass = 'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2'
+// 승인 시트 안의 목록은 한 테두리 안에 줄로 나눈다(카드 안에 카드를 겹치지 않는다, 사용자 요청 11-17).
+const rowClass = 'flex flex-wrap items-center gap-2 px-3.5 py-2.5'
 
 // 승인 확인 화면의 '승인하면 같이 바뀌는 것'(CHG-A14). 읽기 전용 계산이라 아무것도 저장하지 않는다.
 export function ApprovalPreview({
@@ -90,7 +91,7 @@ export function ApprovalPreview({
             다시 검증이 필요해지는 검증이 없어요.
           </p>
         ) : (
-          <ul className="grid gap-1.5 text-sm">
+          <ul className="divide-y rounded-xl border text-sm">
             {preview.validations_to_stale.map((entry) => (
               <li key={entry.validation_id} className={rowClass}>
                 <Tag tone={operationTone.UPDATE}>다시 검증 필요</Tag>
@@ -108,7 +109,7 @@ export function ApprovalPreview({
             대기 · 재검증이 되는 진행 중 작업이 없어요.
           </p>
         ) : (
-          <ul className="grid gap-1.5 text-sm">
+          <ul className="divide-y rounded-xl border text-sm">
             {preview.tasks_to_wait.map((entry) => (
               <li key={entry.task_id} className={rowClass}>
                 <Tag tone={statusTone.IN_REVIEW}>대기 · 재검증</Tag>

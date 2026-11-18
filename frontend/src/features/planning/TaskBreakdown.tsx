@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { CircleCheck } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getApiErrorMessage,
@@ -21,7 +22,14 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 const isActive = (job: BreakdownJob | null | undefined) =>
   job?.status === 'PENDING' || job?.status === 'RUNNING'
 
-export function TaskBreakdown({ projectId }: { projectId: string }) {
+// 기준 설계가 생긴 뒤 팀장이 할 다음 일. notice 는 '프로젝트 시작' 직후의 성공 안내로, 이 카드 맨 위에 함께 보인다.
+export function TaskBreakdown({
+  projectId,
+  notice,
+}: {
+  projectId: string
+  notice?: string
+}) {
   const queryClient = useQueryClient()
   const openTeamTasks = useWorkspaceStore((state) => state.openTeamTasks)
   const queryKey = ['projects', projectId, 'task-breakdown'] as const
@@ -78,8 +86,17 @@ export function TaskBreakdown({ projectId }: { projectId: string }) {
   const submissionError = !active && generation.error
 
   return (
-    <Card>
+    <Card role="region" aria-label="승인 설계에서 작업 만들기">
       <CardHeader>
+        {notice && (
+          <p
+            role="status"
+            className="mb-1 flex items-center gap-1.5 text-sm font-medium text-[#00753a]"
+          >
+            <CircleCheck aria-hidden className="size-4 shrink-0" />
+            {notice}
+          </p>
+        )}
         <CardTitle>승인 설계에서 작업 만들기</CardTitle>
         <CardDescription>
           비비가 문서와 설계 항목을 구현 단위로 나누고, 팀원의 역할과 담당

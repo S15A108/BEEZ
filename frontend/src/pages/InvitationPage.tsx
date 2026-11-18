@@ -99,11 +99,12 @@ export default function InvitationPage() {
           </div>
         ) : (
           <>
-            <p className="text-[13px] font-medium text-muted-foreground">
+            <p className="text-sub font-medium text-muted-foreground">
               프로젝트 초대
             </p>
-            {/* MEM-A04 수정안 요청 필드(inviter·project_description·invited_email)는 서버가 줄 때만 보인다. */}
-            <div className="mt-3 rounded-2xl border p-5">
+            {/* MEM-A04 수정안 요청 필드(inviter·project_description·invited_email)는 서버가 줄 때만 보인다.
+                바깥 카드 안에 상자를 한 번 더 두지 않고 프로젝트 이름을 카드 제목으로 쓴다. */}
+            <div className="mt-1.5">
               <h2 className="text-2xl font-bold">
                 {invitation.data.project_name}
               </h2>
@@ -113,13 +114,13 @@ export default function InvitationPage() {
                 </p>
               )}
               {invitation.data.inviter && (
-                <p className="mt-3 text-[13px] text-[#57534e]">
+                <p className="mt-3 text-sub text-[#57534e]">
                   {invitation.data.inviter.name}님(
                   {invitation.data.inviter.email})이 초대했어요
                 </p>
               )}
               {invitation.data.invited_email && (
-                <p className="mt-1 text-[13px] text-[#57534e]">
+                <p className="mt-1 text-sub text-[#57534e]">
                   초대받은 이메일 {invitation.data.invited_email}
                 </p>
               )}
@@ -130,7 +131,7 @@ export default function InvitationPage() {
                   <>
                     <div
                       role="alert"
-                      className="mt-5 flex gap-2.5 rounded-[14px] border border-[#c99e1e]/45 bg-primary/12 p-4 text-sm leading-[22px]"
+                      className="mt-5 flex gap-2.5 rounded-[14px] bg-muted p-4 text-sm leading-[22px]"
                     >
                       <TriangleAlert className="mt-0.5 size-[18px] shrink-0 text-[#8a6a00]" />
                       <div>
@@ -166,7 +167,7 @@ export default function InvitationPage() {
                 )
               ) : (
                 <>
-                  <dl className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t px-1 pt-4 text-[13px]">
+                  <dl className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t px-1 pt-4 text-sub">
                     <dt className="text-muted-foreground">로그인한 계정</dt>
                     <dd>{session.data?.email}</dd>
                   </dl>
@@ -177,7 +178,7 @@ export default function InvitationPage() {
                     <LoaderCircle className="size-[18px] animate-spin text-[#8a6a00]" />
                     팀에 들어가는 중이에요
                   </p>
-                  <p className="mt-3 text-center text-[13px] text-muted-foreground">
+                  <p className="mt-3 text-center text-sub text-muted-foreground">
                     모르는 초대라면 들어간 뒤 설정에서 프로젝트를 나갈 수
                     있어요.
                   </p>

@@ -53,6 +53,32 @@ it('왼쪽에서 고른 작업 기준으로 확인된 관계와 검토할 후보
   ).toHaveTextContent('검토할 후보 · 확정 아님')
 })
 
+// PR #327 리뷰: 펼침 목록을 빼서 후보 대상은 마우스로 그래프 상자를 누를 때만 열렸다. 후보 줄에도 이동 버튼을 둔다.
+it('검토할 후보 줄에서도 대상 설계를 열 수 있다', async () => {
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RelationsView projectId="101" />
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  const list = await screen.findByRole('region', { name: '관계 목록' })
+  const candidate = (
+    await within(list).findByText(/프로젝트 목록 빈 화면 안내 → REQ-001/)
+  ).closest('li')!
+  expect(
+    within(candidate).getByRole('button', { name: '작업 계획 등록' }),
+  ).toBeInTheDocument()
+  await user.click(
+    within(candidate).getByRole('button', { name: '설계 보기 ›' }),
+  )
+  expect(useWorkspaceStore.getState().pane).toBe('planning')
+})
+
 it('위쪽에 고른 작업의 제목과 상태를 보여 주고 작업 현황으로 보낸다', async () => {
   const user = userEvent.setup()
   const { items } = await tasksApi.list('101', { limit: 100 })
@@ -96,6 +122,7 @@ it('그래프의 검증 상자를 누르면 고른 작업의 작업 현황을 �
     </QueryClientProvider>,
   )
   await user.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  await user.click(await screen.findByRole('button', { name: '그래프' }))
   const svg = await screen.findByRole('img', { name: /관계 그래프/ })
   await user.click(within(svg).getByText('계획 검증 PASS'))
   expect(useWorkspaceStore.getState()).toMatchObject({
@@ -195,6 +222,43 @@ it('이 작업에서 나온 제안(PROPOSED_FROM)만 있으면 영향 경고를 
   ).not.toBeInTheDocument()
 })
 
+// S15P31A108-449: 펼침 목록을 빼도 키보드로 제안까지 간다. 지금 작업으로 오는 관계는 반대쪽 끝을 연다.
+it('목록이 기본 보기이고, 이 작업에서 나온 제안의 제안 보기는 그 제안을 연다', async () => {
+  const { items } = await tasksApi.list('101', { limit: 100 })
+  const taskId = items.find((entry) => entry.key === 'TASK-001')!.id
+  vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>
+    query?.design_item_id
+      ? { nodes: [], edges: [] }
+      : {
+          nodes: taskGraph.nodes.map((node) =>
+            node.id === '501' ? { ...node, id: taskId } : node,
+          ),
+          edges: taskGraph.edges.map((edge) =>
+            edge.relation === 'PROPOSED_FROM'
+              ? { ...edge, to_id: taskId }
+              : { ...edge, from_id: taskId },
+          ),
+        },
+  )
+  const user = userEvent.setup()
+  renderView()
+  await user.click(await screen.findByRole('button', { name: /TASK-001/ }))
+  const list = await screen.findByRole('region', { name: '관계 목록' })
+  expect(screen.getByRole('button', { name: '목록' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(screen.queryByRole('img', { name: /관계 그래프/ })).toBeNull()
+  await user.click(within(list).getByRole('button', { name: '제안 보기 ›' }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'changes',
+    focusId: '71',
+  })
+  await user.click(screen.getByRole('button', { name: '그래프' }))
+  expect(screen.getByRole('img', { name: /관계 그래프/ })).toBeVisible()
+  expect(screen.queryByRole('region', { name: '관계 목록' })).toBeNull()
+})
+
 it('진행 중 제안이 참조 설계 항목을 바꾸면 항목 기준 관계로 영향 경고를 띄운다', async () => {
   vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>
     query?.design_item_id
@@ -286,7 +350,7 @@ it('작업이 없을 때 기준 v1 안내는 기준이 아직 없을 때만 붙�
       <RelationsView projectId="101" hasBaseline={false} />
     </QueryClientProvider>,
   )
-  expect(await screen.findByText(/기준 v1이 생기기 전에는/)).toBeVisible()
+  expect(await screen.findByText(/설계 기준 v1이 생기기 전에는/)).toBeVisible()
 })
 
 // PR #72 4차 TC-02: 진행 중 제안이 첫 50개 밖에 있으면 영향 경고가 사라졌다. 마지막 페이지까지 읽어 맞춘다.

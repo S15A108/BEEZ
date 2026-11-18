@@ -38,7 +38,12 @@ import { contractExamples } from './contract-examples'
 // v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
 // v11: 보완 질문 유형(선택·단답·서술)과 초안 후보(S15P31A108-202) 시드.
 // v13: 변경 제안 71 활동 이력(S15P31A108-303) 시드와 활동의 actor_type 필수화. dev 의 v12 를 이미 연 브라우저에는 이 시드가 없어 키를 올린다.
-export const MOCK_STORAGE_KEY = 'beez.mock.api.v13'
+// v14: 로컬 개발 서버에서 우리 팀 협업 서비스 예시를 늘림(문서 14·작업 17·변경 제안 8·회의 7, S15P31A108-431).
+export const MOCK_STORAGE_KEY = 'beez.mock.api.v14'
+// 우리 팀 협업 서비스에 예시를 넉넉히 넣을지. 로컬 개발 서버에서만 켜고, 단위 테스트(mode test)와 E2E(VITE_MOCK_SEED=basic)는 기본 예시를 쓴다.
+const denseSeed =
+  import.meta.env.MODE === 'development' &&
+  import.meta.env.VITE_MOCK_SEED !== 'basic'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
 export const MOCK_NOTICE =
@@ -298,14 +303,21 @@ function seededActivities(account: Account, created: string): Activity[] {
     ['TASK_PLAN_REVISED', { task_id: '502' }],
     ['VALIDATION_FINISHED', { task_id: '502' }],
     ['VALIDATION_FINISHED', { task_id: '503', result: 'FAILURE' }],
-    ['DOCUMENT_APPROVED', {}],
+    // 문서 활동의 대상은 문서 버전이다(서버와 같다). 211 = 기획안 승인본, 212 = ERD 승인본.
+    [
+      'DOCUMENT_APPROVED',
+      { target_type: 'DOCUMENT_VERSION', target_id: '211' },
+    ],
     ['CHANGE_PROPOSAL_COMMENTED', {}],
     ['TASK_ASSIGNEE_CHANGED', { task_id: '502' }],
     ['TASK_STARTED', { task_id: '502' }],
     ['TASK_WAITING', { task_id: '503' }],
     ['BASELINE_CREATED', { baseline_id: '401' }],
     ['CHANGE_PROPOSAL_REVIEW_REQUESTED', {}],
-    ['DOCUMENT_REGISTERED', {}],
+    [
+      'DOCUMENT_REGISTERED',
+      { target_type: 'DOCUMENT_VERSION', target_id: '212' },
+    ],
     ['TASK_COMPLETION_REPORTED', { task_id: '502' }],
     ['TASK_RESUMED', { task_id: '503' }],
     // 제외된 멤버(29)는 팀원 목록에 없다
@@ -674,6 +686,30 @@ function seededProject(
     origin: 'BEE_CONFLICT',
     task_ids: ['501', '502'],
     conflict_summary: '만료된 초대를 어떻게 안내할지 정해 주세요',
+    // 서버는 충돌 회의를 열 때 검증 결과로 만든 안내를 함께 준다(ConflictGuidanceBuilder). 안건 줄의 요구사항 번호가 여기서 온다.
+    conflict_guidance: {
+      validation_id: validation.id,
+      tasks: [
+        { task_id: '502', title: '초대 화면 정보 바꾸기' },
+        { task_id: '501', title: '프로젝트 목록 화면 구현' },
+      ],
+      conflicts: [
+        {
+          message:
+            "TASK-002는 만료된 초대에 '새 링크를 요청하세요' 안내를 따로 보여 주고, TASK-001은 쓸 수 없는 초대를 원인 없이 '찾을 수 없어요'로 보여 줘요. REQ-005에는 어느 쪽인지 없어요.",
+          design_item: {
+            id: '305',
+            version_id: '315',
+            key: 'REQ-005',
+            title: '초대받은 사용자는 링크로 프로젝트에 참여한다',
+            document_id: '203',
+            document_version_id: '213',
+            location: 'REQ-005',
+          },
+          differences: [],
+        },
+      ],
+    },
     status: 'OPEN',
     participants: ['21', '22', '25'].map((member_id) => ({
       member_id,
@@ -698,6 +734,148 @@ function seededProject(
     })),
     created_at: '2026-10-26T05:40:00Z',
   })
+  // 우리 팀 협업 서비스(101)는 로컬 개발 서버(npm run dev)에서 목록이 길 때의 화면(풀스크린 업무 창의 따로 스크롤 등)을 볼 수 있게
+  // 예시를 넉넉히 둔다(S15P31A108-431, 사용자 요청 11-17). 문서 10개·작업 14개·변경 제안 7개·회의 5개를 더한다. 단위 테스트와 E2E(VITE_MOCK_SEED=basic)는
+  // 기본 예시로 돌아 개수에 기대는 기존 테스트를 그대로 둔다. id는 9101부터라 새로 만드는 항목(next_id 2000부터)과 겹치지 않는다.
+  if (first && denseSeed) {
+    ;(
+      [
+        ['PLAN', '온보딩 기획안', '화면'],
+        ['REQUIREMENTS', '알림 요구사항 명세서', '공통'],
+        ['API_SPEC', '알림 API 명세서', 'API'],
+        ['ERD', '알림 ERD', 'API'],
+        ['PLAN', '릴리스 계획', '공통'],
+        ['REQUIREMENTS', '권한 요구사항 명세서', '공통'],
+        ['API_SPEC', '검색 API 명세서', 'API'],
+        ['PLAN', '디자인 시스템 정리', '디자인'],
+        ['REQUIREMENTS', '회의 기록 요구사항 명세서', '공통'],
+        ['API_SPEC', '회의 API 명세서', 'API'],
+      ] as const
+    ).forEach(([kind, title, domain], index) => {
+      const documentId = String(9101 + index)
+      const versionId = String(9201 + index)
+      const content = `# ${title}\n\n${Array.from({ length: 24 }, (_, line) => `- ${title} ${line + 1}번 항목: 사용자는 화면에서 필요한 정보를 확인하고, 권한이 없으면 이유를 본다.`).join('\n')}\n`
+      const version: DocumentVersion = {
+        id: versionId,
+        document_id: documentId,
+        version_no: 1 + (index % 3),
+        status: 'APPROVED',
+        file_name: `extra-${index}.md`,
+        media_type: 'text/markdown',
+        content_hash: `sha256:mock-${versionId}`,
+        content,
+        created_by: ['11', '12', '13', '14'][index % 4],
+        is_current_baseline: false,
+        created_at: `2026-11-${String(1 + index).padStart(2, '0')}T02:00:00Z`,
+      }
+      state.versions.push(version)
+      state.documents.push({
+        id: documentId,
+        project_id: id,
+        kind,
+        title,
+        domain,
+        approved_version: version,
+      })
+      state.working_copies.push({
+        document_id: documentId,
+        owner_account_id: account.id,
+        revision: 1,
+        status: 'APPROVED',
+        content,
+        file_name: version.file_name,
+      })
+    })
+    const titles = [
+      '로그인 화면 다듬기',
+      '알림 목록 API 구현',
+      '알림 설정 화면 만들기',
+      '초대 메일 문구 바꾸기',
+      '검색 결과 정렬 추가',
+      '문서 업로드 진행 표시',
+      '권한 오류 안내 정리',
+      '대시보드 기간 고르기',
+      '회의록 내보내기',
+      '에이전트 연결 안내 화면',
+      '설계 변경 알림 보내기',
+      '작업 기록 필터 추가',
+      '프로젝트 설정 화면 정리',
+      '팀원 초대 링크 만료 처리',
+    ]
+    const statuses = [
+      'READY',
+      'IN_PROGRESS',
+      'WAITING',
+      'COMPLETED',
+      'READY',
+      'IN_PROGRESS',
+      'COMPLETED',
+    ] as const
+    titles.forEach((title, index) => {
+      const extra = example<TaskDetail>('TSK-A01')
+      extra.id = String(9301 + index)
+      extra.key = `TASK-${String(4 + index).padStart(3, '0')}`
+      extra.assignee_member_id = ['21', '22', '25', '26'][index % 4]
+      extra.status = statuses[index % statuses.length]
+      if (extra.status === 'WAITING') extra.waiting_reason = 'APPROVAL'
+      else delete extra.waiting_reason
+      extra.current_plan_revision = {
+        ...extra.current_plan_revision,
+        id: String(9401 + index),
+        task_id: extra.id,
+        plan: {
+          ...extra.current_plan_revision.plan,
+          title,
+          goal: `${title}을 끝내 팀이 같은 기준으로 쓰게 한다.`,
+          excluded_scope: [],
+        },
+      }
+      delete extra.current_plan_revision.plan.context_packet_id
+      state.tasks.push(extra)
+      state.revisions.push(copy(extra.current_plan_revision))
+    })
+    ;(
+      [
+        ['알림 수신 설정 추가', 'IN_REVIEW', '13'],
+        ['회의 기록 보관 기간', 'PUBLISHED', '14'],
+        ['검색 결과 정렬 기준', 'REJECTED', '12'],
+        ['초대 만료 시간 늘리기', 'PROPOSED', '13'],
+        ['문서 분류 이름 바꾸기', 'WITHDRAWN', '14'],
+        ['권한 오류 문구 통일', 'IN_REVIEW', '12'],
+        ['대시보드 기본 기간', 'APPROVED', '13'],
+      ] as const
+    ).forEach(([title, status, proposer], index) => {
+      state.proposals.push({
+        ...copy(state.proposals[0]),
+        id: String(9501 + index),
+        key: `CP-${9501 + index}`,
+        title,
+        status,
+        proposer_account_id: proposer,
+      })
+    })
+    ;(
+      [
+        ['배포 일정 조율', 'OPEN'],
+        ['알림 API 응답 맞추기', 'CLOSED'],
+        ['검색 화면 문구 정리', 'CLOSED'],
+        ['권한 오류 처리 방식', 'CLOSED'],
+        ['회의록 형식 통일', 'CLOSED'],
+      ] as const
+    ).forEach(([title, status], index) => {
+      state.meetings.push({
+        ...copy(state.meetings[1]),
+        id: String(9601 + index),
+        title,
+        conflict_summary: `${title}을 정해 주세요`,
+        status,
+        ...(status === 'OPEN'
+          ? { closed_at: undefined, closed_by: undefined }
+          : {}),
+        created_at: `2026-11-${String(2 + index).padStart(2, '0')}T05:40:00Z`,
+      })
+    })
+  }
   const opened = {
     origin: 'TEMPLATE' as const,
     text: "작업이 부딪혀서 회의를 열었어요.\n- TASK-002 초대 화면 정보 바꾸기(김동료)는 만료된 초대에 '새 링크를 요청하세요' 안내를 따로 보여 줘요.\n- TASK-001 프로젝트 목록 화면 구현(이팀장)은 쓸 수 없는 초대를 원인 없이 '찾을 수 없어요'로 보여 줘요.\n- 요구사항 명세서 v1 REQ-005에는 어느 쪽인지 없어요. 어떻게 맞출지 정해 주세요.",

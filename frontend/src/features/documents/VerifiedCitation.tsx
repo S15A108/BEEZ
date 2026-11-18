@@ -35,7 +35,7 @@ export function VerifiedCitation({
           직접 확인해 주세요.
         </p>
         {content !== undefined ? (
-          <MarkdownView source={content} className="max-h-[32rem]" />
+          <MarkdownView source={content} />
         ) : (
           <EmptyState>
             이 파일은 본문 미리보기를 제공하지 않아요. 원본 파일을 내려받아
@@ -60,9 +60,9 @@ export function VerifiedCitation({
         {formatted ? '원문과 인용 보기' : '형식 적용 본문 보기'}
       </Button>
       {formatted ? (
-        <MarkdownView source={content!} className="max-h-[32rem]" />
+        <MarkdownView source={content!} />
       ) : (
-        <pre className="mt-2 max-h-[32rem] overflow-auto text-sm leading-relaxed break-words whitespace-pre-wrap">
+        <pre className="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap">
           {found.before}
           <mark
             ref={anchor}

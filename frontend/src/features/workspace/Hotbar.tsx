@@ -45,7 +45,7 @@ export function Hotbar({
   const openPane = useWorkspaceStore((state) => state.openPane)
   const sheetOpen = useWorkspaceStore((state) => state.sheets > 0)
   // 숫자 키 1~6으로 칸을 연다. 업무 창이 열려 있으면 그 칸으로 바꾸고, 열린 창의 번호를 다시 누르면 닫는다
-  // (창 머리 'N 또는 Esc로 닫기'). 입력칸에 쓰는 중이거나 하위 화면이 열려 있으면 무시한다(D46). 설정 창은 단축 바를 덮으므로 무시한다.
+  // (단축 바 칸을 다시 누르는 것과 같다). 입력칸에 쓰는 중이거나 하위 화면이 열려 있으면 무시한다(D46). 설정 창은 단축 바를 덮으므로 무시한다.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
@@ -150,8 +150,8 @@ export function Hotbar({
       className={cn(
         // 좁은 화면에서는 왼쪽 아래 시점·산책 버튼과 겹치지 않게 오른쪽 아래로 옮긴다(PR #72 전수 리뷰 UI-2).
         'pointer-events-auto absolute bottom-[18px] left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-1 rounded-[14px] border border-[rgba(44,41,31,0.08)] bg-white/92 px-[5px] shadow-[0_18px_32px_-16px_rgba(44,41,31,0.35),0_2px_6px_rgba(44,41,31,0.06)] backdrop-blur-[8px] max-xl:right-4 max-xl:left-auto max-xl:translate-x-0',
-        // 업무 창이 열려도 단축 바는 어두운 막 위에 밝게 남는다.
-        pane && pane !== 'settings' && 'z-[60]',
+        // 업무 창은 화면 전체로 열리고 단축 바는 숨는다(S15P31A108-431). 숫자 키는 숨어 있어도 메뉴를 바꾼다.
+        pane && pane !== 'settings' && 'hidden',
       )}
     >
       {hotbarSlots.slice(0, 3).map((item, index) => slot(item, index))}

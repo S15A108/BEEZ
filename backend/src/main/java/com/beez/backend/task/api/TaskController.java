@@ -94,7 +94,7 @@ public class TaskController {
         return queryService.listRevisions(caller, projectId, taskId, cursor, limit);
     }
 
-    @Operation(summary = "TSK-A06 담당자 변경 (사람 팀장만)")
+    @Operation(summary = "TSK-A06 담당자 변경 (사람 팀장, 또는 팀원의 자기 작업 넘기기·미배정 작업 맡기)")
     @PatchMapping("/{task_id}/assignee")
     public TaskDetailResponse changeAssignee(CallerContext caller, @PathVariable("id") Long projectId,
                                              @PathVariable("task_id") Long taskId,

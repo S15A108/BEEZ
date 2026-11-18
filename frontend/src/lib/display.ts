@@ -157,6 +157,14 @@ export const countText = (
 // (사용자 요청 11-02). 탭 밑줄, 단축 바의 열린 칸, 비비 대화 테두리는 목록 선택이 아니라 따로 둔다.
 export const LIST_SELECTED = 'border-primary/30 bg-primary/5'
 
+// 목록·상세 업무 창(작업 현황·변경 제안·회의실·설계 관계)의 공통 배치(S15P31A108-455). 넓은 화면에서 왼쪽 목록은 256px로
+// 창 왼쪽에 붙이고, 오른쪽 상세는 남은 자리 가운데에 1120px까지 넓힌다. 업무 창이 이 창들은 1200px 기둥 대신 화면 폭을 다 준다.
+export const SPLIT_COLUMNS = 'lg:grid-cols-[256px_minmax(0,1fr)]'
+export const SPLIT_DETAIL = 'lg:w-full lg:max-w-[1120px] lg:justify-self-center'
+// 왼쪽 목록 한 줄의 상자. 256px 목록에 맞춰 안쪽 여백을 줄였다. 호버는 고르지 않은 줄에만 패널이 붙인다(고른 줄은 바탕 그대로, S15P31A108-456·-416).
+export const LIST_ROW =
+  'w-full rounded-lg border px-3 py-2.5 text-left transition-colors'
+
 // 나의 도시의 안 읽은 알림 배지. 이름표와 프로젝트 카드의 오른쪽 위에 걸친다.
 export const UNREAD_BADGE =
   'absolute -top-[9px] -right-[9px] inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-destructive px-1.5 text-xs leading-4 font-bold text-white ring-2 ring-white'

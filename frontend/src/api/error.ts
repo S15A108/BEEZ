@@ -129,7 +129,7 @@ const messages: Record<string, string> = {
   document_not_approved:
     '아직 승인하지 않은 문서가 있어요. 4종을 모두 승인한 뒤 기준을 만들어 주세요.',
   baseline_exists:
-    '이미 기준 v1이 있어요. 새로고침해서 지금 기준을 확인해 주세요.',
+    '이미 설계 기준 v1이 있어요. 새로고침해서 지금 기준을 확인해 주세요.',
   required_documents_missing: '필수 문서 4종을 먼저 올려 주세요.',
   change_proposal_required:
     '기준 설계 생성 이후 문서 수정은 변경 제안을 통해 요청해 주세요.',

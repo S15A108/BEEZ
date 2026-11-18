@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router'
 import { useIsMutating } from '@tanstack/react-query'
+import { useAccountDialog } from '@/features/account/useAccountDialog'
 import { AgentsPanel } from '@/features/agents/AgentsPanel'
 import { useAgentCheckStore } from '@/features/agents/agentCheckStore'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
@@ -35,6 +36,7 @@ export function SettingsDialog({
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const pending = useIsMutating()
+  const account = useAccountDialog()
   // 예전 사무실 화면(office)은 프로젝트 관리 아래쪽 시간대로 합쳤다. 예전 링크도 프로젝트 관리를 연다.
   const section: Section =
     focusId === 'project' || focusId === 'office'
@@ -55,14 +57,14 @@ export function SettingsDialog({
         disabled={busy && !current}
         onClick={() => go(value)}
         className={cn(
-          'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+          'flex min-h-9 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
           current && 'bg-muted font-semibold',
           value === 'remove' && 'text-destructive',
         )}
       >
         {label}
         {extra && (
-          <span className="text-[11px] font-semibold text-muted-foreground">
+          <span className="text-sub font-medium text-muted-foreground">
             {extra}
           </span>
         )}
@@ -85,21 +87,24 @@ export function SettingsDialog({
           {busy && (
             <p
               role="status"
-              className="mx-3 rounded-lg bg-primary/10 px-3 py-2 text-xs leading-5 text-[#6e5200]"
+              className="mx-3 rounded-lg bg-muted px-3 py-2 text-sub"
             >
               처리 중이에요. 끝나면 다른 메뉴로 옮길 수 있어요.
             </p>
           )}
           <div className="grid gap-0.5">
-            {/* 회원 설정은 계정 전체에 걸린 화면(비밀번호 변경·탈퇴 하위 페이지 포함)이라 프로젝트 창에 넣지 않고 /account로 잇는다. */}
+            {/* 회원 설정은 계정 전체에 걸린 창이라 이 설정 창 안에 넣지 않는다. 이 창을 닫고 사무실 위에 회원 설정 창을 연다
+                (D48, 11-17 사용자 결정. 예전에는 /account 페이지로 옮겼다). */}
             <Link
-              to="/account"
+              {...account.linkTo('profile')}
               aria-disabled={busy || undefined}
-              onClick={(event) => busy && event.preventDefault()}
-              className="flex h-9 items-center justify-between rounded-lg px-3 text-sm font-medium hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              onClick={(event) => {
+                if (busy) event.preventDefault()
+                else openPane(null)
+              }}
+              className="flex min-h-9 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
               회원 설정
-              <span className="text-[11px] text-muted-foreground">↗</span>
             </Link>
             {item('team', '팀 관리')}
             {item(
