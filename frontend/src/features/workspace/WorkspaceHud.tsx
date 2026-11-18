@@ -410,6 +410,12 @@ export function WorkspaceHud({
   const [picked, setPicked] = useState<string>()
   const [showDone, setShowDone] = useState(false)
   const [teamOpen, setTeamOpen] = useState(false)
+  // 1280px 미만에서는 '지금 할 일'을 접은 채 시작해 3D 장면과 이름표를 덜 가린다(S15P31A108-443). matchMedia 가 없는 jsdom 은 펼친다.
+  const [todoOpen, setTodoOpen] = useState(
+    () =>
+      typeof window.matchMedia !== 'function' ||
+      window.matchMedia('(min-width: 1280px)').matches,
+  )
   const doneSteps = steps.filter((step) => step.done)
   // 남은 단계가 모두 잠겼으면(시작을 기다리는 팀원) 첫 잠긴 단계를 기다림 카드로 크게 보이고 잠긴 이유를 적는다.
   const focus =
@@ -848,7 +854,8 @@ export function WorkspaceHud({
         aria-labelledby="todo-title"
         data-tour="todo"
         hidden={chatOpen}
-        className="pointer-events-auto absolute top-17 right-4 z-10 w-85 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur"
+        // 304px: 1024에서 두 패널 사이 3D 장면을 넓힌다(S15P31A108-443, 전에는 340px).
+        className="pointer-events-auto absolute top-17 right-4 z-10 w-76 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur"
       >
         {guideOpen ? (
           <>
@@ -1043,16 +1050,33 @@ export function WorkspaceHud({
           </>
         ) : (
           <>
-            <h2
-              id="todo-title"
-              className="flex items-baseline justify-between px-1 text-sm font-bold"
-            >
-              할 일
-              <span className="text-xs font-normal text-muted-foreground">
-                {rows.length}
-              </span>
+            <h2 id="todo-title" className="text-sm font-bold">
+              <button
+                type="button"
+                aria-expanded={todoOpen}
+                aria-controls="hud-todo-list"
+                onClick={() => setTodoOpen((value) => !value)}
+                className="flex w-full items-baseline justify-between rounded-lg px-1 py-0.5 hover:bg-muted"
+              >
+                할 일
+                <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                  {rows.length}
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={cn(
+                      'size-3.5 self-center transition-transform',
+                      todoOpen && 'rotate-180',
+                    )}
+                  />
+                </span>
+              </button>
             </h2>
-            <ul className="mt-1 grid grid-cols-[minmax(0,1fr)]">
+            <ul
+              id="hud-todo-list"
+              aria-label="할 일 목록"
+              hidden={!todoOpen}
+              className="mt-1 grid grid-cols-[minmax(0,1fr)]"
+            >
               {rows.map((row) => {
                 const related = byRow.get(row.key) ?? []
                 return (
@@ -1106,7 +1130,11 @@ export function WorkspaceHud({
           </>
         )}
         {/* 할 일 줄에 접히지 않은 안 읽은 알림. 종 대신 여기와 알림함 창에서 본다(S15P31A108-444). */}
-        <div className="mt-1 grid gap-0.5 border-t pt-2">
+        {/* 접힌 할 일(1280px 미만 첫 화면)에서는 새 소식과 알림함 입구도 숨겨 패널을 제목 한 줄로 둔다(S15P31A108-443). */}
+        <div
+          hidden={!guideOpen && !todoOpen}
+          className="mt-1 grid gap-0.5 border-t pt-2"
+        >
           {news.length > 0 && (
             <>
               <h3 className="px-2 text-xs font-semibold">

@@ -665,6 +665,34 @@ test('팀장 시작 가이드는 문서 올리기를 먼저 보이고, 초대와
   ).toHaveCount(0)
 })
 
+// S15P31A108-443: 1024에서 340px '지금 할 일'이 3D 이름표를 가렸고, 단축 바가 오른쪽으로 밀려 비비가 512가 아닌 774에 있었다.
+test('1024×768에서 할 일은 접혀 있고 단축 바는 가운데에서 시점·산책 버튼과 겹치지 않는다', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await openWorkspace(page)
+  const toggle = page.getByRole('button', { name: /^할 일/ })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  const todo = (await page
+    .getByRole('region', { name: /^할 일/ })
+    .boundingBox())!
+  expect(todo.width).toBeLessThanOrEqual(304)
+  expect(todo.height).toBeLessThan(80)
+  const bibi = (await page
+    .getByRole('button', { name: '비비와 대화', exact: true })
+    .boundingBox())!
+  expect(Math.abs(bibi.x + bibi.width / 2 - 512)).toBeLessThanOrEqual(2)
+  const bar = (await page
+    .getByRole('navigation', { name: '프로젝트 메뉴 단축 바' })
+    .boundingBox())!
+  const walk = (await page
+    .getByRole('button', { name: '산책', exact: true })
+    .boundingBox())!
+  expect(walk.x + walk.width).toBeLessThan(bar.x)
+  await toggle.click()
+  await expect(page.getByRole('list', { name: '할 일 목록' })).toBeVisible()
+})
+
 // S15P31A108-285: 창이 검색칸에 포커스를 주면서 창을 연 숫자가 검색어로 들어갔다.
 test('숫자 키 1로 공용 문서함을 열어도 검색칸이 비어 있다', async ({
   page,

@@ -111,8 +111,9 @@ export function Hotbar({
           {index + 1}
         </span>
         <item.icon aria-hidden="true" className="size-[17px]" />
-        {/* 좁은 화면(xl 미만)에서는 이름을 숨겨 바를 줄인다. 이름은 aria-label과 title로 남는다. */}
-        <span className="max-xl:hidden">{item.label}</span>
+        {/* 이름까지 보인 바(시작 전 880px)는 1360px 미만에서 왼쪽 아래 시점·산책 버튼에 닿아(1280에서 14px 겹침) 이름을 숨긴다.
+            이름은 aria-label과 title로 남는다(S15P31A108-443). */}
+        <span className="max-[1360px]:hidden">{item.label}</span>
         {isLocked && (
           <Lock
             aria-hidden="true"
@@ -137,8 +138,9 @@ export function Hotbar({
       aria-label="프로젝트 메뉴 단축 바"
       data-tour="hotbar"
       className={cn(
-        // 좁은 화면에서는 왼쪽 아래 시점·산책 버튼과 겹치지 않게 오른쪽 아래로 옮긴다(PR #72 전수 리뷰 UI-2).
-        'pointer-events-auto absolute bottom-[18px] left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-1 rounded-[14px] border border-[rgba(44,41,31,0.08)] bg-white/92 px-[5px] shadow-[0_18px_32px_-16px_rgba(44,41,31,0.35),0_2px_6px_rgba(44,41,31,0.06)] backdrop-blur-[8px] max-xl:right-4 max-xl:left-auto max-xl:translate-x-0',
+        // 늘 가운데에 둔다. 좁은 화면은 이름을 숨긴 바(약 530px)라 1024에서도 왼쪽 아래 시점·산책 버튼과 겹치지 않는다
+        // (S15P31A108-443, 전에는 xl 미만에서 오른쪽 아래로 옮겨 비비가 가운데를 벗어났다).
+        'pointer-events-auto absolute bottom-[18px] left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-1 rounded-[14px] border border-[rgba(44,41,31,0.08)] bg-white/92 px-[5px] shadow-[0_18px_32px_-16px_rgba(44,41,31,0.35),0_2px_6px_rgba(44,41,31,0.06)] backdrop-blur-[8px]',
         // 업무 창은 화면 전체로 열리고 단축 바는 숨는다(S15P31A108-431). 숫자 키는 숨어 있어도 메뉴를 바꾼다.
         pane && pane !== 'settings' && 'hidden',
       )}
