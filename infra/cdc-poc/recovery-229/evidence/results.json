@@ -1,0 +1,28 @@
+{
+  "finished_at": "2026-11-10T01:21:59.535978+00:00",
+  "returncode": 0,
+  "passed": true,
+  "fresh_report": true,
+  "checks": [
+    "CDC229 restricted_capture_role=PASS superuser=false allowed=id,status denied=project_id,account.email",
+    "CDC229 snapshot=PASS real_table=published_change_analysis same_database=true",
+    "CDC229 publication_commit_debezium_kafka_dispatch_result=PASS",
+    "CDC229 consumer_stop_publish_restart=PASS positive_lag=3",
+    "CDC229 same_group_same_topic_partition_offsets_replayed=PASS attempts=3 ai_calls=3",
+    "CDC229 rollback_no_capture_no_intake=PASS legacy_inbox_rows=0",
+    "CDC229 capture_payload_allowlist=PASS fields=id,status sampled_events=11",
+    "CDC229 actual_worker_forced_termination_restart=PASS natural_lease_expiry=true claim_attempt=2 persisted_result_attempt=2 http_calls=2",
+    "CDC229 real_browser_backend_query_refresh=PASS"
+  ],
+  "tests": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "provenance": {
+    "base_revision": "09ce1a9043ba552ca639d2c6c49d7cc2347a269e",
+    "worktree_has_changes": true,
+    "application_jar_sha256": "c44d9fb4829787f0a034977f2c79cbb70ec85a54e2218e64d294483f57faeb2d"
+  }
+}

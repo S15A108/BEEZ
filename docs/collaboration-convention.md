@@ -227,19 +227,22 @@ docs: Update installation guide
 - `main`, `dev`에 직접 Push하지 않는다.
 - 작업 브랜치 → `dev`: **Merge commit**
 - `dev` → `main`: **Merge commit**
-- Squash Merge는 저장소 설정에서 비활성화한다. Rebase merge는 현재 설정상 허용되어 있지만 팀의 기본 병합 방식은 Merge commit이다.
+- Squash Merge는 저장소 설정에서 비활성화한다. Rebase merge도 비활성화한다(저장소 설정과 룰셋 모두). dev 배포 잡은 dev 본줄기의 PR 머지 커밋만 배포하는데, Rebase merge는 PR 커밋을 하나하나 본줄기에 올려 리뷰하지 않은 중간 커밋까지 배포 대상이 되게 만든다(`docs/infra/cd.md` "검사를 고정 파이프라인에 두는 이유"). 다시 켜려면 그 검사부터 바꾼다.
 - 최소 1명의 Approve와 미해결 리뷰 대화 해결 등 브랜치 보호 조건을 충족한 후 병합한다.
 - 필수 상태 검사로 지정된 CI가 있다면 모두 통과해야 한다. 빌드·테스트 CI는 현재 도입 예정이다.
 - Merge 후 Jira 티켓 또는 GitHub Issue 상태를 확인한다.
 - 긴급 수정으로 `main`을 변경한 경우 `dev`에도 반영한다.
 - PR 템플릿 등 기본 브랜치 반영이 필요한 저장소 공통 설정은 목적을 PR에 명시하고 `main` 대상으로 생성할 수 있다.
+- Spring Boot·Spring Security 버전을 올리는 PR은 웹 세션을 비우는 Flyway 마이그레이션(`DELETE FROM spring_session;`)을 함께 넣고, PR 본문에 "배포 때 웹 사용자 1회 로그아웃"을 적는다. 웹 세션은 Java 직렬화로 DB에 저장되어(S15P31A108-242), 버전이 바뀌면 기존 세션을 읽지 못해 그 사용자의 요청이 로그아웃이 아니라 오류로 떨어질 수 있다.
 
 ### 승인 후 자동 병합
 
 - 저장소의 Allow auto-merge를 활성화한다.
-- PR 작성자가 각 PR에서 Enable auto-merge를 선택하고 Merge commit 방식으로 예약한다.
+- `Enable PR auto-merge` Actions가 일반 PR의 Merge commit 자동 병합을 예약한다. 전용 Secret 등록과 워크플로의 dev 병합이 선행되어야 한다.
+- 설정 전 또는 Actions 실패 시 PR 작성자가 Enable auto-merge를 선택해 수동 예약한다.
+- 설정과 기존 PR 적용 방법은 [PR 자동 병합 가이드](pr-auto-merge.md)를 따른다.
 - 승인 1명 및 나머지 보호 조건이 충족되면 GitHub가 자동 병합한다.
-- 저장소 기능을 켜는 것만으로 새 PR 전체에 자동 병합이 예약되지는 않는다.
+- 저장소 기능만 켜서는 자동 예약되지 않으며, 예약용 Actions가 성공했는지 확인한다.
 - 자동 병합은 승인·미해결 대화·필수 검사 조건을 우회하지 않는다.
 - 새 커밋으로 승인이 취소되면 다시 승인을 받아야 한다.
 - 자동 병합 후에도 GitLab 동기화 성공 여부는 Actions에서 별도로 확인한다.
@@ -330,8 +333,8 @@ GitLab 자동 동기화
 | GitHub → GitLab 동기화 | main·dev Push에 따른 전송 및 커밋 일치 확인 완료 |
 | GitHub 동기화 설정 PR #1 | main 병합 완료, dev 생성 및 동기화 확인 완료 |
 | main·dev 브랜치 보호 | PR 필수, 승인 1명, 미해결 대화 해결, 새 커밋 시 기존 승인 취소 |
-| 병합 방식 | Squash 비활성화, 팀 기본 방식 Merge commit |
-| 승인 후 자동 병합 | 저장소 기능 활성화, 각 PR에서 예약 필요 |
+| 병합 방식 | Squash·Rebase 비활성화(Rebase는 2026-10-30 S15P31A108-123), Merge commit만 사용 |
+| 승인 후 자동 병합 | 저장소 기능 활성화. 자동 예약용 Actions 추가, 전용 Secret 등록 및 dev 병합 필요 |
 | PR 템플릿 | PR #3에 추가, main 병합 후 새 PR에 자동 표시 |
 | Jira 자동화 규칙 3개 | 활성화 |
 | GitLab–Jira 연동 | 관리자 검토 대기 |

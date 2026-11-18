@@ -1,0 +1,353 @@
+# PR 검증 CI.
+# 바뀐 영역(backend / frontend / ai / 배포 스크립트 / 모니터링)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
+# 전체 결과를 대표한다. 룰셋의 "필수 상태 검사"에는 ci-gate 만 등록한다 —
+# 영역 잡은 건너뛸 수 있어서 직접 등록하면 문서만 바꾼 PR 이 영원히 대기한다.
+#
+# 러너는 ubuntu-latest 대신 버전을 고정한다. latest 는 예고 없이 다음 Ubuntu 로 넘어가
+# 어느 날 갑자기 환경이 바뀔 수 있다. 올릴 때는 여기서 의도적으로 올린다.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+# 같은 PR 에 커밋을 연달아 올리면 이전 실행은 취소한다. 러너 시간 절약.
+# dev/main 푸시 실행은 취소하지 않는다 — 그 실행이 Gradle 캐시를 저장하는 유일한 경로다.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # 1) 무엇이 바뀌었는지 판정. 결과는 outputs 로 아래 잡들의 if 조건에 쓰인다.
+  #    워크플로 파일 자체가 바뀌면 모든 영역이 다시 돈다.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      ai: ${{ steps.filter.outputs.ai }}
+      deploy_scripts: ${{ steps.filter.outputs.deploy_scripts }}
+      monitoring: ${{ steps.filter.outputs.monitoring }}
+      cdc_stack: ${{ steps.filter.outputs.cdc_stack }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            ai:
+              - 'ai/**'
+              - '.github/workflows/ci.yml'
+            # infra/** 전체가 아니다. infra/cdc-poc/ 시험은 Kafka·DB 를 띄워야 돌아 경량 잡에 맞지 않는다.
+            # local.env 는 시험이 compose 필수값의 더미로 읽는다.
+            # infra/jenkins/ 는 알림 스크립트와 그 시험만. casc·plugins·systemd 는 이 시험과 관계없다.
+            deploy_scripts:
+              - 'infra/deploy/**'
+              - 'infra/backup/**'
+              - 'infra/jenkins/deploy-notify.sh'
+              - 'infra/jenkins/test_deploy_notify.py'
+              - 'infra/compose.yaml'
+              - 'infra/local.env'
+              - '.github/workflows/ci.yml'
+            monitoring:
+              - 'infra/monitoring/**'
+              - '.github/workflows/ci.yml'
+            cdc_stack:
+              - 'infra/cdc/dev/**'
+              - '.github/workflows/ci.yml'
+
+  # 2) backend: 빠른 층(test) → 느린 층(integrationTest, Testcontainers).
+  #    느린 층은 현재 1클래스뿐이라 PR 에서도 돌린다. 늘어나면 PR 용 태그를 따로 둔다.
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Gradle 래퍼·의존성·빌드 캐시를 실행 간에 보존한다 (첫 실행만 느리다).
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Unit & slice tests
+        run: ./gradlew test --console=plain
+
+      # 러너(4 vCPU)는 build.gradle 기본값이 1개라 2개로 나눠 돌린다. fork 마다 Postgres 컨테이너가 따로 뜬다 (-354).
+      - name: Integration tests (Testcontainers)
+        run: ./gradlew integrationTest --console=plain -PintegrationTestForks=2
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: backend-test-reports
+          path: backend/build/reports/tests/
+          retention-days: 7
+
+  # 3) frontend: 저장소의 `npm run check` 그대로 (lint → prettier 검사 → vitest → 빌드).
+  #    Node 는 package.json engines(>=24 <25) 와 맞춘다. Playwright E2E 는 여기서 돌리지 않는다.
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ci 는 lockfile 그대로 설치하고 lockfile 이 package.json 과 어긋나면 실패한다.
+      - name: Install
+        run: npm ci
+
+      - name: Lint, format check, test, build
+        run: npm run check
+
+  # 4) ai: ruff(정적 검사) → pytest. Python 은 서버(Ubuntu 24.04)의 3.12 와 맞춘다.
+  ai:
+    needs: changes
+    if: needs.changes.outputs.ai == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ai
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ai/requirements.txt
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      # Download the public vocabulary before tests; no model call or GMS key.
+      - name: Prepare embedding tokenizer
+        run: python -m scripts.prepare_tokenizer
+
+      - name: Pytest
+        run: pytest -q
+
+  # 5) 배포·백업 스크립트: infra/deploy/check-port.sh 의 경계 처리 시험(test_check_port.py),
+  #    infra/backup/ 스크립트 시험(test_backup_scripts.py), 배포 실패 알림 시험(test_deploy_notify.py).
+  #    실제 docker compose 로 env 파일을 해석만 하고(데몬 불필요) docker ps·ss·curl 은 가짜로 둔다.
+  #    표준 라이브러리만 써서 설치할 것이 없다. Python 은 ai 잡과 같은 3.12.
+  deploy-scripts:
+    needs: changes
+    if: needs.changes.outputs.deploy_scripts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # 시험은 compose v2 의 `config --environment` 를 쓴다. 러너 이미지가 바뀌면 여기서 먼저 보인다.
+      - name: Tool versions
+        run: |
+          bash --version | head -1
+          docker compose version
+
+      - name: check-port.sh tests
+        run: python infra/deploy/test_check_port.py
+
+      # 백업·복원 스크립트: env 를 compose 와 같게 읽는지, 문서 0건 백업도 복원 가능한지(S15P31A108-211). 같은 가짜 docker 방식
+      - name: backup scripts tests
+        run: python infra/backup/test_backup_scripts.py
+
+      # 배포 실패 알림: 메시지 JSON, 웹훅 주소 숨김, 실패해도 exit 0(S15P31A108-265). curl 만 가짜로 둔다
+      - name: deploy-notify.sh tests
+        run: python infra/jenkins/test_deploy_notify.py
+
+  # 6) 모니터링: 알림 규칙 시험과 Prometheus·Alertmanager 설정 검사(S15P31A108-292).
+  #    서버에는 수동 배포라(cd.yml paths-ignore) 머지본이 그대로 올라간다. 깨진 설정은 여기서 막는다.
+  #    파일은 서버 컨테이너와 같은 경로(/etc/prometheus, /etc/alertmanager)에 붙인다 —
+  #    prometheus.yml 의 rule_files 와 alertmanager.yml 의 templates 가 그 경로를 가리킨다.
+  #    웹훅 주소 파일(webhook_url_file)은 check-config 가 읽지 않아 붙이지 않는다(알림 보낼 때만 읽음).
+  monitoring:
+    needs: changes
+    if: needs.changes.outputs.monitoring == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: infra/monitoring
+    steps:
+      - uses: actions/checkout@v5
+
+      # 이미지는 서버가 쓰는 compose.yaml 에서 읽는다. 여기 따로 적으면 compose 만 올렸을 때 옛 버전으로 검사한다.
+      # --no-interpolate: 비밀값 env(GRAFANA_ADMIN_PASSWORD 등) 없이 읽는다. image 에는 변수가 없다.
+      # jq -e 는 서비스·image 가 없으면(이름 변경 등) 실패한다.
+      - name: Resolve images from compose.yaml
+        run: |
+          cfg=$(docker compose -f compose.yaml config --no-interpolate --format json)
+          prometheus=$(jq -er '.services.prometheus.image' <<<"$cfg")
+          alertmanager=$(jq -er '.services.alertmanager.image' <<<"$cfg")
+          echo "PROMETHEUS_IMAGE=$prometheus" >> "$GITHUB_ENV"
+          echo "ALERTMANAGER_IMAGE=$alertmanager" >> "$GITHUB_ENV"
+          echo "prometheus: $prometheus"
+          echo "alertmanager: $alertmanager"
+
+      # 서버 Prometheus 는 rule_files 의 /etc/prometheus/rules/*.yml 만 읽는다. 다른 이름(.yaml 등)이나
+      # 하위 디렉터리는 서버에서도 아래 check config 에서도 조용히 빠지므로 막는다.
+      - name: Rule files match rule_files glob
+        run: |
+          stray=$(find prometheus/rules -mindepth 1 \( -type d -o ! -name '*.yml' \))
+          if [ -n "$stray" ]; then
+            echo "::error::prometheus.yml rule_files(rules/*.yml)에 안 잡히는 항목: $stray"
+            exit 1
+          fi
+          if ! compgen -G 'prometheus/rules/*.yml' > /dev/null; then
+            echo "::error::prometheus/rules/*.yml 이 없다"
+            exit 1
+          fi
+
+      # rule_files 의 모든 규칙 파일까지 읽어 검사한다(check rules 를 따로 두지 않는 이유).
+      - name: promtool check config
+        run: >-
+          docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro"
+          --entrypoint promtool "$PROMETHEUS_IMAGE"
+          check config /etc/prometheus/prometheus.yml
+
+      - name: promtool test rules
+        run: >-
+          docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" -w /etc/prometheus/tests
+          --entrypoint promtool "$PROMETHEUS_IMAGE"
+          test rules beez_test.yml
+
+      - name: amtool check-config
+        run: >-
+          docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro"
+          --entrypoint amtool "$ALERTMANAGER_IMAGE"
+          check-config /etc/alertmanager/alertmanager.yml
+
+      # check-config 는 템플릿 파일을 읽기만 한다. 없는 템플릿 이름·함수 오타·글롭에서 빠진 파일은
+      # 알림을 보낼 때에야 터져 Mattermost 알림이 조용히 안 간다(로그에만 남음). 그래서 설정에서
+      # {{ 가 든 값(title·fallback·text·title_link 등)을 모두 뽑아 templates 글롭으로 실제로 렌더링해 본다.
+      # 이름을 여기 따로 적지 않아 수신처·필드가 늘어도 그대로 따라간다.
+      - name: amtool template render
+        env:
+          YQ_IMAGE: mikefarah/yq:4.44.3@sha256:5b3d851bf28b04ef902fee86305f4dd7e063919c1cafedab2042adb16221c025
+        run: |
+          yq() { docker run --rm -v "$PWD/alertmanager:/w:ro" "$YQ_IMAGE" "$1" /w/alertmanager.yml; }
+          text=$(yq '[.. | select(tag == "!!str" and test("\{\{"))] | join("\n")')
+          if [ -z "$text" ]; then
+            echo "::error::alertmanager.yml 에 템플릿 값이 없다(추출 식 확인)"
+            exit 1
+          fi
+          globs=()
+          while IFS= read -r g; do globs+=("--template.glob=$g"); done < <(yq '.templates[]')
+          echo "$text"
+          printf '%s\n' "${globs[@]}"
+          docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" \
+            --entrypoint amtool "$ALERTMANAGER_IMAGE" \
+            template render "${globs[@]}" --template.text="$text" > /dev/null
+
+      # 깨지면: 억제 원인 전용 알림 CdcDataUnavailable 이 Mattermost 로 나가 "데이터 없음" 글이 쌓인다.
+      # (FAILED 계열의 24시간 재통지는 routes test 가 수신처만 보여 주어 여기서 고정하지 못한다)
+      - name: amtool routes test
+        run: >-
+          docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro"
+          --entrypoint amtool "$ALERTMANAGER_IMAGE"
+          config routes test --config.file=/etc/alertmanager/alertmanager.yml
+          --verify.receivers=null alertname=CdcDataUnavailable
+
+  # 7) CDC 스택 compose(S15P31A108-294). 서버에 손으로 올려(cd.yml paths-ignore) 깨진 파일이 서버에서야 드러나므로
+  #    여기서 compose 해석과 이미지 digest 고정만 본다. 컨테이너는 띄우지 않는다(로컬 확인은 docs/infra/cdc-stack.md).
+  cdc-stack:
+    needs: changes
+    if: needs.changes.outputs.cdc_stack == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    defaults:
+      run:
+        working-directory: infra/cdc/dev
+    steps:
+      - uses: actions/checkout@v5
+
+      # config 는 비밀 디렉터리(bind source)가 있는지 보지 않는다. 그래서 러너에 없어도 된다
+      - name: compose config
+        run: docker compose -f compose.yaml config --quiet
+
+      # 태그만 있으면 같은 태그를 다시 올렸을 때 서버가 다른 이미지를 받는다. 서비스가 하나도 안 읽히면 실패로 본다
+      - name: Images pinned by digest
+        run: |
+          docker compose -f compose.yaml config --format json | python3 -c '
+          import json, re, sys
+          services = json.load(sys.stdin)["services"]
+          bad = [k + " " + str(v.get("image")) for k, v in services.items()
+                 if not re.search(r"@sha256:[0-9a-f]{64}$", v.get("image") or "")]
+          print(len(services), "services")
+          for b in bad: print("::error::digest 고정 안 됨:", b)
+          sys.exit(1 if bad or not services else 0)'
+
+      # Connect javaagent 설정(S15P31A108-261). 설정이 틀리면 에이전트가 JVM 을 exit 1 로 끝내 서버에서 Connect 가 뜨지
+      # 않는다(YAML·정규식 오류·파일 없음, 11-06 로컬 실측). 서버와 같은 jar 를 빈 JVM 에 붙여 기동과 알림이 읽는 시계열을 본다.
+      # 버전은 compose 의 jar 기본 경로에서 읽는다. 버전을 올리면 sha256 도 같이 바꾼다(docs/infra/cdc-stack.md "지표")
+      - name: Connect javaagent config
+        env:
+          JMX_AGENT_SHA256: a95983fd96e865d2bcdf911cc500e7c82808c27ab9fd226bf96732b6c3d8c46e
+        run: |
+          src=$(docker compose -f compose.yaml config --format json | jq -er '.services.connect.volumes[] | select(.target == "/opt/jmx-exporter/jmx_prometheus_javaagent.jar") | .source')
+          ver=$(sed -nE 's/.*jmx_prometheus_javaagent-([0-9.]+)\.jar$/\1/p' <<<"$src")
+          test -n "$ver" || { echo "::error::compose 에서 javaagent 버전을 읽지 못함: $src"; exit 1; }
+          jar="$RUNNER_TEMP/jmx_prometheus_javaagent-$ver.jar"
+          curl -fsSL --retry 3 --retry-all-errors -o "$jar" "https://github.com/prometheus/jmx_exporter/releases/download/$ver/jmx_prometheus_javaagent-$ver.jar"
+          echo "$JMX_AGENT_SHA256  $jar" | sha256sum -c -
+          bash tests/check-connect-metrics.sh "$jar"
+
+  # 8) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
+  ci-gate:
+    needs: [changes, backend, frontend, ai, deploy-scripts, monitoring, cdc-stack]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Evaluate results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"result": *"(failure|cancelled)"'; then
+            echo "::error::One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped."

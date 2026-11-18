@@ -1,0 +1,36 @@
+{
+  "component": "AI full regression",
+  "source_changed": false,
+  "image": "python@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
+  "runtime": "3.12.16",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "started_at": "2026-11-10T01:24:57.814272903Z",
+  "finished_at": "2026-11-10T01:26:05.788149515Z",
+  "linux_suite": {
+    "runtime": "3.12.16",
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "returncode": 0,
+    "command": "python -m pytest -q -o cache_dir=/tmp/pytest-cache --junitxml=/evidence/229-ai-linux-junit.xml",
+    "credentials_supplied": false,
+    "tests": {
+      "tests": 1367,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3
+    },
+    "passed": true
+  },
+  "separate_compose_suite": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "command": "python -m pytest -q tests/test_document_review_compose.py",
+    "platform": "Windows Docker Compose CLI; configuration-only, no service startup"
+  },
+  "combined_unique_tests_passed": 1367,
+  "linux_skip_reason": "Docker CLI not installed in Python image; all three tests passed separately using Windows Docker Compose CLI",
+  "earlier_windows_suite": "WinError 10014 during asyncio socketpair setup; full suite rerun under Linux without source changes",
+  "credentials_supplied": false,
+  "test_source_mounted_read_only": true
+}

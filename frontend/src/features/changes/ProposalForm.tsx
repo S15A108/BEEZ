@@ -1,0 +1,665 @@
+import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useForm, useWatch } from 'react-hook-form'
+import { Plus } from 'lucide-react'
+import type { TaskDetail } from '@/api/contracts/common'
+import { getApiErrorMessage } from '@/api/error'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
+import { DraftRequest } from './DraftRequest'
+import { documentTextError, normalizeDocument } from './normalizeDocument'
+import { ScopedDraft } from './ScopedDraft'
+import { proposalFormSchema } from './proposalItems'
+import type { GenerateDraftInput, GenerateDraftResponse } from './schemas'
+import type { ProposalFormValues } from './proposalItems'
+
+interface Props {
+  projectId?: string
+  heading: string
+  submitLabel: string
+  tasks: TaskDetail[]
+  /** 고칠 수 있는 현재 문서와 목록이 알려 준 승인 버전. 본문은 fetchDocumentContent로 따로 받는다. */
+  documents?: {
+    id: string
+    label: string
+    title?: string
+    versionId?: string
+  }[]
+  /** 고른 문서의 기준 원문과 그 버전(DOC-A03 문서 원문 조회) */
+  fetchDocumentContent?: (
+    documentId: string,
+  ) => Promise<{ content: string; versionId: string }>
+  /** 비비에게 문서 수정 초안을 받는다(CHG-A07). 없으면 버튼을 그리지 않는다. */
+  requestDraft?: (input: GenerateDraftInput) => Promise<GenerateDraftResponse>
+  /** 초안이 기준 변경(409)으로 실패하면 문서 목록을 다시 읽는다. */
+  onDraftConflict?: () => void
+  /** 다시 내는 제안의 문서 변경. 폼에서 고치는 문서 말고는 그대로 함께 올라가고, 기준이 바뀐 문서(stale)는 빠진다. */
+  sourceDocuments?: {
+    id: string
+    title: string
+    afterContent: string
+    stale: boolean
+  }[]
+  /** 다시 내는 제안의 기준이 지금 기준과 다르면 지금 기준 버전 */
+  baseChangedTo?: number
+  /** 에이전트·회의가 만든 제안의 설계 항목 변경. 보기만 하고 다시 낼 때 받은 그대로 보낸다. */
+  fixedItems?: { label: string; detail?: string }[]
+  defaultValues?: ProposalFormValues
+  // 제안 고치기 · 고쳐서 새로 올리기에서 쓴다.
+  status?: ReactNode
+  description?: string
+  footnote?: string
+  /** 고친 글 칸 아래 안내 */
+  contentHint?: string
+  comments?: { id: string; author: string; body: string }[]
+  onShowComments?: () => void
+  onSubmit: (values: ProposalFormValues) => Promise<unknown>
+  onCancel: () => void
+}
+
+function FieldError({ message }: { message?: string }) {
+  return message ? (
+    <p role="alert" className="text-xs text-destructive">
+      {message}
+    </p>
+  ) : null
+}
+
+// 문서 수정 제안 · 창 안에서. 공용 문서함 '고치기'로 그 문서를 고른 채 열리고, 필수는 제목, 이유, 고친 글이다.
+// 제안 고치기는 같은 폼에 지금 내용을 채우고 받은 의견을 옆에 둔다. 설계 항목 변경은 보기만 한다.
+export function ProposalForm({
+  projectId,
+  heading,
+  submitLabel,
+  tasks,
+  documents = [],
+  fetchDocumentContent,
+  requestDraft,
+  onDraftConflict,
+  sourceDocuments = [],
+  baseChangedTo,
+  fixedItems = [],
+  defaultValues,
+  status,
+  description,
+  footnote = '올리면 관련 팀원에게 알림이 가고 AI 영향 분석이 시작돼요. 제출만으로 기준이 바뀌지는 않아요.',
+  contentHint = '올리면 지금 기준 원문과 비교해 보여 줘요.',
+  comments,
+  onShowComments,
+  onSubmit,
+  onCancel,
+}: Props) {
+  const {
+    register,
+    control,
+    handleSubmit,
+    setValue,
+    getValues,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<ProposalFormValues>({
+    resolver: zodResolver(proposalFormSchema),
+    defaultValues: defaultValues ?? {
+      title: '',
+      reason: '',
+      task_id: '',
+      document_id: '',
+      after_content: '',
+    },
+  })
+  // 문서함 '고치기'로 오면 고칠 문서 칸이 열린 채, 설계 항목만 있던 제안은 '+ 문서 고치기'로 연다.
+  const [documentOpen, setDocumentOpen] = useState(
+    !!defaultValues?.document_id || !fixedItems.length,
+  )
+  const documentId = useWatch({ control, name: 'document_id' })
+  const listedVersion = documents.find(
+    (item) => item.id === documentId,
+  )?.versionId
+  // 캐시 키에 목록이 알려 준 승인 버전을 넣어, 새 승인본이 나오면 옛 원문 캐시를 쓰지 않는다(PR #72 리뷰).
+  const content = useQuery({
+    queryKey: ['documents', documentId, 'approved-content', listedVersion],
+    queryFn: () => fetchDocumentContent!(documentId!),
+    enabled: !!documentId && !!fetchDocumentContent,
+  })
+  // 기준 원문을 받을 때마다: '고친 글'이 비었거나 마지막으로 채운 원문 그대로면(손대지 않음) 새 원문으로 바꿔 채운다.
+  // 손댄 글은 두고 버전만 기억해 '기준 문서가 새 버전으로 바뀌었어요'를 띄운다. 다시 내는 제안처럼 처음부터 글이
+  // 있으면 덮어쓰지 않고, 지금 받은 버전을 그 글의 기준으로 삼는다.
+  useEffect(() => {
+    const loaded = content.data
+    if (!documentId || !loaded) return
+    const text = getValues('after_content') ?? ''
+    setValue('latest_version_id', loaded.versionId)
+    if (!text || text === getValues('base_content')) {
+      setValue('after_content', loaded.content)
+      setValue('base_content', loaded.content)
+      setValue('base_version_id', loaded.versionId)
+    } else if (!getValues('base_version_id')) {
+      setValue('base_content', loaded.content)
+      setValue('base_version_id', loaded.versionId)
+    }
+  }, [documentId, content.data, getValues, setValue])
+  // 원래 제안의 문서 중 폼에서 지금 고치는 문서만 빼고 함께 올라간다. 기준이 바뀐 문서는 그대로 낼 수 없어 뺀다.
+  const kept = sourceDocuments.filter((item) => item.id !== documentId)
+  const keptFresh = kept.filter((item) => !item.stale)
+  const keptStale = kept.filter((item) => item.stale)
+  const editingStale = sourceDocuments.find(
+    (item) => item.id === documentId && item.stale,
+  )
+  useEffect(() => {
+    setValue('kept_documents', keptFresh.length)
+  }, [keptFresh.length, setValue])
+  const shownVersion = useWatch({ control, name: 'base_version_id' })
+  const latestVersion = useWatch({ control, name: 'latest_version_id' })
+  const currentContent = useWatch({ control, name: 'after_content' }) ?? ''
+  const taskId = useWatch({ control, name: 'task_id' })
+  const outdated =
+    !!shownVersion && !!latestVersion && shownVersion !== latestVersion
+  const [source, setSource] = useState<'write' | 'file'>('write')
+  const [fileNote, setFileNote] = useState('')
+  // 파일 읽기 요청 번호. 새 파일을 고르면 올라가, 늦게 끝난 앞 요청의 결과를 버린다.
+  const fileRequest = useRef(0)
+  // 파일 한 개를 읽어 고친 글로 넣고 글 쓰기 탭으로 돌아가 내용을 보여 준다. 크기는 CHG-A01 본문 한도(1 MiB)를 따른다.
+  // 서버처럼 UTF-8로만 읽고(깨진 바이트를 U+FFFD로 바꾸지 않는다) 글자 수·제어 문자도 넣기 전에 본다. 맞지 않는 파일은
+  // 고친 글을 바꾸지 않고 알리기만 한다. 읽기 실패도 여기서 받아 처리하지 않은 거절이 남지 않는다(PR #135 리뷰).
+  const readFile = async (input: HTMLInputElement) => {
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    setFileNote('')
+    if (!/\.(md|markdown|txt)$/i.test(file.name) || file.size > 1024 * 1024) {
+      setError('after_content', {
+        message: '1MB 이하의 .md·.markdown·.txt 파일 한 개를 올려 주세요.',
+      })
+      return
+    }
+    const request = ++fileRequest.current
+    const startedFor = getValues('document_id')
+    const startedText = getValues('after_content') ?? ''
+    let text: string | undefined
+    try {
+      text = normalizeDocument(
+        new TextDecoder('utf-8', { fatal: true }).decode(
+          await file.arrayBuffer(),
+        ),
+      )
+    } catch {
+      text = undefined
+    }
+    // 읽는 동안 고칠 문서를 바꾸거나 다른 파일을 고르면 이 결과는 버린다. A 문서에서 고른 파일이 B 문서의
+    // 고친 글에 들어가 B의 문서 ID·기준 버전으로 올라가던 것을 막는다(PR #135 리뷰).
+    if (
+      request !== fileRequest.current ||
+      getValues('document_id') !== startedFor
+    )
+      return
+    if (text === undefined) {
+      setError('after_content', {
+        message: '파일을 읽지 못했어요. UTF-8로 저장한 파일만 올릴 수 있어요.',
+      })
+      return
+    }
+    const textError = documentTextError(text)
+    if (textError) {
+      setError('after_content', { message: textError })
+      return
+    }
+    // 읽는 동안 글을 직접 고쳤거나 초안을 넣었으면 그 글을 지키고 탭도 그대로 둔다(PR #135 리뷰). 기준 원문이 빈 글을
+    // 채운 것은 손댄 글이 아니므로 파일을 넣는다.
+    const current = getValues('after_content') ?? ''
+    if (
+      current !== startedText &&
+      current &&
+      current !== getValues('base_content')
+    ) {
+      setFileNote(
+        `파일을 읽는 동안 글을 고쳐서 ${file.name} 내용을 넣지 않았어요. 고친 글은 그대로예요.`,
+      )
+      return
+    }
+    setValue('after_content', text, { shouldValidate: true })
+    setFileNote(`${file.name} 내용을 고친 글에 넣었어요.`)
+    setSource('write')
+  }
+  const rewriteFromLatest = () => {
+    if (!content.data) return
+    setValue('after_content', content.data.content)
+    setValue('base_content', content.data.content)
+    setValue('base_version_id', content.data.versionId)
+  }
+  return (
+    <form
+      noValidate
+      onSubmit={handleSubmit((form) => {
+        // 기준 원문을 아직 못 받았거나 보여 준 원문이 옛 버전이면, 어떤 기준에 대한 글인지 알 수 없어 막는다.
+        if (form.document_id && !form.base_version_id) {
+          setError('after_content', {
+            message: '기준 원문을 받은 뒤에 올릴 수 있어요.',
+          })
+          return
+        }
+        if (form.document_id && outdated) {
+          setError('after_content', {
+            message:
+              '기준 문서가 새 버전으로 바뀌었어요. 새 원문을 확인한 뒤 올려 주세요.',
+          })
+          return
+        }
+        // 서버는 본문을 정규화(BOM 제거, CRLF→LF)해 기준과 같은 문서를 거절한다(PR #46).
+        // 같은 규칙으로 비교해 바뀌지 않은 문서는 빼고, 남는 변경이 없으면 막는다.
+        const base = form.document_id ? form.base_content : undefined
+        const unchanged =
+          base !== undefined &&
+          normalizeDocument(form.after_content ?? '') ===
+            normalizeDocument(base)
+        if (unchanged && !keptFresh.length && !fixedItems.length) {
+          setError('after_content', {
+            message: '기준 문서와 달라진 내용이 없어요.',
+          })
+          return
+        }
+        // 되돌린 문서는 원래 제안의 같은 문서 변경까지 빼도록 removed_document_id로 알린다.
+        return onSubmit(
+          unchanged
+            ? {
+                ...form,
+                document_id: '',
+                after_content: '',
+                removed_document_id: form.document_id,
+              }
+            : form,
+        ).catch(() => undefined)
+      })}
+      className="grid gap-4"
+    >
+      <div>
+        <h3 className="flex flex-wrap items-center gap-2 text-lg font-bold">
+          {heading}
+          {status}
+        </h3>
+        {description && (
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        )}
+      </div>
+      {(baseChangedTo !== undefined ||
+        sourceDocuments.some((item) => item.stale)) && (
+        <div
+          role="alert"
+          className="grid gap-1 rounded-[14px] bg-[#fdf8e6] px-3.5 py-3 text-[13px] leading-5"
+        >
+          <strong className="text-sm">
+            {baseChangedTo !== undefined
+              ? `기준이 v${baseChangedTo}(으)로 바뀌었어요`
+              : '그 사이 문서의 승인본이 바뀌었어요'}
+          </strong>
+          <span className="text-muted-foreground">
+            이 제안은 옛 기준에서 쓴 글이라 그대로 내면 그 사이 승인된 변경을
+            되돌릴 수 있어요. 승인본이 바뀐 문서는 새 기준 원문에서 다시
+            시작하고, 반려된 제안의 글은 비교용으로 보여 줘요.
+          </span>
+        </div>
+      )}
+      <div className="grid gap-5 xl:grid-cols-2">
+        <div className="grid content-start gap-4">
+          <div className="grid gap-1.5">
+            <Label htmlFor="proposal-title">제목 *</Label>
+            <Input
+              id="proposal-title"
+              aria-invalid={!!errors.title}
+              {...register('title')}
+            />
+            <FieldError message={errors.title?.message} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="proposal-reason">바꾸려는 이유 *</Label>
+            <Textarea
+              id="proposal-reason"
+              rows={3}
+              aria-invalid={!!errors.reason}
+              {...register('reason')}
+            />
+            <FieldError message={errors.reason?.message} />
+          </div>
+          {comments && (
+            <section
+              aria-label="받은 의견"
+              className="grid gap-1.5 rounded-xl bg-muted/40 p-3 text-sm"
+            >
+              <p className="flex justify-between font-semibold">
+                받은 의견 {comments.length}
+                {onShowComments && (
+                  <button
+                    type="button"
+                    className="text-xs font-normal underline"
+                    onClick={onShowComments}
+                  >
+                    의견 탭에서 보기
+                  </button>
+                )}
+              </p>
+              {comments.length ? (
+                comments.slice(0, 3).map((comment) => (
+                  <p key={comment.id} className="text-xs leading-5">
+                    <strong>{comment.author}</strong> · {comment.body}
+                  </p>
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  아직 받은 의견이 없어요.
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                고쳐도 받은 의견은 그대로 남아요.
+              </p>
+            </section>
+          )}
+          <details className="rounded-xl border p-3 text-sm">
+            <summary className="cursor-pointer font-medium">
+              관련 작업 연결 (선택)
+            </summary>
+            <NativeSelect
+              aria-label="관련 작업"
+              className="mt-3"
+              {...register('task_id')}
+            >
+              <NativeSelectOption value="">연결하지 않음</NativeSelectOption>
+              {tasks.map((task) => (
+                <NativeSelectOption key={task.id} value={task.id}>
+                  {task.key} · {task.current_plan_revision.plan.title}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            {/* API 없음: 검증·회의 출처 연결은 변경 제안 출처 필드가 정해지면 둔다(백엔드 메모 3). */}
+          </details>
+        </div>
+        <div className="grid content-start gap-4">
+          {documents.length > 0 && !documentOpen && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="justify-self-start"
+              onClick={() => setDocumentOpen(true)}
+            >
+              <Plus />
+              문서 고치기
+            </Button>
+          )}
+          {documents.length > 0 && documentOpen && (
+            <div className="grid gap-2 rounded-xl border p-3">
+              <Label htmlFor="proposal-document">고칠 문서</Label>
+              <NativeSelect
+                id="proposal-document"
+                aria-invalid={!!errors.document_id}
+                {...register('document_id', {
+                  // 원래 제안에 있던 문서를 고르면 그 문서의 원래 수정안을, 아니면 빈칸에서 시작해 기준 원문을 받아
+                  // 채운다. 기준이 바뀐 문서는 새 기준 원문에서 다시 쓴다(PR #72 3차 조사 THIRD-DOC-01).
+                  onChange: (event: { target: { value: string } }) => {
+                    setValue(
+                      'after_content',
+                      sourceDocuments.find(
+                        (item) => item.id === event.target.value && !item.stale,
+                      )?.afterContent ?? '',
+                    )
+                    setValue('base_content', undefined)
+                    setValue('base_version_id', undefined)
+                    setValue('latest_version_id', undefined)
+                  },
+                })}
+              >
+                <NativeSelectOption value="">
+                  {sourceDocuments.length || fixedItems.length
+                    ? '고치지 않음'
+                    : '문서 고르기'}
+                </NativeSelectOption>
+                {documents.map((item) => (
+                  <NativeSelectOption key={item.id} value={item.id}>
+                    {item.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <FieldError message={errors.document_id?.message} />
+              {documentId && (
+                <>
+                  {content.isLoading && (
+                    <p role="status" className="text-xs text-muted-foreground">
+                      기준 원문을 불러오는 중…
+                    </p>
+                  )}
+                  {content.error && (
+                    <div
+                      role="alert"
+                      className="flex flex-wrap items-center gap-2 text-xs text-destructive"
+                    >
+                      기준 원문을 불러오지 못했어요.{' '}
+                      {getApiErrorMessage(content.error)}
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => void content.refetch()}
+                      >
+                        다시 불러오기
+                      </Button>
+                    </div>
+                  )}
+                  {outdated && (
+                    <div
+                      role="alert"
+                      className="flex flex-wrap items-center gap-2 rounded-lg bg-[#fdf8e6] p-2.5 text-xs text-[#6e5200]"
+                    >
+                      기준 문서가 새 버전으로 바뀌었어요. 고친 글은 그대로
+                      두었어요.
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={rewriteFromLatest}
+                      >
+                        새 원문으로 다시 쓰기
+                      </Button>
+                    </div>
+                  )}
+                  {/* 캔버스 PNL-04-v2-propose-doc '고친 글 쓰기 | 파일 올리기'. 파일은 브라우저에서 읽어 고친 글 칸에 넣고
+                      고친 글(after_content)로 보낸다. DOC-A12 업로드는 올리기 전 DRAFT 버전을 서버에 남겨 쓰지 않는다. */}
+                  <div
+                    role="tablist"
+                    aria-label="고치는 방법"
+                    className="flex gap-0.5 justify-self-end rounded-[10px] bg-[#e6e9ee] p-[3px]"
+                  >
+                    {(
+                      [
+                        ['write', '고친 글 쓰기'],
+                        ['file', '파일 올리기'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={source === value}
+                        onClick={() => setSource(value)}
+                        className={cn(
+                          'h-7 rounded-lg px-2.5 text-[13px] whitespace-nowrap',
+                          source === value
+                            ? 'bg-white font-bold shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+                            : 'font-medium text-[#57534e]',
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {source === 'write' ? (
+                    <>
+                      {requestDraft && (
+                        <DraftRequest
+                          // 고칠 문서나 기준 버전이 바뀌면 열린 패널과 받은 결과를 버린다. 다른 문서의 초안이 남아 보이면 안 된다.
+                          key={`${documentId}:${shownVersion ?? ''}`}
+                          ready={
+                            !!shownVersion && !outdated && !content.isLoading
+                          }
+                          notReadyReason={
+                            outdated
+                              ? '새 원문으로 다시 쓴 뒤에 받을 수 있어요.'
+                              : '기준 원문을 받은 뒤에 쓸 수 있어요.'
+                          }
+                          request={(instruction) =>
+                            requestDraft({
+                              document_id: documentId!,
+                              base_document_version_id: shownVersion!,
+                              instruction,
+                              ...(getValues('task_id')
+                                ? { task_id: getValues('task_id') }
+                                : {}),
+                            })
+                          }
+                          // 요청하는 동안 문서나 기준 버전을 바꿨으면 응답은 다른 폼의 초안이라 쓰지 않는다.
+                          isCurrent={(draft) =>
+                            draft.document_id === getValues('document_id') &&
+                            draft.base_document_version_id ===
+                              getValues('base_version_id')
+                          }
+                          // 기준이 바뀌었다는 409 면 문서 목록과 기준 원문을 다시 읽어 '새 원문으로 다시 쓰기'가 뜨게 한다.
+                          onConflict={() => {
+                            void content.refetch()
+                            onDraftConflict?.()
+                          }}
+                          // 손대지 않은 글(비었거나 기준 원문 그대로)만 초안으로 채우고, 손댄 글은 묻고 나서 바꾼다.
+                          isUntouched={() => {
+                            const text = getValues('after_content') ?? ''
+                            return !text || text === getValues('base_content')
+                          }}
+                          onApply={(text) =>
+                            setValue('after_content', text, {
+                              shouldDirty: true,
+                            })
+                          }
+                          titleOf={(id) =>
+                            documents.find((item) => item.id === id)?.title ??
+                            '문서'
+                          }
+                        />
+                      )}
+                      <Textarea
+                        aria-label="고친 글"
+                        rows={10}
+                        aria-invalid={!!errors.after_content}
+                        className="font-mono text-[12.5px]"
+                        {...register('after_content')}
+                      />
+                      {projectId &&
+                        content.data &&
+                        shownVersion === content.data.versionId &&
+                        !outdated &&
+                        (normalizeDocument(currentContent) ===
+                        normalizeDocument(content.data.content) ? (
+                          <ScopedDraft
+                            projectId={projectId}
+                            documentId={documentId}
+                            versionId={content.data.versionId}
+                            taskId={taskId || undefined}
+                            currentContent={currentContent}
+                            onApply={(text) =>
+                              setValue('after_content', text, {
+                                shouldDirty: true,
+                                shouldValidate: true,
+                              })
+                            }
+                          />
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            직접 고친 글은 유지돼요. 비비 초안은 기준 원문에서
+                            시작할 때 만들 수 있어요.
+                          </p>
+                        ))}
+                    </>
+                  ) : (
+                    <Input
+                      type="file"
+                      aria-label="고친 문서 파일"
+                      accept=".md,.markdown,.txt,text/markdown,text/plain"
+                      onChange={(event) => void readFile(event.target)}
+                    />
+                  )}
+                  {fileNote && (
+                    <p role="status" className="text-xs text-muted-foreground">
+                      {fileNote}
+                    </p>
+                  )}
+                  <FieldError message={errors.after_content?.message} />
+                  <p className="text-xs text-muted-foreground">{contentHint}</p>
+                </>
+              )}
+            </div>
+          )}
+          {editingStale && (
+            <details className="rounded-xl border p-3 text-sm">
+              <summary className="cursor-pointer font-medium">
+                반려된 제안의 글 보기 (비교용)
+              </summary>
+              <pre className="mt-2 max-h-48 overflow-auto font-mono text-xs whitespace-pre-wrap">
+                {editingStale.afterContent}
+              </pre>
+            </details>
+          )}
+          {keptFresh.length > 0 && (
+            <p className="rounded-xl bg-muted/40 p-3 text-sm">
+              함께 올라가는 문서 변경 {keptFresh.length}개:{' '}
+              {keptFresh.map((item) => item.title).join(', ')}
+              <span className="block text-xs text-muted-foreground">
+                고치지 않아도 처음 올린 글 그대로 다시 올라가요.
+              </span>
+            </p>
+          )}
+          {keptStale.length > 0 && (
+            <p className="rounded-xl bg-[#fdf8e6] p-3 text-sm">
+              승인본이 바뀐 문서 {keptStale.length}개:{' '}
+              {keptStale.map((item) => item.title).join(', ')}
+              <span className="block text-xs text-muted-foreground">
+                옛 기준에서 쓴 글이라 이번에는 함께 보내지 않아요. 고칠 문서로
+                골라 새 기준 원문에서 다시 써 주세요.
+              </span>
+            </p>
+          )}
+          {fixedItems.length > 0 && (
+            <section
+              aria-label="함께 올라가는 설계 항목 변경"
+              className="grid gap-1.5 rounded-xl bg-muted/40 p-3 text-sm"
+            >
+              <p className="font-semibold">
+                함께 올라가는 설계 항목 변경 {fixedItems.length}개
+              </p>
+              <ul className="grid gap-1">
+                {fixedItems.map((item, index) => (
+                  <li key={index} className="text-xs leading-5">
+                    <strong>{item.label}</strong>
+                    {item.detail && ` · ${item.detail}`}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                에이전트나 회의에서 만든 항목이라 여기서는 고치지 않고 처음 올린
+                그대로 다시 올라가요.
+              </p>
+            </section>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
+        <p className="mr-auto text-xs text-muted-foreground">{footnote}</p>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          취소
+        </Button>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? '처리 중…' : submitLabel}
+        </Button>
+      </div>
+    </form>
+  )
+}

@@ -1,0 +1,21 @@
+import type { ReactNode } from 'react'
+import { cn } from '@/lib/utils'
+
+export function Tag({
+  tone,
+  children,
+}: {
+  tone?: string
+  children: ReactNode
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-[22px] shrink-0 items-center rounded-full px-2 text-xs font-semibold whitespace-nowrap',
+        tone ?? 'bg-muted text-muted-foreground',
+      )}
+    >
+      {children}
+    </span>
+  )
+}

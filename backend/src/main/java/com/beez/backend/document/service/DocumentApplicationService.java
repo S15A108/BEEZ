@@ -1,0 +1,480 @@
+package com.beez.backend.document.service;
+
+import static com.beez.backend.document.service.DocumentValues.*;
+
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
+import com.beez.backend.common.access.AccessErrors;
+import com.beez.backend.common.access.ProjectAccessChecker;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.contextaccess.service.ContextAccessRecorder;
+import com.beez.backend.document.*;
+import com.beez.backend.document.entity.DocumentVersion;
+import com.beez.backend.document.repository.*;
+import com.beez.backend.document.storage.DocumentStorage;
+import com.beez.backend.document.validation.DocumentInputValidator;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionTemplate;
+
+@Service
+public class DocumentApplicationService {
+    private final JdbcClient jdbc;
+    private final ProjectAccessChecker access;
+    private final DocumentRepository documents;
+    private final DocumentVersionRepository versions;
+    private final DocumentStorage storage;
+    private final DocumentInputValidator validator;
+    private final PlatformTransactionManager transactions;
+    private final TransactionTemplate transaction;
+    private final DocumentOriginalWriter originals;
+    private final DocumentIndexWorker worker;
+    private final DocumentReviewRepository reviews;
+    private final ContextAccessRecorder accessLog;
+    private final ActivityRecorder activities;
+
+    public DocumentApplicationService(JdbcClient jdbc, ProjectAccessChecker access, DocumentRepository documents,
+            DocumentVersionRepository versions, DocumentStorage storage, DocumentInputValidator validator,
+            PlatformTransactionManager transactions, DocumentIndexWorker worker, DocumentReviewRepository reviews,
+            ContextAccessRecorder accessLog, ActivityRecorder activities) {
+        this.accessLog = accessLog;
+        this.activities = activities;
+        this.jdbc = jdbc; this.access = access; this.documents = documents; this.versions = versions;
+        this.storage = storage; this.validator = validator; this.transactions = transactions; this.worker = worker;
+        this.transaction = new TransactionTemplate(transactions);
+        this.originals = new DocumentOriginalWriter(storage, transactions);
+        this.reviews = reviews;
+    }
+
+    private List<Map<String, Object>> rows(String sql, Map<String, ?> parameters) {
+        return jdbc.sql(sql).params(parameters).query().listOfRows();
+    }
+    /** 없으면 업무 상태 404({@link DocumentValues#missing}). 존재를 숨겨야 하는 조회는 거부 사유를 받는 아래 오버로드를 쓴다. */
+    private Map<String, Object> one(String sql, Map<String, ?> parameters) {
+        return rows(sql, parameters).stream().findFirst().orElseThrow(DocumentValues::missing);
+    }
+    private Map<String, Object> one(String sql, Map<String, ?> parameters, String deniedReason) {
+        return rows(sql, parameters).stream().findFirst().orElseThrow(() -> AccessErrors.notFound(deniedReason));
+    }
+    private void lock(long project) { if (documents.lockProject(project) == null) throw AccessErrors.notFound("document_project_missing"); }
+    /** 앞선 requireMember 뒤 잠금 사이에 멤버십·프로젝트가 바뀐 경우 — DocumentReviewService.lock 과 같은 거부 */
+    private void lockMember(CallerContext caller, long project) {
+        if (!reviews.lockMember(project, caller.accountId(), false)) throw AccessErrors.notFound("document_membership_changed");
+    }
+    private void requireAuthor(CallerContext caller, long project, long id) {
+        access.requireMember(caller, project).requireHuman();
+        var doc = document(project, id);
+        if (number(doc, "created_by") != caller.accountId()) {
+            throw com.beez.backend.common.access.AccessErrors.forbidden("document_author_required", "등록한 담당자만 문서를 수정할 수 있습니다.");
+        }
+        reviews.workingCopy(project, id).ifPresent(copy -> {
+            if ("SUBMITTED".equals(copy.get("status"))) throw com.beez.backend.designitem.support.DesignJson.conflict("submission_locked");
+        });
+    }
+    private String dbKind(DocumentKind kind) { return new DocumentKindMapper().convertToDatabaseColumn(kind); }
+    private Map<String, Object> document(long project, long id) {
+        // 없는 문서와 다른 프로젝트 문서는 같은 404 (05 참고 2 — 3단계)
+        return one("SELECT * FROM document WHERE id=:id AND project_id=:project AND discarded_at IS NULL", Map.of("id", id, "project", project), "document_not_in_project");
+    }
+    private Map<String, Object> version(long document, long id) {
+        // 버전 ID 는 다른 문서·프로젝트의 ID 가 들어올 수 있어 접근 거부로 숨긴다
+        return one("SELECT * FROM document_version WHERE document_id=:document AND id=:id", Map.of("document", document, "id", id),
+                "document_version_not_in_document");
+    }
+    private Optional<Map<String, Object>> approved(long document) {
+        return rows("""
+                SELECT v.* FROM document_version v WHERE v.document_id=:document AND v.status='APPROVED'
+                ORDER BY v.version_no DESC LIMIT 1
+                """, Map.of("document", document)).stream().findFirst();
+    }
+    private Map<String, Object> versionNumber(long document, int no) {
+        if (no < 1) throw invalid("version_no는 양수입니다.");
+        // 버전 번호는 이미 소속을 확인한 문서 안의 번호라 숨길 대상이 없다 — 업무 상태 404 (MCP-02 "지정 버전 없음")
+        return one("SELECT * FROM document_version WHERE document_id=:document AND version_no=:no", Map.of("document", document, "no", no));
+    }
+
+    private Set<Long> currentBaselineVersionIds(long document) {
+        return new HashSet<>(jdbc.sql("""
+                SELECT bd.document_version_id FROM baseline_document bd
+                JOIN project p ON p.id=bd.project_id AND p.current_baseline_id=bd.baseline_id
+                WHERE bd.document_id=:document
+                """).param("document", document).query(Long.class).list());
+    }
+    private Map<String, Object> versionView(Map<String, Object> row, boolean content) {
+        return versionView(row, content, currentBaselineVersionIds(number(row, "document_id")));
+    }
+    private Map<String, Object> versionView(Map<String, Object> row, boolean content, Set<Long> currentBaseline) {
+        String extension = row.get("storage_key").toString().endsWith(".md") ? "md" : "txt";
+        var result = new LinkedHashMap<String, Object>();
+        result.put("id", row.get("id").toString()); result.put("document_id", row.get("document_id").toString());
+        result.put("version_no", row.get("version_no")); result.put("status", row.get("status"));
+        result.put("file_name", "document-" + row.get("document_id") + "-v" + row.get("version_no") + "." + extension);
+        result.put("media_type", extension.equals("md") ? "text/markdown" : "text/plain");
+        result.put("content_hash", row.get("content_hash")); result.put("created_at", time(row.get("created_at")));
+        if (row.get("created_by") != null) result.put("created_by", row.get("created_by").toString());
+        if (row.get("change_proposal_id") != null) result.put("change_proposal_id", row.get("change_proposal_id").toString());
+        result.put("is_current_baseline", currentBaseline.contains(number(row, "id")));
+        if (content && row.get("content_text") != null) result.put("content", row.get("content_text"));
+        return result;
+    }
+    private Map<String, Object> documentView(Map<String, Object> row) {
+        long id = number(row, "id");
+        var result = new LinkedHashMap<String, Object>();
+        result.put("id", Long.toString(id)); result.put("project_id", row.get("project_id").toString());
+        result.put("kind", new DocumentKindMapper().convertToEntityAttribute(row.get("type").toString()).name());
+        result.put("title", row.get("title"));
+        if (row.get("domain") != null) result.put("domain", row.get("domain"));
+        var currentBaseline = currentBaselineVersionIds(id);
+        var approved = approved(id);
+        var draft = rows("SELECT * FROM document_version WHERE document_id=:id AND status='DRAFT' ORDER BY version_no DESC LIMIT 1", Map.of("id", id))
+                .stream().findFirst();
+        approved.ifPresent(v -> result.put("approved_version", versionView(v, false, currentBaseline)));
+        draft.ifPresent(v -> result.put("latest_draft", versionView(v, false, currentBaseline)));
+        // An in-progress working copy holds the latest edits; version bodies only change when it is submitted or approved.
+        var inProgress = rows("SELECT content_text FROM document_working_copy WHERE document_id=:id AND status IN ('EDITING','SUBMITTED','REJECTED')", Map.of("id", id))
+                .stream().findFirst();
+        (inProgress.isPresent() ? inProgress : approved.isPresent() ? approved : draft).map(v -> preview(v.get("content_text")))
+                .filter(text -> !text.isEmpty()).ifPresent(text -> result.put("preview_text", text));
+        return result;
+    }
+    /** Collapses whitespace so a thumbnail card can show one paragraph, then keeps the first 300 code points. */
+    private static String preview(Object text) {
+        if (text == null) return "";
+        String collapsed = text.toString().replaceAll("\\s+", " ").trim();
+        return collapsed.substring(0, collapsed.offsetByCodePoints(0, Math.min(300, collapsed.codePointCount(0, collapsed.length()))));
+    }
+
+    private String fingerprint(Object value) { return hash(JSON.writeValueAsBytes(value)); }
+    @SuppressWarnings("unchecked")
+    private Optional<Map<String, Object>> replay(CallerContext caller, long project, String operation, String key, String fingerprint) {
+        if (key == null || key.isBlank() || key.length() > 128) throw invalid("Idempotency-Key는 1~128자입니다.");
+        var params = Map.of("project", project, "account", caller.accountId(), "operation", operation, "key", key);
+        jdbc.sql("DELETE FROM document_http_command WHERE project_id=:project AND account_id=:account AND operation=:operation AND request_key=:key AND expires_at<=now()")
+                .params(params).update();
+        var previous = rows("SELECT fingerprint,response::text AS response FROM document_http_command WHERE project_id=:project AND account_id=:account AND operation=:operation AND request_key=:key", params);
+        if (previous.isEmpty()) return Optional.empty();
+        if (!fingerprint.equals(previous.getFirst().get("fingerprint"))) throw conflict("idempotency_conflict");
+        return Optional.of(JSON.readValue(previous.getFirst().get("response").toString(), Map.class));
+    }
+    private Map<String, Object> remember(CallerContext caller, long project, String operation, String key, String fingerprint, Map<String, Object> response) {
+        jdbc.sql("INSERT INTO document_http_command(project_id,account_id,operation,request_key,fingerprint,response) VALUES(:project,:account,:operation,:key,:fingerprint,cast(:response AS jsonb))")
+                .params(Map.of("project", project, "account", caller.accountId(), "operation", operation, "key", key,
+                        "fingerprint", fingerprint, "response", JSON.writeValueAsString(response))).update();
+        return response;
+    }
+    private void enqueue(long version, String textHash) {
+        jdbc.sql("INSERT INTO document_processing(document_version_id,status,text_hash) VALUES(:id,'PENDING',:hash)")
+                .param("id", version).param("hash", textHash).update();
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    public Map<String, Object> upload(CallerContext caller, long project, DocumentKind kind, String title,
+            String domain, String filename, byte[] bytes, String key) {
+        access.requireMember(caller, project).requireHuman();
+        var input = new DocumentRegistrationService.Input(project, kind, title, domain, filename, bytes);
+        DocumentRegistrationService.validateInput(input);
+        byte[] originalBytes = bytes.clone();
+        var source = validator.validate(filename, originalBytes);
+        String fp = fingerprint(Arrays.asList(kind, title, domain, source.extension(), source.contentHash()));
+        var registration = new DocumentRegistrationService(validator, storage,
+                id -> { access.requireMember(caller, id).requireHuman(); return caller.accountId(); }, documents, versions,
+                transactions);
+        var previous = transaction.execute(tx -> {
+            access.requireMember(caller, project).requireHuman();
+            var response = replay(caller, project, "upload", key, fp);
+            if (response.isEmpty()) registration.checkRegistration(input);
+            return response;
+        });
+        if (previous.isPresent()) return previous.get();
+        return originals.write(originalBytes, source.extension(), original -> {
+            lock(project); access.requireMember(caller, project).requireHuman();
+            lockMember(caller, project);
+            var concurrent = replay(caller, project, "upload", key, fp);
+            if (concurrent.isPresent()) return concurrent.get();
+            var saved = registration.persist(input, source, original);
+            // 멱등 재생(concurrent)은 위에서 반환했다. 등록은 알림 유형이 없어(계약 6.1) 활동만 남긴다.
+            activities.record(caller, ActivityEvent.of("document-version:" + saved.documentVersionId() + ":registered", project,
+                    "DOCUMENT_REGISTERED", ActivityTargetType.DOCUMENT_VERSION, saved.documentVersionId()));
+            reviews.initialize(saved.documentId(), saved.documentVersionId(), caller.accountId(), filename);
+            enqueue(saved.documentVersionId(), saved.textHash());
+            var response = Map.<String, Object>of("document", documentView(document(project, saved.documentId())), "analysis_status", "PENDING");
+            return remember(caller, project, "upload", key, fp, response);
+        });
+    }
+
+    public Map<String, Object> list(CallerContext caller, long project, DocumentKind kind, String domain, DocumentStage stage, String cursor, int limit) {
+        access.requireMember(caller, project); size(limit);
+        String sql = "SELECT * FROM document WHERE project_id=:project AND discarded_at IS NULL";
+        var params = new HashMap<String, Object>(Map.of("project", project, "limit", limit + 1));
+        if (kind != null) { sql += " AND type=:kind"; params.put("kind", dbKind(kind)); }
+        if (domain != null) { sql += " AND domain=:domain"; params.put("domain", domain); }
+        if (stage == DocumentStage.IN_PROGRESS) sql += " AND EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=document.id AND w.status IN ('EDITING','SUBMITTED','REJECTED'))";
+        if (stage == DocumentStage.CURRENT) sql += " AND EXISTS (SELECT 1 FROM baseline_document bd JOIN project p ON p.id=bd.project_id AND p.current_baseline_id=bd.baseline_id WHERE bd.document_id=document.id)";
+        sql += cursorWhere(cursor, params, false);
+        var all = rows(sql + " ORDER BY created_at DESC,id DESC LIMIT :limit", params);
+        boolean more = all.size() > limit; var selected = all.subList(0, Math.min(limit, all.size()));
+        return page(selected.stream().map(this::documentView).toList(), more, more ? cursor(selected.getLast()) : null);
+    }
+    private String cursorWhere(String encoded, Map<String, Object> params, boolean typed) {
+        if (encoded == null) return "";
+        String[] parts = cursor(encoded); params.put("before_time", parts[0]); params.put("before_id", Long.parseLong(parts[1]));
+        if (typed) { params.put("before_type", parts[2]); return " AND (created_at,id,type)<(cast(:before_time AS timestamptz),:before_id,:before_type)"; }
+        return " AND (created_at,id)<(cast(:before_time AS timestamptz),:before_id)";
+    }
+    public Map<String, Object> get(CallerContext caller, long project, long id, Integer no) {
+        access.requireMember(caller, project); var doc = document(project, id);
+        var selected = no == null ? approved(id).orElseThrow(() -> com.beez.backend.designitem.support.DesignJson.conflict("document_not_approved")) : versionNumber(id, no);
+        return Map.of("document", documentView(doc), "version", versionView(selected, true));
+    }
+
+    /**
+     * MCP-02 get_document 전용 조회 (S15P31A108-179). REST DOC-A02({@link #get})는 문서 검토에도 쓰이므로 그대로 두고 여기서 나눈다.
+     * <ul>
+     *   <li>버전 생략: 현재 기준 설계(project.current_baseline_id)의 baseline_document 버전. 새 승인으로 SUPERSEDED 가 됐어도
+     *       기준이 다시 발행되기 전까지는 그 버전이 개발 기준이므로 상태로 거르지 않는다. 기준·기준 문서가 없으면 not_found.</li>
+     *   <li>버전 지정: 승인된 적 있는 버전(APPROVED·SUPERSEDED)만. DRAFT·REJECTED 는 없는 것과 같은 not_found.</li>
+     *   <li>document 의 preview_text·latest_draft 는 빼고 approved_version 은 현재 기준 버전으로 둔다(기준에 없으면 뺀다) —
+     *       문서 화면용 칸이 작업 중 사본·기준 밖 승인본을 가리켜 에이전트가 기준으로 오해하지 않게.</li>
+     *   <li>조회 이력(context_access_log)을 결과를 돌려주기 전에 같은 트랜잭션으로 남긴다(08 계약 1절).</li>
+     * </ul>
+     */
+    @Transactional
+    public Map<String, Object> getForAgent(CallerContext caller, long project, long id, Integer no) {
+        var actor = access.requireMember(caller, project); var doc = document(project, id);
+        Object current = one("SELECT current_baseline_id FROM project WHERE id=:project", Map.of("project", project)).get("current_baseline_id");
+        Long baseline = current == null ? null : ((Number) current).longValue();
+        Optional<Map<String, Object>> baselineVersion = baseline == null ? Optional.empty()
+                : rows("SELECT document_version_id FROM baseline_document WHERE baseline_id=:baseline AND document_id=:document",
+                        Map.of("baseline", baseline, "document", id)).stream().findFirst()
+                        .map(row -> version(id, number(row, "document_version_id")));
+        Map<String, Object> selected;
+        if (no == null) {
+            selected = baselineVersion.orElseThrow(DocumentApplicationService::notInBaseline);
+        } else {
+            selected = versionNumber(id, no);
+            // DRAFT·REJECTED 는 MCP-02 오류표의 "승인본 또는 지정 버전 없음" — 같은 프로젝트 문서라 업무 상태 404
+            if (!Set.of("APPROVED", "SUPERSEDED").contains(selected.get("status"))) throw missing();
+        }
+        accessLog.record(actor, null, "get_document", ContextAccessRecorder.KIND_DOCUMENT_VERSION, number(selected, "id"), baseline, null);
+        // 문서 화면용 칸(최신 승인본·최신 초안·작업 중 미리보기)은 기준 밖 버전을 가리킬 수 있어 빼고, 승인본은 현재 기준 버전으로 바꾼다
+        var view = new LinkedHashMap<>(documentView(doc));
+        view.remove("preview_text"); view.remove("latest_draft"); view.remove("approved_version");
+        baselineVersion.ifPresent(v -> view.put("approved_version", versionView(v, false)));
+        return Map.of("document", view, "version", versionView(selected, true));
+    }
+    /**
+     * 업무 상태 404 — 멤버가 자기 프로젝트 문서를 조회했는데 현재 기준 설계에 그 문서 승인본이 없다(MCP-02 "승인본 또는 지정 버전 없음").
+     * 숨길 존재가 없으므로 AccessErrors 가 아니다. MCP 감사에는 ERROR + not_found 로 남는다 (S15P31A108-322).
+     */
+    private static ApiException notInBaseline() {
+        return new ApiException(org.springframework.http.HttpStatus.NOT_FOUND, "not_found", "현재 기준 설계에 이 문서의 승인본이 없습니다.");
+    }
+    public Map<String, Object> versions(CallerContext caller, long project, long id, String cursor, int limit) {
+        access.requireMember(caller, project); document(project, id); size(limit);
+        var currentBaseline = currentBaselineVersionIds(id);
+        var params = new HashMap<String, Object>(Map.of("document", id, "limit", limit + 1));
+        var all = rows("SELECT * FROM document_version WHERE document_id=:document" + cursorWhere(cursor, params, false)
+                + " ORDER BY created_at DESC,id DESC LIMIT :limit", params);
+        boolean more = all.size() > limit; var selected = all.subList(0, Math.min(limit, all.size()));
+        return page(selected.stream().map(v -> versionView(v, false, currentBaseline)).toList(), more, more ? cursor(selected.getLast()) : null);
+    }
+    public record Download(String filename, String mediaType, byte[] bytes) { }
+    public Download download(CallerContext caller, long project, long id, int no) throws IOException {
+        access.requireMember(caller, project); document(project, id); var row = versionNumber(id, no); var view = versionView(row, false);
+        return new Download(view.get("file_name").toString(), view.get("media_type").toString(), storage.read(row.get("storage_key").toString()));
+    }
+    public Map<String, Object> diff(CallerContext caller, long project, long id, int from, int to) {
+        access.requireMember(caller, project); document(project, id);
+        var a = versionNumber(id, from); var b = versionNumber(id, to);
+        String aText = Objects.toString(a.get("content_text"), ""); String bText = Objects.toString(b.get("content_text"), "");
+        String difference = com.beez.backend.common.diff.LineDiff.compare(aText, bText);
+        return Map.of("from_version", from, "to_version", to, "format", "TEXT", "diff", difference,
+                "before_hash", a.get("content_hash"), "after_hash", b.get("content_hash"));
+    }
+
+    @Transactional
+    public Map<String, Object> classify(CallerContext caller, long project, long id, Map<String, String> body, String key) {
+        requireAuthor(caller, project, id); lock(project); requireAuthor(caller, project, id);
+        lockMember(caller, project);
+        if (body == null || body.size() != 1 || !body.containsKey("domain") || body.get("domain") == null) throw invalid("domain만 수정할 수 있습니다.");
+        String operation = "classify:" + id, fp = fingerprint(body);
+        var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
+        jdbc.sql("UPDATE document SET domain=:domain,updated_at=now() WHERE id=:id").param("domain", body.get("domain")).param("id", id).update();
+        return remember(caller, project, operation, key, fp, documentView(document(project, id)));
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    public Map<String, Object> draft(CallerContext caller, long project, long id, long base,
+            String filename, byte[] bytes, String key) {
+        access.requireMember(caller, project); document(project, id);
+        byte[] originalBytes = bytes.clone();
+        var source = validator.validate(filename, originalBytes);
+        String operation = "draft:" + id, fp = fingerprint(List.of(base, source.extension(), source.contentHash()));
+        var previous = transaction.execute(tx -> {
+            access.requireMember(caller, project); document(project, id);
+            var response = replay(caller, project, operation, key, fp);
+            if (response.isEmpty()) requireCurrentBase(id, base);
+            return response;
+        });
+        if (previous.isPresent()) return previous.get();
+        return originals.write(originalBytes, source.extension(), original -> {
+            lock(project); access.requireMember(caller, project); document(project, id);
+            var concurrent = replay(caller, project, operation, key, fp);
+            if (concurrent.isPresent()) return concurrent.get();
+            requireCurrentBase(id, base);
+            int no = jdbc.sql("SELECT coalesce(max(version_no),0)+1 FROM document_version WHERE document_id=:id").param("id", id).query(Integer.class).single();
+            var saved = versions.saveAndFlush(DocumentVersion.draft(id, no, original.reference(), source.contentHash(), source.text(), caller.accountId(), base));
+            enqueue(saved.getId(), source.textHash());
+            return remember(caller, project, operation, key, fp, versionView(version(id, saved.getId()), true));
+        });
+    }
+
+    private void requireCurrentBase(long document, long base) {
+        // DOC-A12 is based on the development baseline, not the document management screen's latest approval.
+        var current = rows("""
+                SELECT v.* FROM document_version v JOIN document d ON d.id=v.document_id
+                JOIN project p ON p.id=d.project_id
+                JOIN baseline_document b ON b.baseline_id=p.current_baseline_id AND b.document_id=d.id
+                  AND b.document_version_id=v.id WHERE d.id=:document
+                """, Map.of("document", document)).stream().findFirst().orElseThrow(() -> conflict("version_conflict"));
+        if (number(current, "id") != base) throw conflict("version_conflict");
+    }
+
+    public Map<String, Object> analysis(CallerContext caller, long project, long id, long version) {
+        access.requireMember(caller, project); document(project, id); version(id, version);
+        var run = one("SELECT * FROM document_processing WHERE document_version_id=:id", Map.of("id", version));
+        var response = new LinkedHashMap<String, Object>();
+        response.put("document_version_id", Long.toString(version)); response.put("status", run.get("status"));
+        response.put("source_status", run.get("source_status")); response.put("index_status", run.get("index_status"));
+        response.put("attempt", run.get("attempt")); response.put("items", List.of()); response.put("questions", List.of());
+        if (run.get("error_code") != null) response.put("error_code", run.get("error_code"));
+        // 질문 생성은 분석이 끝난 뒤의 별도 단계다. 실패해도 분석 상태(status)는 그대로이고 여기에만 드러난다(PLN-A02 가 다시 시도한다).
+        jdbc.sql("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=:id").param("id", version)
+                .query().listOfRows().stream().findFirst().ifPresent(q -> {
+                    var questionRun = new LinkedHashMap<String, Object>();
+                    // 자동 재시도를 기다리는 PENDING 에도 error_code 가 남지만(S15P31A108-396) 오류는 FAILED 일 때만 보인다.
+                    // 기다리는 사이 기준이 발행됐거나 버전이 대상에서 빠져 워커가 잡지 않으면 그 실패가 마지막이므로 FAILED 로 보인다.
+                    boolean stranded = "PENDING".equals(q.get("status")) && q.get("error_code") != null && !questionGenerationAvailable(version);
+                    String status = stranded ? "FAILED" : q.get("status").toString();
+                    questionRun.put("status", status);
+                    if ("FAILED".equals(status) && q.get("error_code") != null) { questionRun.put("error_code", q.get("error_code")); questionRun.put("retryable", q.get("retryable")); }
+                    response.put("question_generation", questionRun);
+                });
+        response.put("message", switch (run.get("status").toString()) {
+            case "PENDING", "RUNNING" -> "분석 중입니다."; case "FAILED" -> "분석에 실패했습니다. 재시도할 수 있습니다.";
+            default -> "검색 준비가 완료되었습니다.";
+        });
+        return response;
+    }
+    @Transactional
+    public Map<String, Object> retry(CallerContext caller, long project, long id, long version, String key) {
+        access.requireHumanLeader(caller, project); lock(project); access.requireHumanLeader(caller, project); document(project, id); version(id, version);
+        String operation = "retry:" + version, fp = fingerprint(version);
+        var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
+        var run = one("SELECT * FROM document_processing WHERE document_version_id=:id FOR UPDATE", Map.of("id", version));
+        if (List.of("PENDING", "RUNNING").contains(run.get("status"))) throw conflict("analysis_running");
+        // 서버 워커(PlanningQuestionRepository.nextRunnable)는 기준 설계가 있거나 버전이 문서의 질문 기준 버전(QuestionBasisVersion)이 아니면 질문을 만들지 않는다.
+        // 그런 버전의 실패한 실행을 PENDING 으로 되돌리면 아무도 집지 않아 화면이 '만드는 중'으로 영원히 남으므로 되돌리지 않는다.
+        if ("COMPLETED".equals(run.get("status")) && !questionGenerationAvailable(version)
+                && jdbc.sql("SELECT EXISTS(SELECT 1 FROM planning_question_run WHERE document_version_id=:id AND (status='FAILED' OR (status='PENDING' AND error_code IS NOT NULL)))")
+                        .param("id", version).query(Boolean.class).single()) throw conflict("question_generation_unavailable");
+        // 분석은 끝났는데 질문 생성만 실패했다면 질문 생성만 다시 대기시킨다.
+        if ("COMPLETED".equals(run.get("status")) && jdbc.sql("UPDATE planning_question_run SET status='PENDING',error_code=null,retryable=false,lease_until=null,updated_at=now() WHERE document_version_id=:id AND status='FAILED'")
+                .param("id", version).update() == 1) {
+            return remember(caller, project, operation, key, fp, analysis(caller, project, id, version));
+        }
+        if (!"FAILED".equals(run.get("status"))) throw conflict("analysis_not_failed");
+        jdbc.sql("UPDATE document_processing SET attempt=attempt+1,automatic_recoveries=0,status='PENDING',source_status='PENDING',index_status='PENDING',error_code=null,lease_token=null,lease_until=null,updated_at=now() WHERE document_version_id=:id")
+                .param("id", version).update();
+        return remember(caller, project, operation, key, fp, analysis(caller, project, id, version));
+    }
+
+    /** 워커가 이 문서 버전의 보완 질문을 만들 수 있는지. nextRunnable 의 대상 조건(기준 설계 없음, 버전 DRAFT·APPROVED, 보관 안 됨)과 같다. */
+    /** 질문 생성 워커(PlanningQuestionRepository.nextRunnable)가 이 버전의 질문을 만드는지 — 같은 기준 버전 정의를 쓴다. */
+    private boolean questionGenerationAvailable(long version) {
+        return jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM document_version v JOIN document d ON d.id=v.document_id JOIN project p ON p.id=d.project_id
+                               WHERE v.id=:id AND v.id=%s AND p.archived_at IS NULL AND p.current_baseline_id IS NULL)
+                """.formatted(QuestionBasisVersion.idOf("d.id"))).param("id", version).query(Boolean.class).single();
+    }
+
+    public Map<String, Object> search(CallerContext caller, long project, String query, String mode, String domain,
+            String kind, String cursor, int limit) {
+        long start = System.nanoTime(); access.requireMember(caller, project); size(limit);
+        if (query == null || query.isBlank() || query.length() > 1000) throw invalid("검색어는 1~1000자입니다.");
+        if ("SEMANTIC".equals(mode)) {
+            var result = worker.search(project, query, domain, kind, cursor, limit);
+            access.requireMember(caller, project);
+            return result;
+        }
+        if (!"KEYWORD".equals(mode)) throw invalid("KEYWORD 또는 SEMANTIC 검색입니다.");
+        String sql = """
+                SELECT * FROM (
+                 SELECT 'DOCUMENT'::text AS type,d.id,d.title,d.domain,d.type AS kind,v.created_at,
+                  d.id AS document_id,v.id AS document_version_id,v.version_no,v.content_text AS body,NULL::bigint AS design_item_id
+                 FROM project p JOIN baseline_document b ON b.baseline_id=p.current_baseline_id
+                 JOIN document d ON d.id=b.document_id AND d.project_id=p.id
+                 JOIN document_version v ON v.id=b.document_version_id AND v.document_id=d.id WHERE p.id=:project
+                 UNION ALL
+                 SELECT 'DESIGN_ITEM',i.id,v.title,i.domain,i.kind,v.created_at,
+                  dv.document_id,dv.id,dv.version_no,v.content::text,i.id
+                 FROM project p JOIN baseline_item b ON b.baseline_id=p.current_baseline_id
+                 JOIN design_item i ON i.id=b.design_item_id AND i.project_id=p.id
+                 JOIN design_item_version v ON v.id=b.design_item_version_id AND v.design_item_id=i.id
+                 JOIN baseline_item_effective_source es ON es.baseline_id=b.baseline_id AND es.design_item_id=b.design_item_id
+                 LEFT JOIN baseline_document bd ON bd.baseline_id=p.current_baseline_id AND bd.document_version_id=es.source_document_version_id
+                 LEFT JOIN document_version dv ON dv.id=bd.document_version_id WHERE p.id=:project
+                ) hits WHERE (position(lower(:q) IN lower(title))>0 OR position(lower(:q) IN lower(body))>0)
+                """;
+        var params = new HashMap<String, Object>(Map.of("project", project, "q", query, "limit", limit + 1));
+        if (domain != null) { sql += " AND domain=:domain"; params.put("domain", domain); }
+        if (kind != null) { sql += " AND kind=:kind"; params.put("kind", "REQUIREMENTS".equals(kind) ? "REQ_SPEC" : kind); }
+        sql += cursorWhere(cursor, params, true);
+        var all = rows(sql + " ORDER BY created_at DESC,id DESC,type DESC LIMIT :limit", params);
+        boolean more = all.size() > limit; var selected = all.subList(0, Math.min(limit, all.size()));
+        var result = page(selected.stream().map(this::hit).toList(), more, more ? cursor(selected.getLast()) : null);
+        result.put("elapsed_ms", (System.nanoTime() - start) / 1_000_000); return result;
+    }
+    private Map<String, Object> hit(Map<String, Object> row) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("type", row.get("type")); result.put("id", row.get("id").toString()); result.put("title", row.get("title"));
+        String body = Objects.toString(row.get("body"), ""); result.put("snippet", body.substring(0, Math.min(300, body.length())));
+        if (row.get("document_version_id") != null) result.put("source", Map.of("document_id", row.get("document_id").toString(),
+                "document_version_id", row.get("document_version_id").toString(), "version_no", row.get("version_no"), "location", "원문"));
+        if (row.get("design_item_id") != null) result.put("design_item_id", row.get("design_item_id").toString());
+        return result;
+    }
+
+    public Map<String, Object> baseline(CallerContext caller, long project, Integer no) {
+        access.requireMember(caller, project);
+        var row = no == null
+                ? one("SELECT b.* FROM baseline b JOIN project p ON p.current_baseline_id=b.id AND p.id=b.project_id WHERE p.id=:project", Map.of("project", project))
+                : one("SELECT * FROM baseline WHERE project_id=:project AND version_no=:no", Map.of("project", project, "no", no));
+        return baselineView(row);
+    }
+    public Map<String, Object> baselines(CallerContext caller, long project, String cursor, int limit) {
+        access.requireMember(caller, project); size(limit);
+        var params = new HashMap<String, Object>(Map.of("project", project, "limit", limit + 1));
+        var all = rows("SELECT * FROM baseline WHERE project_id=:project" + cursorWhere(cursor, params, false)
+                + " ORDER BY created_at DESC,id DESC LIMIT :limit", params);
+        boolean more = all.size() > limit; var selected = all.subList(0, Math.min(limit, all.size()));
+        return page(selected.stream().map(this::baselineView).toList(), more, more ? cursor(selected.getLast()) : null);
+    }
+    private Map<String, Object> baselineView(Map<String, Object> row) {
+        var refs = Map.<String, Object>of("id", row.get("id"));
+        var documentRefs = rows("SELECT document_id,document_version_id FROM baseline_document WHERE baseline_id=:id ORDER BY document_id", refs)
+                .stream().map(r -> Map.of("document_id", r.get("document_id").toString(), "document_version_id", r.get("document_version_id").toString())).toList();
+        var itemRefs = rows("SELECT design_item_id,design_item_version_id FROM baseline_item WHERE baseline_id=:id ORDER BY design_item_id", refs)
+                .stream().map(r -> Map.of("design_item_id", r.get("design_item_id").toString(), "design_item_version_id", r.get("design_item_version_id").toString())).toList();
+        return Map.of("id", row.get("id").toString(), "project_id", row.get("project_id").toString(), "version_no", row.get("version_no"),
+                "documents", documentRefs, "items", itemRefs, "approved_by", row.get("published_by").toString(), "created_at", time(row.get("published_at")));
+    }
+}

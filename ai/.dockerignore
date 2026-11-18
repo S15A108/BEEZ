@@ -1,0 +1,19 @@
+# 빌드 컨텍스트에서 뺄 것. 이미지에는 app/ 과 scripts/ 만 들어간다.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 테스트·평가 자료는 이미지에 필요 없다 (CI 가 돈다).
+tests/
+evaluations/
+examples/
+
+# 비밀값과 Docker 파일 자신
+.env
+.env.*
+Dockerfile
+.dockerignore

@@ -1,0 +1,45 @@
+# --- secrets / local ---
+.env
+.env.*
+!.env.example
+*.local
+# DB 덤프 (개인정보 포함, exec/03-db-dump.md) — S15P31A108-461
+beez-dump.*
+*.dump
+
+# --- Java / Gradle (backend) ---
+backend/.gradle/
+backend/build/
+backend/out/
+backend/bin/
+!backend/gradle/wrapper/gradle-wrapper.jar
+*.class
+*.log
+
+# --- Python (ai) ---
+ai/.venv/
+ai/venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node (frontend) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# --- IDE / OS ---
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# --- data ---
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,65 @@
+package com.beez.backend.common.web;
+
+import com.beez.backend.common.access.ProjectLogRedaction;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.util.UUID;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+/**
+ * 요청마다 X-Request-Id 를 붙이고(MDC → 로그 패턴의 [%X{requestId}]) 응답 헤더로 돌려준다.
+ * 들어온 요청에 X-Request-Id 가 있으면 그대로 쓴다 (프론트·AI 서버와 추적 ID 를 이어 붙이기 위함).
+ * /api/** 와 /mcp 요청은 한 줄 접근 로그를 남긴다. actuator·swagger 는 제외.
+ */
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class RequestIdFilter extends OncePerRequestFilter {
+
+    public static final String HEADER = "X-Request-Id";
+    public static final String MDC_KEY = "requestId";
+
+    private static final Logger access = LoggerFactory.getLogger("com.beez.access");
+    private static final Pattern ANALYSIS_DETAIL = Pattern.compile("^/api/projects/[^/]+/change-proposals/[^/]+/?$");
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
+            throws ServletException, IOException {
+        String incoming = req.getHeader(HEADER);
+        String id = (incoming != null && !incoming.isBlank() && incoming.length() <= 64)
+                ? incoming
+                : UUID.randomUUID().toString().substring(0, 8);
+        MDC.put(MDC_KEY, id);
+        res.setHeader(HEADER, id);
+        long started = System.nanoTime();
+        String path = req.getRequestURI();
+        boolean redact = ("GET".equals(req.getMethod()) || "HEAD".equals(req.getMethod()))
+                && ANALYSIS_DETAIL.matcher(path).matches();
+        try (var ignored = redact ? ProjectLogRedaction.open() : null) {
+            try {
+                chain.doFilter(req, res);
+            } finally {
+                if (path.startsWith("/api/") || path.equals("/mcp")) {
+                    long ms = (System.nanoTime() - started) / 1_000_000;
+                    access.info("{} {} -> {} ({} ms)", req.getMethod(), redact ? accessLogPath(path) : path, res.getStatus(), ms);
+                }
+            }
+        } finally {
+            MDC.remove(MDC_KEY);
+        }
+    }
+
+    /** Redact the project identifier from the analysis-detail access log. */
+    static String accessLogPath(String path) {
+        return path == null ? "" : path.replaceFirst("^(/api/projects/)[^/]+", "$1{projectId}");
+    }
+}

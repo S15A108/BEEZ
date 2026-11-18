@@ -1,0 +1,94 @@
+package com.beez.backend.task.entity;
+
+import com.beez.backend.common.entity.BaseTimeEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import java.util.List;
+import java.util.Map;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+/**
+ * 완료 보고. 테이블 {@code task_completion_report}. 불변 (UPDATE 차단 트리거).
+ * 계획 대비 달라진 점(delta)이 있으면 has_delta=true 이고 작업은 WAITING(REVALIDATION) 으로 간다.
+ * DB CHECK: has_delta = (delta 배열 길이 > 0). 서비스가 같은 규칙으로 계산해 넣는다.
+ */
+@Entity
+@Table(name = "task_completion_report")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class TaskCompletionReport extends BaseTimeEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "task_id", nullable = false, updatable = false)
+    private Long taskId;
+
+    @Column(name = "plan_revision_id", nullable = false, updatable = false)
+    private Long planRevisionId;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "delta", nullable = false, updatable = false)
+    private List<Map<String, Object>> delta;
+
+    @Column(name = "has_delta", nullable = false, updatable = false)
+    private boolean hasDelta;
+
+    @Column(name = "summary", updatable = false)
+    private String summary;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "completion_checks", nullable = false, updatable = false)
+    private List<Map<String, Object>> completionChecks;
+
+    /**
+     * 델타 검증(trigger=DELTA). 이 테이블은 UPDATE 금지(트리거)라 나중에 채울 수 없다.
+     * 검증 접수(S15P31A108-159)가 들어오면 DELTA 검증을 먼저 만들고 그 번호를 넣어 보고를 저장한다. 지금은 비어 있다.
+     */
+    @Column(name = "delta_validation_id", updatable = false)
+    private Long deltaValidationId;
+
+    @Column(name = "reported_by_token_id", updatable = false)
+    private Long reportedByTokenId;
+
+    /**
+     * 에이전트가 실제로 바꿨다고 보고한 설계 항목 (S15P31A108-269). null = 보고하지 않음, 빈 목록 = 바꾼 항목 없음.
+     * 계획과의 대조(범위 이탈 후보)는 저장하지 않고 읽을 때 {@code CompletionReviewer} 가 계산한다
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "changed_design_item_ids", updatable = false)
+    private List<Long> changedDesignItemIds;
+
+    public TaskCompletionReport(Long taskId, Long planRevisionId, List<Map<String, Object>> delta, String summary,
+                                List<Map<String, Object>> completionChecks, List<Long> changedDesignItemIds,
+                                Long reportedByTokenId) {
+        this(taskId, planRevisionId, delta, summary, completionChecks, changedDesignItemIds, reportedByTokenId, null);
+    }
+
+    /**
+     * @param changedDesignItemIds 실제로 바꾼 설계 항목. null = 보고하지 않음
+     * @param deltaValidationId    delta 가 있을 때 먼저 접수한 DELTA 검증 번호 (S3). 이 표는 UPDATE 금지라 저장할 때 함께 넣어야 한다
+     */
+    public TaskCompletionReport(Long taskId, Long planRevisionId, List<Map<String, Object>> delta, String summary,
+                                List<Map<String, Object>> completionChecks, List<Long> changedDesignItemIds,
+                                Long reportedByTokenId, Long deltaValidationId) {
+        this.taskId = taskId;
+        this.planRevisionId = planRevisionId;
+        this.delta = delta;
+        this.hasDelta = !delta.isEmpty();
+        this.summary = summary;
+        this.completionChecks = completionChecks;
+        this.changedDesignItemIds = changedDesignItemIds;
+        this.reportedByTokenId = reportedByTokenId;
+        this.deltaValidationId = deltaValidationId;
+    }
+}

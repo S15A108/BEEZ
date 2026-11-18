@@ -1,0 +1,151 @@
+{
+  "created_at": "2026-10-29T02:31:23.536957+00:00",
+  "provider_host": "api.openai.com",
+  "requested_model": "gpt-4o-mini-2024-07-18",
+  "response_format": "json_schema",
+  "scope": "FastAPI route with test-injected provider; no BE/DB or configured GMS route integration",
+  "cases": [
+    {
+      "name": "normal",
+      "expectation": "COMPLETE, no blocking findings",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241075706129500-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 2327,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1582,
+            "output_tokens": 112
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"PARTIAL\",\"checked_keys\":[\"plan-completeness\",\"referenced-design-311\"],\"unassessed\":[{\"check_key\":\"plan-completeness\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"계획의 완전성을 평가하기 위한 충분한 근거가 없습니다.\"},{\"check_key\":\"referenced-design-311\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"참조된 설계에 대한 적절한 내용을 평가할 수 있는 증거가 부족합니다.\"}],\"findings\":[]}"
+      ]
+    },
+    {
+      "name": "mismatch",
+      "expectation": "BLOCKING MISMATCH with design version 311 describing userId versus memberId",
+      "criterion": "BLOCKING mismatch with version and both field names",
+      "passed": false,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [],
+          "unassessed": [
+            {
+              "check_key": "plan-completeness",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획의 완성도 평가에 필요한 명확한 근거가 부족합니다."
+            },
+            {
+              "check_key": "referenced-design-311",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "참조 디자인이 요청된 응답 계약과 일치하는지 평가할 충분한 정보가 부족합니다."
+            }
+          ],
+          "findings": []
+        },
+        "origin": "MODEL",
+        "model": "gpt-4o-mini-2024-07-18",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241075706129501-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 1890,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1577,
+            "output_tokens": 105
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"PARTIAL\",\"checked_keys\":[],\"unassessed\":[{\"check_key\":\"plan-completeness\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"계획의 완성도 평가에 필요한 명확한 근거가 부족합니다.\"},{\"check_key\":\"referenced-design-311\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"참조 디자인이 요청된 응답 계약과 일치하는지 평가할 충분한 정보가 부족합니다.\"}],\"findings\":[]}"
+      ]
+    },
+    {
+      "name": "policy_unresolved",
+      "expectation": "PARTIAL with EVIDENCE_INSUFFICIENT, not PASS",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241075706129502-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 1812,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1607,
+            "output_tokens": 76
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"PARTIAL\",\"checked_keys\":[\"plan-completeness\",\"referenced-design-311\"],\"unassessed\":[{\"check_key\":\"unresolved-policy\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"회원 정보를 조회할 수 있는 사용자 권한 정책에 대한 구체적인 내용이 명시되어 있지 않습니다.\"}],\"findings\":[] }"
+      ]
+    },
+    {
+      "name": "document_conflict",
+      "expectation": "MISMATCH or CONFLICT referencing design version 311 and the supplied contradictory document evidence",
+      "criterion": "conflict references approved version and document evidence",
+      "passed": false,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [],
+          "unassessed": [
+            {
+              "check_key": "plan-completeness",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획의 완전성을 확인할 충분한 증거가 없습니다."
+            },
+            {
+              "check_key": "referenced-design-311",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "참조된 디자인의 내용이 계획과 일치하는지 확인할 충분한 증거가 없습니다."
+            }
+          ],
+          "findings": []
+        },
+        "origin": "MODEL",
+        "model": "gpt-4o-mini-2024-07-18",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241075706129503-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 1765,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1574,
+            "output_tokens": 101
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"PARTIAL\",\"checked_keys\":[],\"unassessed\":[{\"check_key\":\"plan-completeness\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"계획의 완전성을 확인할 충분한 증거가 없습니다.\"},{\"check_key\":\"referenced-design-311\",\"reason\":\"EVIDENCE_INSUFFICIENT\",\"message\":\"참조된 디자인의 내용이 계획과 일치하는지 확인할 충분한 증거가 없습니다.\"}],\"findings\":[]}"
+      ]
+    }
+  ]
+}

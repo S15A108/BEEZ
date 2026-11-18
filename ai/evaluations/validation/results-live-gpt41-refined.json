@@ -1,0 +1,189 @@
+{
+  "created_at": "2026-10-29T02:33:24.081121+00:00",
+  "provider_host": "api.openai.com",
+  "requested_model": "gpt-4.1-2025-04-14",
+  "response_format": "json_schema",
+  "scope": "FastAPI route with test-injected provider; no BE/DB or configured GMS route integration",
+  "cases": [
+    {
+      "name": "normal",
+      "expectation": "COMPLETE, no blocking findings",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241193238994700-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4.1-2025-04-14",
+            "latency_ms": 3280,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1745,
+            "output_tokens": 360
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"COMPLETE\",\"checked_keys\":[\"plan-completeness\",\"referenced-design-311\"],\"unassessed\":[],\"findings\":[{\"check_key\":\"plan-completeness\",\"kind\":\"MISMATCH\",\"severity\":\"INFO\",\"message\":\"계획의 제외 범위에 '회원 정보 수정'이 명시되어 있으나, 다른 요구사항이나 작업 간 연관이 없으므로 별도의 조치 필요성은 낮습니다. 단, 제외 범위가 선택적으로 기재된 점 참고 바랍니다.\",\"design_item_id\":null,\"design_item_version_id\":null,\"related_task_id\":null,\"sources\":[],\"evidence_ids\":[],\"suggested_action\":\"계획서 내 '회원 정보 수정' 제외 이유에 대해 팀 내 공유 또는 관리 목적의 주석 추가를 고려하세요.\"},{\"check_key\":\"referenced-design-311\",\"kind\":\"MISMATCH\",\"severity\":\"INFO\",\"message\":\"설계와 계획은 거의 일치합니다. 응답 필드와 요청 필드 모두 정확히 반영되어 있습니다. 추가적으로, 설계 문서에는 응답 코드(200)가 예시되어 있으나 계획서에는 상태 코드 명시가 없습니다. 실 구현 시 200 응답을 반환해야 함을 명확히 관리 문서에 반영하는 것을 권장합니다.\",\"design_item_id\":\"301\",\"design_item_version_id\":\"311\",\"related_task_id\":null,\"sources\":[{\"document_id\":\"201\",\"document_version_id\":\"211\",\"version_no\":1,\"location\":\"회원 조회 API / 요청 본문\"}],\"evidence_ids\":[\"e-member-api\"],\"suggested_action\":\"API 응답에 HTTP 200 상태 코드 반환이 필요함을 구현 또는 안내 문서에 명확히 표시할 것.\"}]}"
+      ]
+    },
+    {
+      "name": "mismatch",
+      "expectation": "BLOCKING MISMATCH with design version 311 describing userId versus memberId",
+      "criterion": "BLOCKING mismatch with version and both field names",
+      "passed": false,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "referenced-design-311"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "referenced-design-311",
+              "kind": "CONFLICT",
+              "severity": "BLOCKING",
+              "message": "계획서에서 API 요청에 userId만 필수로 받고 memberId는 받지 않는다고 명시되어 있지만, 승인된 설계(API-001)와 해당 증거에 따르면 요청에는 memberId (integer, 필수)만 정의되어 있습니다. 즉, 계획의 접근 방식(요청 필드: userId)과 설계의 계약(요청 필드: memberId)이 상충합니다. 이 불일치를 해결해야 합니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "회원 조회 API / 요청 본문"
+                }
+              ],
+              "evidence_ids": [
+                "e-member-api"
+              ],
+              "suggested_action": "설계와 일치하도록 계획 내용을 수정하거나, 설계 변경이 필요한 경우 변경 절차를 진행하십시오."
+            }
+          ]
+        },
+        "origin": "MODEL",
+        "model": "gpt-4.1-2025-04-14",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241193238994701-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4.1-2025-04-14",
+            "latency_ms": 2438,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1740,
+            "output_tokens": 236
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"COMPLETE\",\"checked_keys\":[\"plan-completeness\",\"referenced-design-311\"],\"unassessed\":[],\"findings\":[{\"check_key\":\"referenced-design-311\",\"kind\":\"CONFLICT\",\"severity\":\"BLOCKING\",\"message\":\"계획서에서 API 요청에 userId만 필수로 받고 memberId는 받지 않는다고 명시되어 있지만, 승인된 설계(API-001)와 해당 증거에 따르면 요청에는 memberId (integer, 필수)만 정의되어 있습니다. 즉, 계획의 접근 방식(요청 필드: userId)과 설계의 계약(요청 필드: memberId)이 상충합니다. 이 불일치를 해결해야 합니다.\",\"design_item_id\":\"301\",\"design_item_version_id\":\"311\",\"related_task_id\":null,\"sources\":[{\"document_id\":\"201\",\"document_version_id\":\"211\",\"version_no\":1,\"location\":\"회원 조회 API / 요청 본문\"}],\"evidence_ids\":[\"e-member-api\"],\"suggested_action\":\"설계와 일치하도록 계획 내용을 수정하거나, 설계 변경이 필요한 경우 변경 절차를 진행하십시오.\"}]}"
+      ]
+    },
+    {
+      "name": "policy_unresolved",
+      "expectation": "PARTIAL with EVIDENCE_INSUFFICIENT, not PASS",
+      "criterion": "PARTIAL and EVIDENCE_INSUFFICIENT",
+      "passed": true,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [
+            "referenced-design-311"
+          ],
+          "unassessed": [
+            {
+              "check_key": "plan-completeness",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "회원 정보를 조회할 수 있는 사용자 권한 정책이 아직 결정되지 않았으므로, 계획의 완전성을 평가할 수 없습니다."
+            }
+          ],
+          "findings": []
+        },
+        "origin": "MODEL",
+        "model": "gpt-4.1-2025-04-14",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241193238994702-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4.1-2025-04-14",
+            "latency_ms": 2218,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1770,
+            "output_tokens": 103
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"referenced-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"plan-completeness\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"회원 정보를 조회할 수 있는 사용자 권한 정책이 아직 결정되지 않았으므로, 계획의 완전성을 평가할 수 없습니다.\"\n    }\n  ],\n  \"findings\": []\n}"
+      ]
+    },
+    {
+      "name": "document_conflict",
+      "expectation": "MISMATCH or CONFLICT referencing design version 311 and the supplied contradictory document evidence",
+      "criterion": "conflict references approved version and document evidence",
+      "passed": true,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "referenced-design-311"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "referenced-design-311",
+              "kind": "MISMATCH",
+              "severity": "BLOCKING",
+              "message": "설계서의 요청 필드 이름이 'userId'로 명시되어 있으나, 승인된 계약 및 계획에서는 'memberId'를 사용하고 있습니다. 필드 명칭 불일치로 인해 요청 계약이 충돌합니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "회원 조회 API / 요청 본문"
+                }
+              ],
+              "evidence_ids": [
+                "e-member-api"
+              ],
+              "suggested_action": "요청 필드 이름을 'memberId'로 일치시키거나, 설계서 및 API 계약서를 일관되게 수정하시기 바랍니다."
+            }
+          ]
+        },
+        "origin": "MODEL",
+        "model": "gpt-4.1-2025-04-14",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793241193238994703-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4.1-2025-04-14",
+            "latency_ms": 2859,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1737,
+            "output_tokens": 200
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\"analysis_status\":\"COMPLETE\",\"checked_keys\":[\"plan-completeness\",\"referenced-design-311\"],\"unassessed\":[],\"findings\":[{\"check_key\":\"referenced-design-311\",\"kind\":\"MISMATCH\",\"severity\":\"BLOCKING\",\"message\":\"설계서의 요청 필드 이름이 'userId'로 명시되어 있으나, 승인된 계약 및 계획에서는 'memberId'를 사용하고 있습니다. 필드 명칭 불일치로 인해 요청 계약이 충돌합니다.\",\"design_item_id\":\"301\",\"design_item_version_id\":\"311\",\"related_task_id\":null,\"sources\":[{\"document_id\":\"201\",\"document_version_id\":\"211\",\"version_no\":1,\"location\":\"회원 조회 API / 요청 본문\"}],\"evidence_ids\":[\"e-member-api\"],\"suggested_action\":\"요청 필드 이름을 'memberId'로 일치시키거나, 설계서 및 API 계약서를 일관되게 수정하시기 바랍니다.\"}]}"
+      ]
+    }
+  ]
+}

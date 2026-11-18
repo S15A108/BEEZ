@@ -1,0 +1,241 @@
+spring:
+  application:
+    name: beez-backend
+  profiles:
+    default: local                # 아무것도 지정 안 하면 local
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/beez}
+    username: ${DB_USERNAME:beez}
+    password: ${DB_PASSWORD:beez}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate          # 스키마는 Flyway 가 만든다. 엔티티와 어긋나면 기동 실패.
+    open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc.time_zone: UTC       # 시각은 UTC(Instant/timestamptz) 로 저장, 표시는 프론트가 한다
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  session:
+    jdbc:
+      initialize-schema: never    # 세션 테이블은 Flyway(V24)가 만든다
+      cleanup-cron: "0 * * * * *" # 1분마다 만료 세션 행을 지운다 (expiry_time 인덱스)
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE      # 프로토타입 API 와 동일 (decision_refs, task_id …)
+    default-property-inclusion: non_null
+
+  # SMTP 접속 (S15P31A108-219). beez.mail.mode=smtp 일 때만 쓴다. host 가 비면 JavaMailSender 가 만들어지지 않고 발송이 503 이 된다
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_SMTP_STARTTLS:true}
+      mail.smtp.starttls.required: ${MAIL_SMTP_STARTTLS:true}
+      # 기본값은 무한 대기다. 요청 스레드가 SMTP 에 묶이지 않게 끊는다
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 2MB
+
+  # @Scheduled 워커(문서 색인·원본 정리·검증)가 기본 스레드 1개를 같이 쓰면, 검증 워커가 AI 응답을 기다리는 동안
+  # 문서 색인이 멈춘다. 워커마다 스레드를 하나씩 쓰게 한다.
+  task:
+    scheduling:
+      pool:
+        # @Scheduled 메서드 11개(문서 비비 검토 워커 추가, S15P31A108-391) 중 AI 응답을 오래 기다리는 것이 5개라 짧은 정리 작업이 밀리지 않게 10
+        size: ${SCHEDULING_POOL_SIZE:10}
+
+  # 종료 단계마다 기다리는 상한. 웹 graceful shutdown 의 진행 중 요청 대기도 이 값이다(기본 30초).
+  # 20초로 묶어, 그 뒤 보내던 메일 대기(beez.mail.shutdown-wait, 종료 시작부터 25초)가 최소 5초 남고
+  # 합쳐도 compose stop_grace_period(30초) 전에 끝나게 한다 (S15P31A108-334, PR #215 리뷰).
+  # 배포 순간 20초 넘게 걸리는 요청(AI 응답 대기 등)은 잘린다
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  docker:
+    compose:
+      file: compose.yaml
+      lifecycle-management: start-only   # 서버를 껐다 켜도 DB 는 유지
+
+  # 계정은 DB(account)에서 직접 확인한다. 기본 인메모리 사용자(+생성 비밀번호 로그)를 만들지 않는다.
+  autoconfigure:
+    exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  # 호스트 Nginx 가 넘긴 X-Forwarded-For·X-Forwarded-Proto 를 Tomcat(RemoteIpValve)이 읽는다 (Q04, S15P31A108-273).
+  # getRemoteAddr() 가 Nginx(docker 게이트웨이)가 아니라 실제 클라이언트가 되어 IP 한도(beez.auth-guard)에 쓴다.
+  # 믿는 프록시는 Tomcat 기본 내부망 목록(127/8·10/8·172.16/12·192.168/16 …)이다. backend 포트는 127.0.0.1 에만 열려 있다
+  forward-headers-strategy: native
+  error:
+    include-message: never
+    include-stacktrace: never
+  # 웹 세션 (Q04 제안안). PostgreSQL 에 저장해(spring.session.jdbc) 배포로 backend 가 바뀌어도 로그인이 유지된다 (-242).
+  # 아래 만료·쿠키 값은 Spring Session 도 그대로 읽는다.
+  servlet:
+    session:
+      timeout: 2h                 # 마지막 요청 후 2시간
+      tracking-modes: cookie      # URL 에 ;jsessionid 를 붙이지 않는다
+      cookie:
+        name: BEEZ_SESSION
+        http-only: true
+        same-site: lax            # 다른 사이트에서 보낸 POST 에는 쿠키가 실리지 않는다 (CSRF 1차 방어)
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # prometheus 는 같은 8080 에서 연다(관리 포트 분리 안 함 — 헬스체크·Nginx·deploy.sh 가 8080 을 쓴다).
+        # 외부 인터넷은 Nginx 가 /actuator/ 를 막고, 수집은 compose 네트워크 안에서 한다 (S15P31A108-262, docs/infra/cd.md)
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    # SMTP 가 잠깐 안 닿는다고 backend 를 DOWN 으로 보지 않는다 — 헬스체크(compose·deploy.sh)가 배포를 되돌리게 된다
+    mail:
+      enabled: false
+  info:
+    build:
+      enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %5p [%X{requestId:-}] %-32.32logger{32} : %m%n"
+  level:
+    com.beez: INFO
+
+beez:
+  document:
+    object-storage:
+      endpoint: ${DOCUMENT_S3_ENDPOINT:}
+      region: ${DOCUMENT_S3_REGION:us-east-1}
+      bucket: ${DOCUMENT_S3_BUCKET:}
+      access-key: ${DOCUMENT_S3_ACCESS_KEY:}
+      secret-key: ${DOCUMENT_S3_SECRET_KEY:}
+    worker-enabled: ${DOCUMENT_WORKER_ENABLED:true}
+    poll-millis: ${DOCUMENT_POLL_MILLIS:2000}
+    embedding-profile: ${DOCUMENT_EMBEDDING_PROFILE:unconfigured}
+    embedding-model: ${DOCUMENT_EMBEDDING_MODEL:unconfigured}
+    embedding-dimension: 1024
+  meeting:
+    # 비비 회의 정리(AI-A08 SUMMARY) 요청 크기 예산 — 모두 바이트(한글은 글자당 3바이트). 실연동 때 AI 서버 한도에 맞춰 조정한다
+    summary:
+      max-request-bytes: ${MEETING_SUMMARY_MAX_REQUEST_BYTES:900000}
+      max-documents: ${MEETING_SUMMARY_MAX_DOCUMENTS:10}
+      max-document-bytes: ${MEETING_SUMMARY_MAX_DOCUMENT_BYTES:300000}
+      recent-entries-reserve-bytes: ${MEETING_SUMMARY_RECENT_ENTRIES_RESERVE_BYTES:100000}
+      max-entries: ${MEETING_SUMMARY_MAX_ENTRIES:200}
+      max-items: ${MEETING_SUMMARY_MAX_ITEMS:100}
+      # 회의 정리·정리 수정의 동기 호출. AI 모델 제한(35초)보다 길게, nginx /api/ 제한(60초)보다 짧게 둔다.
+      read-timeout: ${MEETING_SUMMARY_READ_TIMEOUT:45s}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  validation:
+    policy-analysis-enabled: ${VALIDATION_POLICY_ANALYSIS_ENABLED:false}
+    worker-enabled: ${VALIDATION_WORKER_ENABLED:true}
+    poll-millis: ${VALIDATION_POLL_MILLIS:2000}
+    lease-seconds: ${VALIDATION_LEASE_SECONDS:120}      # 근거 수집·AI 호출·결과 반영에 필요한 작업 리스
+    execution-budget-ms: ${VALIDATION_BUDGET_MS:30000}  # AI 에게 주는 처리 예산. 검증 전용 읽기 제한보다 짧게
+    read-timeout: ${VALIDATION_READ_TIMEOUT:40s}        # 검증 워커의 /v1/validate 읽기 제한
+    # 같은 작업·같은 검증 입력으로 실제 검증 AI 를 부를 수 있는 횟수 (새 검증 요청 + 재시도 합계).
+    # 가짜 분석기·AI 에 요청이 닿지 않은 실패·서버 중단으로 닫힌 실행은 세지 않는다 (읽기 시간 초과는 사용량이 없어도 센다)
+    max-model-attempts: ${VALIDATION_MAX_MODEL_ATTEMPTS:3}
+    # 서버용 가짜 분석기. AI 서버에 /v1/validate 가 붙기 전(-184)까지 개발 서버에서만 켠다.
+    # 켜면 AI 를 부르지 않고 의미 분석이 필요한 검증도 후보 없이 PASS 로 끝난다(실제 설계 대조 없음). 운영에서는 끈다
+    fake-analyzer: ${VALIDATION_FAKE_ANALYZER:false}
+  ai:
+    base-url: ${AI_BASE_URL:http://localhost:8000}
+    internal-token: ${AI_INTERNAL_TOKEN:change-me}
+    connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${AI_READ_TIMEOUT:20s}
+  # 문서 비비 검토(AI-A10) 전용 읽기 제한 (S15P31A108-382). 사슬: AI 모델 호출 50초 < 이 값 55초 < nginx /api/ 60초(S15P31A108-383).
+  # AI 보다 짧으면 AI 는 계속 돌고 BE 만 끊어 비용만 나간다. 공통 ai.read-timeout 보다 짧게 설정해도 공통값이 적용된다
+  document-review:
+    # 위 사슬은 이제 제안 대화·직접 요청(DISCUSS·REQUEST)에만 걸린다. 첫 검토·재검토는 워커가 HTTP 요청 밖에서 한다(S15P31A108-391)
+    read-timeout: ${DOCUMENT_REVIEW_READ_TIMEOUT:55s}
+    # 검토 워커의 AI 읽기 제한. AI 검토 모델 제한(DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS 110초, 상한 120초)보다 길게 둔다.
+    # 워커 lease 는 이 값 + 1분이라, 정상 처리 중에는 다른 워커가 이어받지 않는다(S15P31A108-391)
+    worker-read-timeout: ${DOCUMENT_REVIEW_WORKER_READ_TIMEOUT:120s}
+    # 검토를 동시에 처리하는 워커 스레드 수. 필수 문서 4종을 연달아 올려도 줄 서지 않게 4(S15P31A108-391)
+    worker-concurrency: ${DOCUMENT_REVIEW_WORKER_CONCURRENCY:4}
+  # 작업 계획 문서 초안(S15P31A108-385). 사슬: AI 모델 호출 30초 < 이 값 40초 < nginx /api/ 60초.
+  # max-calls-per-hour: 한 사람이 한 프로젝트에서 한 시간에 받을 수 있는 초안 횟수(비용 가드)
+  task-plan-draft:
+    read-timeout: ${TASK_PLAN_DRAFT_READ_TIMEOUT:40s}
+    max-calls-per-hour: ${TASK_PLAN_DRAFT_MAX_CALLS_PER_HOUR:20}
+    retrieval-limit: ${TASK_PLAN_DRAFT_RETRIEVAL_LIMIT:12}
+    max-excerpt-chars: ${TASK_PLAN_DRAFT_MAX_EXCERPT_CHARS:4000}
+    total-excerpt-chars: ${TASK_PLAN_DRAFT_TOTAL_EXCERPT_CHARS:12000}
+    max-design-items: ${TASK_PLAN_DRAFT_MAX_DESIGN_ITEMS:100}
+    design-summary-chars: ${TASK_PLAN_DRAFT_DESIGN_SUMMARY_CHARS:300}
+    selected-excerpts: ${TASK_PLAN_DRAFT_SELECTED_EXCERPTS:6}
+    similarity-drop: ${TASK_PLAN_DRAFT_SIMILARITY_DROP:0.15}
+    lexical-weight: ${TASK_PLAN_DRAFT_LEXICAL_WEIGHT:0.2}
+  invitation:
+    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
+    # 초대 메일 발송 한도 (Q05 결정 2026-11-09, S15P31A108-334). 초대한 계정마다 MEM-A01 새 초대 + MEM-A11 다시 보내기를 합쳐 센다.
+    # 메모리 카운터(재시작하면 초기화). 넘으면 요청 전체 429 rate_limited
+    send-limit: ${INVITE_SEND_LIMIT:30}
+    send-limit-window: 1h
+  # 팀원 접속 상태·위치 (MON-A06·A07, S15P31A108-386). 프로세스 메모리에 둔다(재시작하면 초기화, 서버 1대 기준).
+  # FE 는 15초마다 보고하고, ttl 은 그 3배다. 보고 한도는 (계정, 프로젝트)마다 센다
+  presence:
+    ttl: ${PRESENCE_TTL:45s}
+    rate-limit: ${PRESENCE_RATE_LIMIT:10}
+    rate-limit-window: 30s
+    retention: ${PRESENCE_RETENTION:24h}              # 마지막 보고 뒤 이 기간이 지나면 마지막 위치도 잊는다
+  mail:
+    mode: ${MAIL_MODE:log}                         # smtp 면 실제로 보낸다. 로컬·테스트는 log (보내지 않음)
+    from: ${MAIL_FROM:BEEZ <no-reply@beez.ai.kr>}
+    log-body: false                                # 로그 구현이 본문(인증 코드)을 찍을지. local 프로필만 true
+    shutdown-wait: 25s                             # 종료 시작(SIGTERM)부터 보내던 비동기 메일(초대·임시 비밀번호)을 기다리는 한계. 웹 요청 대기 시간 포함, compose stop_grace_period(30s)보다 짧게 (-334)
+  # 가입 이메일 인증 (ACC-A11·A12). 코드 유효 5분만 명세 값이고 나머지는 Q04 가 정해지기 전 기본안이다
+  email-verification:
+    code-ttl: 5m
+    resend-interval: ${EMAIL_VERIFY_RESEND_INTERVAL:60s}   # 명세 ACC-A11 응답 예시
+    send-limit: ${EMAIL_VERIFY_SEND_LIMIT:5}               # 이메일당 send-limit-window 안 발송 수
+    send-limit-window: 1h
+    global-send-limit: ${EMAIL_VERIFY_GLOBAL_SEND_LIMIT:100}   # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
+    max-attempts: ${EMAIL_VERIFY_MAX_ATTEMPTS:5}           # 틀린 입력 한도. FE 목과 같은 값
+    token-ttl: 30m                                         # verified_token. 명세 ACC-A12 응답 예시
+  # 비밀번호 찾기 — 임시 비밀번호 (ACC-A07, -171). Q04 가 정해지기 전 기본안. 한도는 가입 인증과 같은 값으로 시작한다
+  password-recovery:
+    ttl: 30m                    # 이 안에 임시 비밀번호로 로그인해야 한다
+    resend-interval: 60s        # 같은 이메일 다시 요청 간격
+    send-limit: 5               # 이메일당 send-limit-window 안 요청 수 (계정 유무와 관계없이 센다)
+    send-limit-window: 1h
+    global-send-limit: 100      # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
+  # 가입 인증(ACC-A11)·비밀번호 찾기(ACC-A07) 남용 대책 (Q04 결정 2026-11-09, S15P31A108-273)
+  auth-guard:
+    ip-limit: ${AUTH_IP_LIMIT:10}           # IP 하나가 ip-limit-window 안에 두 API 를 합쳐 부를 수 있는 횟수. 메모리 카운터(재시작하면 초기화)
+    ip-limit-window: 1h
+    row-retention: 7d                       # 끝난(만료·소비·닫힘) email_verification·temporary_password 행 보존 기간
+    row-cleanup-cron: "0 30 4 * * *"        # 행 정리 시각. 매일 04:30 (Asia/Seoul)
+  agent:
+    mcp-url: ${MCP_URL:http://localhost:8080/mcp}   # 토큰 발급 응답의 연결 URL (AGT-A01)
+    max-active-tokens: ${AGENT_MAX_ACTIVE_TOKENS:5}  # 프로젝트당 한 계정의 폐기 안 된 토큰 수 (Q06)

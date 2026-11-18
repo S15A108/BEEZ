@@ -1,0 +1,82 @@
+[
+  {
+    "status": 401,
+    "when": "내부 토큰 누락·불일치",
+    "body": {
+      "error": {
+        "code": "invalid_internal_token",
+        "message": "Selection request rejected."
+      }
+    }
+  },
+  {
+    "status": 503,
+    "when": "AI 서버의 선택 설정 미지정(기본 비활성)",
+    "body": {
+      "error": {
+        "code": "selection_not_configured",
+        "message": "Selection request rejected."
+      }
+    }
+  },
+  {
+    "status": 400,
+    "when": "JSON·필드·범위 오류, 스냅샷과 metadata 불일치",
+    "body": {
+      "error": {
+        "code": "validation_failed",
+        "message": "Selection request rejected."
+      }
+    }
+  },
+  {
+    "status": 503,
+    "when": "BE 검색·색인 미준비(search_status=NOT_READY); 패킷을 저장하지 않는다",
+    "body": {
+      "error": {
+        "code": "context_not_ready",
+        "message": "Selection processing failed."
+      }
+    }
+  },
+  {
+    "status": 502,
+    "when": "BE 검색 실패(search_status=FAILED); 근거 0건과 구분",
+    "body": {
+      "error": {
+        "code": "search_failed",
+        "message": "Selection processing failed."
+      }
+    }
+  },
+  {
+    "status": 504,
+    "when": "선택 시간 예산 초과; 시작된 호출 usage 포함",
+    "body": {
+      "error": {
+        "code": "embedding_timeout",
+        "message": "Selection processing failed."
+      },
+      "usage": [
+        {
+          "request_key": "mcp01-701:emb:3f2a…:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "latency_ms": 20000,
+          "failed": true,
+          "tokens_known": false
+        }
+      ]
+    }
+  },
+  {
+    "status": 422,
+    "when": "구성한 패킷이 262,144바이트를 넘음; ID·근거를 잘라서 맞추지 않는다",
+    "body": {
+      "error": {
+        "code": "packet_too_large",
+        "message": "Selection processing failed."
+      }
+    }
+  }
+]

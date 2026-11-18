@@ -1,0 +1,26 @@
+{
+  "validation_failed": {
+    "error": {
+      "code": "validation_failed",
+      "message": "zone: 허용되지 않은 값입니다"
+    }
+  },
+  "rate_limited": {
+    "error": {
+      "code": "rate_limited",
+      "message": "접속 상태를 너무 자주 보냈습니다. 잠시 뒤에 다시 시도하세요"
+    }
+  },
+  "not_found": {
+    "error": {
+      "code": "not_found",
+      "message": "리소스가 없거나 프로젝트 소속·접근 권한이 없음"
+    }
+  },
+  "unauthenticated": {
+    "error": {
+      "code": "unauthenticated",
+      "message": "세션 인증이 유효하지 않음"
+    }
+  }
+}

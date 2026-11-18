@@ -1,0 +1,25 @@
+{
+  "dataset_id": "nara-rag-dev-v1",
+  "label_author": "agent-authored; human review pending",
+  "split": "development-pilot",
+  "documents": [
+    {"id": "301", "kind": "PLAN", "path": "plan.md"},
+    {"id": "202", "kind": "REQUIREMENTS", "path": "requirements.md"},
+    {"id": "302", "kind": "API_SPEC", "path": "api-spec.md"},
+    {"id": "303", "kind": "ERD", "path": "data-design.md"}
+  ],
+  "questions": [
+    {"id": "plan-publish", "question": "문서를 최종 발행할 수 있는 사람은 누구인가요?", "gold": [{"document_version_id": "301", "quote": "문서의 최종 발행은 활성 프로젝트 리더만 수행한다."}], "required": [["활성"], ["리더", "leader"]]},
+    {"id": "plan-draft", "question": "아직 승인되지 않은 초안은 누구에게 어떤 모드로 제공하나요?", "gold": [{"document_version_id": "301", "quote": "미승인 초안은 접근 권한이 있는 멤버의 문서 검토 모드에서만 조회한다."}], "required": [["권한"], ["검토"]]},
+    {"id": "plan-absent", "question": "정식 운영이 시작되는 정확한 날짜는 언제인가요?", "gold": [], "required": []},
+    {"id": "req-limit", "question": "파일 하나의 업로드 용량 제한과 초과 시 HTTP 코드는 무엇인가요?", "gold": [{"document_version_id": "202", "quote": "단일 파일 업로드 한도는 30 MB이며, 초과하면 HTTP 413을 반환한다."}], "required": [["30"], ["413"]]},
+    {"id": "req-retry", "question": "색인 작업이 실패하면 원문은 어떻게 되며 누가 다시 시도할 수 있나요?", "gold": [{"document_version_id": "202", "quote": "색인 실패 시 원문 버전은 보존하고, 활성 프로젝트 멤버가 재시도할 수 있다."}], "required": [["보존", "유지"], ["활성"], ["멤버", "구성원"]]},
+    {"id": "req-absent", "question": "감사 로그의 보관 기간은 며칠인가요?", "gold": [], "required": []},
+    {"id": "api-create", "question": "문서를 만드는 HTTP 메서드와 경로, 성공 코드 및 반환 식별자는 무엇인가요?", "gold": [{"document_version_id": "302", "quote": "POST /api/projects/{projectId}/documents"}, {"document_version_id": "302", "quote": "문서 생성 성공은 HTTP 201이며 documentVersionId를 반환한다."}], "required": [["POST"], ["/api/projects/{projectId}/documents"], ["201"], ["documentVersionId"]]},
+    {"id": "api-list", "question": "GET /api/projects/{projectId}/documents는 문서를 생성하나요, 어떤 동작을 하나요?", "gold": [{"document_version_id": "302", "quote": "GET은 문서 목록을 조회하며 새 문서를 생성하지 않는다."}], "required": [["조회", "목록"], ["생성하지", "생성하지는", "아니", "않"]]},
+    {"id": "api-absent", "question": "문서를 삭제하는 DELETE API의 확정된 경로를 알려주세요.", "gold": [], "required": []},
+    {"id": "erd-fk", "question": "documents.owner_id가 참조하는 컬럼과 삭제 정책을 알려주세요.", "gold": [{"document_version_id": "303", "quote": "documents.owner_id는 accounts.id를 참조하며 삭제 정책은 RESTRICT다."}], "required": [["accounts.id"], ["RESTRICT"]]},
+    {"id": "erd-unique", "question": "document_chunk에서 유일성을 보장하는 컬럼 조합은 무엇인가요?", "gold": [{"document_version_id": "303", "quote": "document_chunk의 유일성 기준은 document_version_id와 chunk_no의 조합이다."}], "required": [["document_version_id"], ["chunk_no"]]},
+    {"id": "erd-absent", "question": "accounts 테이블에 생성할 물리 인덱스 이름은 무엇인가요?", "gold": [], "required": []}
+  ]
+}

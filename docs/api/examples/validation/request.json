@@ -1,0 +1,135 @@
+{
+  "project_id": "101",
+  "request_key": "ai-a02-request-mismatch",
+  "validation_id": "601",
+  "attempt": 1,
+  "plan_revision": {
+    "id": "511",
+    "task_id": "501",
+    "revision_no": 1,
+    "plan": {
+      "title": "로그인 API 구현",
+      "goal": "승인 계약대로 로그인 API를 구현한다.",
+      "included_scope": ["POST /api/auth/login 구현"],
+      "excluded_scope": ["회원가입"],
+      "approach": "로그인 성공 응답의 body.accessToken을 제거하고 Set-Cookie로만 전달한다.",
+      "completion_criteria": ["로그인 성공 시 인증 결과를 반환한다."],
+      "dependency_task_ids": [],
+      "design_refs": [
+        {
+          "design_item_id": "301",
+          "design_item_version_id": "311",
+          "relation": "IMPLEMENTS"
+        }
+      ],
+      "unlinked": [],
+      "no_contract_change": true,
+      "context_packet_id": "701"
+    },
+    "created_at": "2026-10-26T03:00:00Z",
+    "created_by": "11"
+  },
+  "approved_items": [
+    {
+      "id": "311",
+      "design_item_id": "301",
+      "key": "API-001",
+      "kind": "API_CONTRACT",
+      "version_no": 1,
+      "status": "APPROVED",
+      "schema_version": 1,
+      "content": {
+        "method": "POST",
+        "path": "/api/auth/login",
+        "description": "이메일·비밀번호 로그인",
+        "request_fields": [
+          {"name": "email", "location": "body", "type": "string", "required": true},
+          {"name": "password", "location": "body", "type": "string", "required": true}
+        ],
+        "responses": [
+          {
+            "status_code": "200",
+            "fields": [
+              {"name": "accessToken", "location": "body", "type": "string", "required": true},
+              {"name": "userId", "location": "body", "type": "integer", "required": true}
+            ]
+          }
+        ]
+      },
+      "source": {
+        "document_id": "201",
+        "document_version_id": "211",
+        "version_no": 1,
+        "location": "인증 API / POST /api/auth/login / 성공 응답"
+      }
+    }
+  ],
+  "related_plans": [
+    {
+      "id": "512",
+      "task_id": "502",
+      "revision_no": 1,
+      "plan": {
+        "title": "로그인 화면 연동",
+        "goal": "로그인 API의 승인 응답을 화면에서 사용한다.",
+        "included_scope": ["로그인 화면 및 API 응답 연동"],
+        "excluded_scope": ["회원가입 화면"],
+        "approach": "로그인 성공 응답 본문의 accessToken을 읽어 다음 요청에 사용한다.",
+        "completion_criteria": ["응답 본문의 accessToken을 읽어 인증 요청을 보낼 수 있다."],
+        "dependency_task_ids": [],
+        "design_refs": [
+          {
+            "design_item_id": "301",
+            "design_item_version_id": "311",
+            "relation": "READS"
+          }
+        ],
+        "unlinked": [],
+        "no_contract_change": true,
+        "context_packet_id": "702"
+      },
+      "created_at": "2026-10-26T03:00:00Z",
+      "created_by": "12"
+    }
+  ],
+  "rule_findings": [],
+  "unresolved": [],
+  "checks": [
+    {
+      "key": "plan-completeness",
+      "kind": "PLAN_COMPLETENESS",
+      "design_item_version_ids": [],
+      "related_plan_revision_ids": []
+    },
+    {
+      "key": "design-api-login",
+      "kind": "DESIGN_ALIGNMENT",
+      "design_item_version_ids": ["311"],
+      "related_plan_revision_ids": []
+    },
+    {
+      "key": "related-task-502",
+      "kind": "RELATED_PLAN_CONFLICT",
+      "design_item_version_ids": ["311"],
+      "related_plan_revision_ids": ["512"]
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "evidence-login-response",
+      "design_item_version_id": "311",
+      "source": {
+        "document_id": "201",
+        "document_version_id": "211",
+        "version_no": 1,
+        "location": "인증 API / POST /api/auth/login / 성공 응답"
+      },
+      "locator": {"type": "text_lines", "start_line": 3, "end_line": 8},
+      "text": "### 성공 응답\n상태 코드: 200\n| 필드 | 타입 | 필수 | 설명 |\n| --- | --- | --- | --- |\n| accessToken | string | 예 | 발급한 접근 토큰 |\n| userId | integer | 예 | 사용자 식별자 |\n",
+      "text_hash": "6cc7fd2817a76191efd014ccdf0d78926e59182d172c922a9ab2b8a2c302c5bb",
+      "normalization_version": "utf8-lf-v1"
+    }
+  ],
+  "execution_budget_ms": 30000,
+  "input_snapshot_hash": "sha256:validation-input-mismatch"
+}

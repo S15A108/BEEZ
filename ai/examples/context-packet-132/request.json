@@ -1,0 +1,138 @@
+{
+  "request_key": "mcp01-701",
+  "project_id": "101",
+  "baseline_id": "401",
+  "request": "로그인 화면을 구현해 주세요.",
+  "task_id": "501",
+  "document_version_ids": [
+    "211",
+    "212"
+  ],
+  "items": [
+    {
+      "design_item_id": "301",
+      "design_item_version_id": "311",
+      "project_id": "101",
+      "baseline_id": "401",
+      "status": "APPROVED",
+      "text": "POST /api/auth/login 은 이메일·비밀번호로 로그인하고 세션 토큰을 발급한다."
+    },
+    {
+      "design_item_id": "302",
+      "design_item_version_id": "312",
+      "project_id": "101",
+      "baseline_id": "401",
+      "status": "APPROVED",
+      "text": "비밀번호를 5회 연속 틀리면 계정을 10분 동안 잠근다."
+    },
+    {
+      "design_item_id": "303",
+      "design_item_version_id": "313",
+      "project_id": "101",
+      "baseline_id": "401",
+      "status": "APPROVED",
+      "text": "사용자는 이메일과 비밀번호로 로그인할 수 있어야 한다."
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "chunk-211-7",
+      "document_version_id": "211",
+      "project_id": "101",
+      "baseline_id": "401",
+      "text": "ACC-02 로그인: 이메일과 비밀번호를 입력해 로그인한다. 실패 5회면 10분 잠금."
+    },
+    {
+      "evidence_id": "chunk-212-2",
+      "document_version_id": "212",
+      "project_id": "101",
+      "baseline_id": "401",
+      "text": "SEC-01 비밀번호는 8자 이상이며 숫자와 문자를 섞는다."
+    }
+  ],
+  "relations": [
+    {
+      "from_design_item_id": "301",
+      "to_design_item_id": "302",
+      "from_design_item_version_id": "311",
+      "to_design_item_version_id": "312",
+      "relation": "DEPENDS_ON",
+      "origin": "EXPLICIT",
+      "status": "CONFIRMED"
+    }
+  ],
+  "task_design_refs": [
+    {
+      "design_item_id": "303",
+      "design_item_version_id": "313"
+    }
+  ],
+  "search_status": "COMPLETE",
+  "metadata": {
+    "design_items": [
+      {
+        "design_item_version_id": "311",
+        "design_item_id": "301",
+        "key": "API-001",
+        "kind": "API_CONTRACT",
+        "version_no": 1,
+        "source": {
+          "document_id": "201",
+          "document_version_id": "211",
+          "version_no": 1,
+          "location": "3. 계정 관리 / ACC-02"
+        },
+        "description": "이메일·비밀번호 로그인"
+      },
+      {
+        "design_item_version_id": "312",
+        "design_item_id": "302",
+        "key": "POL-003",
+        "kind": "POLICY",
+        "version_no": 1,
+        "source": {
+          "document_id": "202",
+          "document_version_id": "212",
+          "version_no": 1,
+          "location": "2. 보안 정책 / SEC-02"
+        },
+        "description": "비밀번호를 5회 연속 틀리면 계정을 10분 동안 잠근다."
+      },
+      {
+        "design_item_version_id": "313",
+        "design_item_id": "303",
+        "key": "REQ-010",
+        "kind": "REQUIREMENT",
+        "version_no": 1,
+        "source": {
+          "document_id": "201",
+          "document_version_id": "211",
+          "version_no": 1,
+          "location": "3. 계정 관리 / ACC-01"
+        },
+        "description": "이메일·비밀번호 로그인 요구사항"
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "chunk-211-7",
+        "document_id": "201",
+        "document_version_id": "211",
+        "version_no": 1,
+        "location": "3. 계정 관리 / ACC-02"
+      },
+      {
+        "evidence_id": "chunk-212-2",
+        "document_id": "202",
+        "document_version_id": "212",
+        "version_no": 1,
+        "location": "2. 보안 정책 / SEC-01"
+      }
+    ],
+    "task": {
+      "task_id": "501",
+      "plan_revision_id": "512",
+      "status": "IN_PROGRESS"
+    }
+  }
+}

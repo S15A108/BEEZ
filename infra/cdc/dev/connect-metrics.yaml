@@ -1,0 +1,56 @@
+# Connect 지표 내보내기 설정 (S15P31A108-261). Prometheus JMX exporter javaagent 가 읽는다(compose.yaml 의 connect KAFKA_OPTS).
+# 운영 절차는 docs/infra/cdc-stack.md "지표(261)", 알림은 docs/infra/monitoring-alerts.md.
+#
+# 허용 목록만 내보낸다(includeObjectNames). 지표 포트 9404 는 beez_default 안에서 같은 망 컨테이너가 읽을 수 있으므로
+# 필요한 MBean 만 열고, 라벨은 커넥터 이름·task 번호·상태 문자열뿐이다(설정값·비밀번호·접수행 값 없음).
+# 에이전트가 따로 내는 JVM 지표(jvm_*·process_*)는 그대로 둔다 — Connect 힙이 컨테이너 상한(1g)에 닿는지 본다.
+#
+# MBean 이름 안의 값은 Connect 가 특수 문자가 있을 때만 따옴표로 감싼다. 아래 패턴은 따옴표가 있어도 없어도 맞게 "? 를 둔다.
+# 상태 문자열(running·paused·failed·unassigned·restarting·stopped)은 숫자가 아니라 라벨 status 로 옮기고 값을 1 로 둔다.
+
+lowercaseOutputName: true
+
+includeObjectNames:
+  - "kafka.connect:type=connector-metrics,*"
+  - "kafka.connect:type=connector-task-metrics,*"
+  - "kafka.connect:type=connect-worker-metrics,*"
+  - "debezium.postgres:type=connector-metrics,context=streaming,*"
+
+rules:
+  # 커넥터 상태. 커넥터가 등록돼 있는 동안만 시계열이 있다 → 없음 자체가 "커넥터 없음"(CdcConnectorMissing)
+  - pattern: 'kafka.connect<type=connector-metrics, connector="?([^",]+)"?><>status: ([a-z-]+)'
+    name: kafka_connect_connector_status
+    value: 1
+    type: GAUGE
+    labels:
+      connector: "$1"
+      status: "$2"
+
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector="?([^",]+)"?, task="?([^",]+)"?><>status: ([a-z-]+)'
+    name: kafka_connect_task_status
+    value: 1
+    type: GAUGE
+    labels:
+      connector: "$1"
+      task: "$2"
+      status: "$3"
+
+  # 커넥터별 task 수(running·failed·paused·unassigned·restarting·total·destroyed)
+  - pattern: 'kafka.connect<type=connect-worker-metrics, connector="?([^",]+)"?><>connector-([a-z]+)-task-count'
+    name: kafka_connect_worker_connector_task_count
+    type: GAUGE
+    labels:
+      connector: "$1"
+      state: "$2"
+
+  # worker 전체 커넥터·task 수
+  - pattern: 'kafka.connect<type=connect-worker-metrics><>(connector-count|task-count)'
+    name: kafka_connect_worker_$1
+    type: GAUGE
+
+  # Debezium 스트리밍: DB 복제 연결 여부(boolean → 1/0), 마지막 이벤트 뒤 시간, 본 이벤트 수
+  - pattern: 'debezium.postgres<type=connector-metrics, context=streaming, server="?([^",]+)"?><>(Connected|MilliSecondsSinceLastEvent|TotalNumberOfEventsSeen)'
+    name: debezium_streaming_$2
+    type: GAUGE
+    labels:
+      server: "$1"

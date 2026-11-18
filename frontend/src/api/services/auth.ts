@@ -1,0 +1,115 @@
+import { z } from 'zod'
+import * as schemas from '@/features/auth/schemas'
+import { callEndpoint, type RequestOptions } from './request'
+
+export const authApi = {
+  register: (input: schemas.RegisterInput, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.registerResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/register`,
+        data: schemas.registerInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  sendEmailVerification: (
+    input: schemas.SendEmailVerificationInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.sendEmailVerificationResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/email-verifications`,
+        data: schemas.sendEmailVerificationInputSchema.parse(input),
+      },
+      options,
+    ),
+  confirmEmailVerification: (
+    verificationId: string,
+    input: schemas.ConfirmEmailVerificationInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.confirmEmailVerificationResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/email-verifications/${encodeURIComponent(verificationId)}/confirm`,
+        data: schemas.confirmEmailVerificationInputSchema.parse(input),
+      },
+      options,
+    ),
+  login: (input: schemas.LoginInput, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.loginResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/login`,
+        data: schemas.loginInputSchema.parse(input),
+      },
+      options,
+    ),
+  logout: (options?: RequestOptions) =>
+    callEndpoint(z.void(), { method: 'POST', url: `/auth/logout` }, options),
+  me: (options?: RequestOptions) =>
+    callEndpoint(
+      schemas.meResponseSchema,
+      { method: 'GET', url: `/me` },
+      options,
+    ),
+  updateMe: (input?: schemas.UpdateMeInput, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.updateMeResponseSchema,
+      {
+        method: 'PATCH',
+        url: `/me`,
+        data: schemas.updateMeInputSchema.parse(input ?? {}),
+      },
+      options,
+    ),
+  changePassword: (
+    input: schemas.ChangePasswordInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      z.void(),
+      {
+        method: 'PUT',
+        url: `/me/password`,
+        data: schemas.changePasswordInputSchema.parse(input),
+      },
+      options,
+    ),
+  forgotPassword: (
+    input: schemas.ForgotPasswordInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.forgotPasswordResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/password/forgot`,
+        data: schemas.forgotPasswordInputSchema.parse(input),
+      },
+      options,
+    ),
+  withdraw: (input: schemas.WithdrawInput, options?: RequestOptions) =>
+    callEndpoint(
+      z.void(),
+      {
+        method: 'POST',
+        url: `/me/withdraw`,
+        data: schemas.withdrawInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  withdrawalCheck: (options?: RequestOptions) =>
+    callEndpoint(
+      schemas.withdrawalCheckResponseSchema,
+      { method: 'GET', url: `/me/withdrawal-check` },
+      options,
+    ),
+}

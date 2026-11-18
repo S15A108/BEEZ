@@ -1,0 +1,25 @@
+# 로컬 전체 스택 검증용 겹침 파일 (S15P31A108-120). compose.yaml 위에 겹쳐 쓴다.
+#
+#   docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d --build
+#
+# 서버의 호스트 Nginx 역할을 nginx 컨테이너가 대신한다.
+# 프론트는 D13(frontend/docs/decisions.md)대로 이미지로 만들지 않고, 호스트에서 빌드한 frontend/dist 를 읽기 전용으로 붙인다.
+
+services:
+  backend:
+    environment:
+      # 로컬은 local 프로필이 기본이다. 헬스 상세(db 상태)와 SQL 로그가 보여 연결 문제를 찾기 쉽다.
+      # 서버와 같은 prod 프로필은 SPRING_PROFILES_ACTIVE=prod 를 앞에 붙여 띄운다 (docs/infra/docker-images.md).
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+
+  nginx:
+    # 서버 호스트 Nginx(apt) 와 같은 1.24
+    image: nginx:1.24-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LOCAL_HTTP_PORT:-8088}:80"
+    volumes:
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx/local/default.conf:/etc/nginx/conf.d/default.conf:ro

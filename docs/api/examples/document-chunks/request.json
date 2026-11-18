@@ -1,0 +1,12 @@
+{
+  "project_id": "101",
+  "document_version_id": "202",
+  "request_key": "chunk-fixture-1",
+  "kind": "PLAN",
+  "media_type": "text/markdown",
+  "content": "# 로그인\n\n사용자는 로그인한다. 😀\n",
+  "content_hash": "779a45402b1c019fc9a2f5b8ea2edc9bd203af5816833f233b743261eb0ea86c",
+  "text_hash": "779a45402b1c019fc9a2f5b8ea2edc9bd203af5816833f233b743261eb0ea86c",
+  "normalization_profile": "utf8-lf-v1",
+  "chunking_profile_id": "md-structure-v1"
+}

@@ -1,0 +1,589 @@
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { Navigate, useParams, useSearchParams } from 'react-router'
+import { useIsMutating, useQuery } from '@tanstack/react-query'
+import type { ComponentType } from 'react'
+import {
+  Bell,
+  BookOpen,
+  ChartNoAxesCombined,
+  CheckCheck,
+  FileText,
+  Footprints,
+  GitBranch,
+  Lightbulb,
+  Network,
+  Users,
+  XIcon,
+} from 'lucide-react'
+import { BibiFace } from '@/components/BibiFace'
+import type { SceneAgent, SceneTask } from '@/three/types'
+import { idSchema } from '@/api/contracts/common'
+import { getApiErrorStatus, isMissingApi } from '@/api/error'
+import { RequireAccount } from '@/features/auth/RequireAccount'
+import { useSession } from '@/features/auth/useSession'
+import { DocumentsPanel } from '@/features/documents/DocumentsPanel'
+import { PlanningPanel } from '@/features/planning/PlanningPanel'
+import { ChangesPanel } from '@/features/changes/ChangesPanel'
+import { TasksPanel } from '@/features/tasks/TasksPanel'
+import { MeetingsPanel } from '@/features/meetings/MeetingsPanel'
+import { ActivityPanel } from '@/features/dashboard/ActivityPanel'
+import { InboxPanel } from '@/features/inbox/InboxPanel'
+import { BibiPanel } from '@/features/bee/BibiPanel'
+import { beeStatusQuery } from '@/features/bee/beeStatusQuery'
+import { ContextPanel } from '@/features/contexts/ContextPanel'
+import { presenceReportOf } from '@/features/presence/presenceText'
+import { usePresenceReporter } from '@/features/presence/usePresenceReporter'
+import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
+import { SettingsDialog } from '@/features/workspace/SettingsDialog'
+import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
+import { useOfficeScreens } from '@/features/workspace/useOfficeScreens'
+import {
+  agentConnectionsQuery,
+  useAgentStatusOf,
+} from '@/features/agents/useAgentStatusOf'
+import {
+  officeAgentState,
+  showsOfficeAgent,
+} from '@/features/workspace/officeAgents'
+import { AsyncState } from '@/components/AsyncState'
+import { PaneSheetHost } from '@/components/PaneSheet'
+import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  placementKey,
+  useClearPaneOnLeave,
+  useOfficeTime,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
+import type { WorkspacePane } from '@/stores/workspaceStore'
+import {
+  rememberedScrollTop,
+  restoreScrollWhenReady,
+} from '@/lib/restoreScroll'
+import { flashScrollbar } from '@/lib/flashScrollbar'
+import { cn } from '@/lib/utils'
+import NotFoundPage from './NotFoundPage'
+
+const OfficeScene = lazy(() => import('@/three/OfficeScene'))
+// 업무 창에 들어갈 때 커서를 둘 글자 입력칸(체크박스·숨은 칸·막힌 칸 제외)
+const textField =
+  'input:not([type]):not([disabled]), input[type="text"]:not([disabled]), input[type="search"]:not([disabled]), textarea:not([disabled])'
+const paneTitles: Record<Exclude<WorkspacePane, 'settings'>, string> = {
+  documents: '공용 문서함',
+  planning: '기획 분석',
+  changes: '변경 제안',
+  meetings: '회의실',
+  tasks: '작업 현황',
+  relations: '작업·설계 관계',
+  dashboard: '대시보드',
+  inbox: '알림함',
+  chat: '비비',
+  context: '작업 맥락',
+}
+// 업무 창 머리의 메뉴 그림. 1~6은 단축 바 칸과 같은 그림이라 단축 바가 숨어도 어느 메뉴인지 이어진다.
+const paneIcons: Partial<
+  Record<WorkspacePane, ComponentType<{ className?: string }>>
+> = {
+  documents: FileText,
+  planning: Lightbulb,
+  changes: GitBranch,
+  meetings: Users,
+  tasks: CheckCheck,
+  relations: Network,
+  dashboard: ChartNoAxesCombined,
+  inbox: Bell,
+  chat: BibiFace,
+  context: BookOpen,
+}
+
+function Workspace({ projectId }: { projectId: string }) {
+  const sceneHost = useRef<HTMLElement>(null)
+  const focusScene = () =>
+    sceneHost.current?.querySelector('canvas')?.focus({ preventScroll: true })
+  const session = useSession()
+  const [params, setParams] = useSearchParams()
+  const pane = useWorkspaceStore((state) => state.pane)
+  const openPane = useWorkspaceStore((state) => state.openPane)
+  const viewMode = useWorkspaceStore((state) => state.viewMode)
+  const setViewMode = useWorkspaceStore((state) => state.setViewMode)
+  const outdoor = useWorkspaceStore((state) => state.outdoor)
+  const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
+  const pendingMutations = useIsMutating()
+  const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
+  // 업무 창별 스크롤 위치. 다른 메뉴를 갔다 오거나 닫았다 열어도 보던 곳부터 보인다(S15P31A108-431).
+  // Workspace는 프로젝트 id로 다시 마운트되므로 프로젝트를 떠나면 비워진다.
+  const scrolls = useRef(new Map<WorkspacePane, number>())
+  const body = useRef<HTMLDivElement | null>(null)
+  // 창 본문이 붙을 때(창을 열거나 숫자 키로 메뉴를 바꿀 때마다) 스크롤을 되살리고, 그 창의 첫 글자 입력칸에 커서를 둔다.
+  // 공용 문서함·변경 제안·설계 관계·작업 현황은 검색칸, 회의실은 대화 입력칸이다. 문서·목록을 받은 뒤에 본문이 길어지거나
+  // 칸이 생기면 3초까지 지켜보다가 적용한다. 창 내용은 포털로 한 박자 늦게 붙어서 effect가 아니라 ref에서 시작한다.
+  const attachBody = useCallback(
+    (element: HTMLDivElement | null) => {
+      body.current = element
+      if (!element || !pane) return
+      const stopScroll = restoreScrollWhenReady(
+        element,
+        rememberedScrollTop(
+          scrolls.current.get(pane),
+          useWorkspaceStore.getState().focusId,
+        ),
+      )
+      const place = () => {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.matches(textField))
+          return true
+        const field = element.querySelector<HTMLElement>(textField)
+        field?.focus({ preventScroll: true })
+        return !!field
+      }
+      const observer = new MutationObserver(() => {
+        if (place()) observer.disconnect()
+      })
+      if (!place())
+        observer.observe(element, { childList: true, subtree: true })
+      const stop = setTimeout(() => observer.disconnect(), 3000)
+      return () => {
+        stopScroll()
+        observer.disconnect()
+        clearTimeout(stop)
+        body.current = null
+      }
+    },
+    [pane],
+  )
+  const PaneIcon = pane ? paneIcons[pane] : undefined
+  useClearPaneOnLeave()
+  const officeTime = useOfficeTime()
+  // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
+  const design = useWorkspaceStore(
+    (state) =>
+      state.placements[placementKey(session.data?.id ?? '', projectId)]?.design,
+  )
+  // 회원 탈퇴 화면의 '팀장 위임'처럼 ?settings=team으로 들어오면 설정 창을 연다.
+  const settingsParam = params.get('settings')
+  useEffect(() => {
+    if (!settingsParam) return
+    openPane('settings', settingsParam)
+    setParams({}, { replace: true })
+  }, [settingsParam, openPane, setParams])
+  const query = useQuery(sceneQuery(projectId, session.data?.id))
+  // 내 위치 보고(MON-A06): 열어 둔 동안 15초마다. 팀원 접속 점·위치는 HUD가 MON-A07로 읽는다.
+  usePresenceReporter(
+    projectId,
+    idSchema.safeParse(projectId).success ? session.data?.id : undefined,
+    presenceReportOf({ outdoor, pane }),
+  )
+  // 작업 현황(MON-A05)은 따로 30초마다 다시 부른다. 없거나 아직 못 받았으면 undefined라 연결 여부로 어림한다(D37).
+  const agentWork =
+    useQuery(agentWorkQuery(projectId, session.data?.id)).data ?? undefined
+  // 비비 현재 상태(BEE-A04). HUD 비비 줄과 같은 쿼리이고, 사무실 비비가 이 값으로 자리를 옮긴다(D35).
+  const beeStatus = useQuery(beeStatusQuery(projectId)).data
+  // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
+  const visitProject = useWorkspaceStore((state) => state.visitProject)
+  const accountId = session.data?.id
+  useEffect(() => {
+    if (query.isSuccess && accountId) visitProject(accountId, projectId)
+  }, [query.isSuccess, accountId, projectId, visitProject])
+  // 연결 현황(AGT-A05): 작업 현황에는 확인 필요 표시가 없어 사무실도 다른 화면과 같은 상태를 이것으로 정한다
+  // (S15P31A108-341). 없는 API이거나 아직 못 받았으면 작업 현황의 세션으로 어림한다.
+  const statusOf = useAgentStatusOf(projectId)
+  const connectionsKnown = !!useQuery(agentConnectionsQuery(projectId)).data
+  // 사무실 메모 벽·관계 TV·대시보드에 그릴 프로젝트 상태(D47). 업무 창이 열린 동안은 새로 부르지 않는다.
+  const screens = useOfficeScreens(
+    projectId,
+    query.data?.project.current_baseline?.version_no,
+    pane === null,
+  )
+  const sceneAgents = useMemo<SceneAgent[]>(
+    () => [
+      { id: 'bibi', name: '비비', kind: 'lead', color: '#f5b800' },
+      ...(query.data?.members.items ?? []).map((member) => ({
+        id: `member:${member.id}`,
+        name: member.name,
+        kind:
+          member.account_id === session.data?.id
+            ? ('human' as const)
+            : ('agent' as const),
+        color: member.color ?? '#8ca9a0',
+        avatar: member.avatar,
+        status: 'idle',
+      })),
+      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결은 연결 현황(AGT-A05),
+      // 자리는 작업 현황(MON-A05)을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
+      ...(query.data?.members.items ?? [])
+        .filter((member) =>
+          showsOfficeAgent(
+            member,
+            agentWork,
+            session.data?.id,
+            connectionsKnown ? statusOf(member).status : undefined,
+          ),
+        )
+        .map((member) => {
+          const { state, note } = officeAgentState(
+            member,
+            agentWork,
+            query.data?.tasks.items.filter(
+              (task) => task.assignee_member_id === member.id,
+            ) ?? [],
+            connectionsKnown ? statusOf(member).status : undefined,
+          )
+          return {
+            id: `agent:${member.id}`,
+            name: `${member.name}의 에이전트`,
+            kind: 'agent' as const,
+            owner: member.id,
+            color: member.color ?? '#8ca9a0',
+            status: state,
+            note,
+          }
+        }),
+    ],
+    [
+      query.data?.members,
+      query.data?.tasks,
+      agentWork,
+      session.data?.id,
+      statusOf,
+      connectionsKnown,
+    ],
+  )
+  const sceneTasks = useMemo<SceneTask[]>(
+    () =>
+      (query.data?.tasks.items ?? []).map((task) => ({
+        id: task.id,
+        key: task.key,
+        title: task.current_plan_revision.plan.title,
+        state: task.status,
+        // 담당자 없는(미배정) 작업은 사무실에서 누구의 자리에도 두지 않는다.
+        assignee_id: task.assignee_member_id
+          ? `member:${task.assignee_member_id}`
+          : null,
+        description: task.current_plan_revision.plan.goal,
+        waiting_reason: task.waiting_reason,
+      })),
+    [query.data?.tasks],
+  )
+  // 없는·볼 수 없는 프로젝트(404·403)와 ID가 아닌 주소는 다시 불러와도 같아, 다시 불러오기 대신 나의 도시로 보낸다.
+  const status = getApiErrorStatus(query.error)
+  if (
+    !idSchema.safeParse(projectId).success ||
+    ((status === 403 || status === 404) && !isMissingApi(query.error))
+  )
+    return (
+      <NotFoundPage
+        title="프로젝트를 찾을 수 없거나 볼 권한이 없어요"
+        back="나의 도시로"
+      />
+    )
+  return (
+    <AsyncState query={query}>
+      {(data) => {
+        const isLeader = data.project.my_role === 'LEADER'
+        const currentUser = data.members.items.find(
+          (member) => member.account_id === session.data?.id,
+        )
+        // 목록·상세 창은 1200px 기둥 대신 화면 폭을 다 써서 왼쪽 목록을 창 왼쪽에 붙이고 상세를 가운데에 넓힌다(S15P31A108-455).
+        const splitPane =
+          pane === 'tasks' ||
+          pane === 'changes' ||
+          pane === 'meetings' ||
+          pane === 'relations'
+        const panelProps = { projectId, isLeader }
+        return (
+          <main
+            ref={sceneHost}
+            data-tour="office"
+            className="relative h-dvh min-h-[620px] overflow-hidden bg-muted/30"
+            aria-label="프로젝트 워크스페이스"
+          >
+            <Suspense
+              fallback={
+                <p role="status" className="grid h-full place-items-center">
+                  3D 사무실을 준비하는 중…
+                </p>
+              }
+            >
+              <OfficeScene
+                key={projectId}
+                project={data.project}
+                design={design}
+                time={officeTime}
+                bibiActivity={beeStatus && beeStatus.activity}
+                agents={sceneAgents}
+                tasks={sceneTasks}
+                currentUserId={
+                  currentUser ? `member:${currentUser.id}` : undefined
+                }
+                avatar={session.data?.avatar}
+                viewMode={viewMode}
+                outdoor={outdoor}
+                interactive={pane === null}
+                phase={data.project.current_baseline ? 4 : 3}
+                onOutdoorChange={setOutdoor}
+                onAgentSelect={(id) =>
+                  id === 'bibi' || id.includes('reception')
+                    ? openPane('chat', id)
+                    : openPane('settings', 'team')
+                }
+                onTaskSelect={(id) => openPane('tasks', id)}
+                onPaneSelect={openPane}
+                screens={screens}
+                className="absolute inset-0 h-full w-full"
+              />
+            </Suspense>
+            <WorkspaceHud
+              project={data.project}
+              members={data.members.items}
+              me={currentUser}
+              onboarding={data.onboarding}
+              tasks={data.tasks.items}
+              myTasks={data.tasks.items.filter(
+                (task) =>
+                  !!currentUser && task.assignee_member_id === currentUser.id,
+              )}
+            />
+            <div
+              data-tour="view"
+              className="absolute bottom-4 left-4 z-10 flex items-center gap-2"
+            >
+              {/* 거리(산책)는 늘 1인칭으로 그려서 시점 버튼이 듣지 않는다. 산책 중에는 숨긴다(사용자 결정 2026-11-03). */}
+              {!outdoor && (
+                <div className="rounded-xl border bg-card/95 p-1 shadow-sm">
+                  <Button
+                    size="sm"
+                    variant={viewMode === 'first' ? 'secondary' : 'ghost'}
+                    onClick={() => {
+                      setViewMode('first')
+                      focusScene()
+                    }}
+                  >
+                    1인칭
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={viewMode === 'third' ? 'secondary' : 'ghost'}
+                    onClick={() => {
+                      setViewMode('third')
+                      focusScene()
+                    }}
+                  >
+                    3인칭
+                  </Button>
+                </div>
+              )}
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setOutdoor(!outdoor)
+                  focusScene()
+                }}
+              >
+                <Footprints />
+                {outdoor ? '사무실로' : '산책'}
+              </Button>
+            </div>
+            {/* 조작 안내는 처음(기준 v1 전)에만, 단축 바 위 가운데에 보여 준다(SCR-06-v2-workspace-preparing). 80px 비비 원(위 끝이 바닥에서 97px) 위로 띄운다. */}
+            {!pane && !data.project.current_baseline && (
+              <p className="pointer-events-none absolute bottom-[106px] left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/85 px-3 py-1 text-[11px] leading-4 whitespace-nowrap text-[#737373]">
+                WASD 이동 · Shift 달리기 · 드래그로 둘러보기 · 숫자 키로 메뉴
+                열기
+              </p>
+            )}
+            <SettingsDialog
+              projectId={projectId}
+              isLeader={isLeader}
+              agentConnected={data.onboarding.my_agent_connected}
+              memberId={currentUser?.id}
+            />
+            <Dialog
+              open={pane !== null && pane !== 'settings'}
+              onOpenChange={(open) => {
+                if (!open && !pendingMutations) openPane(null)
+              }}
+            >
+              {/* 업무 창은 화면 전체로 연다(S15P31A108-431). 단축 바는 창 뒤로 숨고 메뉴는 숫자 키로 바꾼다.
+                  머리 줄은 위에 고정하고 본문만 스크롤한다(디자인 검수 F04). 비비 대화를 포함한 모든 업무 창이
+                  내용이 적거나 비어 있어도 같은 크기·바탕색으로 열린다. */}
+              <DialogContent
+                showCloseButton={false}
+                className="pane-scrollbars inset-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-none bg-background p-0 ring-0 sm:max-w-none"
+                // 스크롤바는 얇게, 스크롤하는 동안만 보인다(S15P31A108-455).
+                onScrollCapture={(event) => flashScrollbar(event.target)}
+                onEscapeKeyDown={(event) => {
+                  if (pendingMutations) event.preventDefault()
+                }}
+                onInteractOutside={(event) => {
+                  if (pendingMutations) event.preventDefault()
+                }}
+                // 창을 열면 머리 줄의 닫기 버튼이 아니라 본문의 첫 입력칸·버튼(문서함 검색 등)에 포커스를 준다.
+                onOpenAutoFocus={(event) => {
+                  const field =
+                    body.current?.querySelector<HTMLElement>(textField)
+                  if (!field) return
+                  event.preventDefault()
+                  field.focus({ preventScroll: true })
+                }}
+              >
+                {/* 머리 줄은 흰 띠로 본문과 나누고, 안쪽은 본문과 같은 가운데 기둥에 맞춘다.
+                    메뉴 아이콘(단축 바와 같은 그림)·제목·부제목 두 줄, 오른쪽에 창별 버튼·Esc 안내·닫기. */}
+                <DialogHeader className="border-b bg-card">
+                  <div
+                    className={cn(
+                      'mx-auto flex min-h-16 w-full flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 sm:px-8',
+                      !splitPane && 'max-w-[1264px]',
+                    )}
+                  >
+                    {PaneIcon && (
+                      <span
+                        aria-hidden="true"
+                        className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-primary/20 text-foreground"
+                      >
+                        <PaneIcon className="size-[18px]" />
+                      </span>
+                    )}
+                    <div className="mr-auto min-w-0">
+                      {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
+                      <DialogTitle className="text-lg leading-6 font-semibold">
+                        {pane && pane !== 'settings' ? paneTitles[pane] : ''}
+                      </DialogTitle>
+                      {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). 회의실도 본문 자리를 넓히려고 숨긴다(사용자 요청 11-17). 화면 읽기 프로그램은 읽는다. */}
+                      <DialogDescription
+                        className={
+                          pane === 'documents' || pane === 'meetings'
+                            ? 'sr-only'
+                            : 'truncate text-xs leading-4'
+                        }
+                      >
+                        {data.project.name}
+                        {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
+                        {pane === 'meetings'
+                          ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
+                          : data.project.current_baseline &&
+                            ` · 설계 기준 v${data.project.current_baseline.version_no}`}
+                      </DialogDescription>
+                    </div>
+                    {/* 창별 머리 버튼 자리(작업 현황의 '+ 작업 계획', 캔버스 PNL-05-v2-tasks) */}
+                    <div
+                      ref={setHeaderSlot}
+                      className="flex items-center gap-2 empty:hidden"
+                    />
+                    {/* 단축 바 번호는 창 안에서 뜻이 안 보여 빼고 Esc만 안내한다(사용자 결정 11-16). 열린 창의 번호 키를
+                        다시 누르면 닫히는 동작은 단축 바 칸을 다시 누르는 것과 같아 그대로 둔다. */}
+                    <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground max-sm:hidden">
+                      <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
+                        Esc
+                      </kbd>
+                      로 닫기
+                    </span>
+                    <DialogClose asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="-mr-1.5 shrink-0"
+                      >
+                        <XIcon />
+                        <span className="sr-only">닫기</span>
+                      </Button>
+                    </DialogClose>
+                  </div>
+                </DialogHeader>
+                <PaneHeaderSlot value={headerSlot}>
+                  {/* 본문 스크롤. 안쪽 여백(p-5 sm:p-8)은 예전 창과 같다. 패널이 이 여백에 맞춰 밖으로 넓히거나
+                      (회의실 -mx-8) 아래 고정 줄을 붙인다(sticky -bottom-5 sm:-bottom-8). 세로 flex라서 본문 자리가
+                      정해진 높이를 받아, 회의실처럼 높이를 %로 채우는 패널도 창 아래까지 찬다. */}
+                  <div
+                    key={pane}
+                    ref={attachBody}
+                    onScroll={(event) => {
+                      if (pane)
+                        scrolls.current.set(pane, event.currentTarget.scrollTop)
+                    }}
+                    className="flex min-h-0 flex-col overflow-y-auto p-5 sm:p-8"
+                  >
+                    <PaneSheetHost
+                      // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
+                      // 넓은 화면에서 목록·카드가 끝에서 끝까지 늘어나지 않게 1200px 가운데 기둥으로 묶는다. 목록·상세 창은 화면 폭을 다 쓴다(S15P31A108-455).
+                      className={cn(
+                        'mx-auto flex w-full min-w-0 flex-1 flex-col',
+                        !splitPane && 'max-w-[1200px]',
+                      )}
+                    >
+                      {pane === 'documents' && (
+                        <DocumentsPanel {...panelProps} />
+                      )}
+                      {pane === 'planning' && <PlanningPanel {...panelProps} />}
+                      {pane === 'changes' && <ChangesPanel {...panelProps} />}
+                      {pane === 'tasks' && (
+                        <TasksPanel
+                          {...panelProps}
+                          baselineId={data.project.current_baseline?.id}
+                        />
+                      )}
+                      {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
+                      {pane === 'relations' && (
+                        <ActivityPanel
+                          projectId={projectId}
+                          view="relations"
+                          hasBaseline={!!data.project.current_baseline}
+                        />
+                      )}
+                      {pane === 'dashboard' && (
+                        <ActivityPanel
+                          {...panelProps}
+                          view="dashboard"
+                          hasBaseline={!!data.project.current_baseline}
+                        />
+                      )}
+                      {pane === 'inbox' && <InboxPanel projectId={projectId} />}
+                      {pane === 'chat' && <BibiPanel projectId={projectId} />}
+                      {pane === 'context' && (
+                        <ContextPanel projectId={projectId} />
+                      )}
+                    </PaneSheetHost>
+                  </div>
+                </PaneHeaderSlot>
+              </DialogContent>
+            </Dialog>
+          </main>
+        )
+      }}
+    </AsyncState>
+  )
+}
+
+export default function WorkspacePage() {
+  const { projectId = '' } = useParams()
+  const [params] = useSearchParams()
+  const invite = params.get('invite')
+  // 초대 메일의 '프로젝트로 가기'(/projects/{id}?invite=토큰, MEM-A01). 아직 팀원이 아니면 이 프로젝트를 열 수 없어(404)
+  // 로그인 여부와 상관없이 초대 화면(MEM-A04·A05)이 먼저 받는다. 이미 팀원이면 그 화면이 이 프로젝트로 되돌려 보낸다.
+  if (invite)
+    return (
+      <Navigate
+        replace
+        to={`/invite?${new URLSearchParams({ invite, project: projectId })}`}
+      />
+    )
+  return (
+    <RequireAccount>
+      <Workspace key={projectId} projectId={projectId} />
+    </RequireAccount>
+  )
+}

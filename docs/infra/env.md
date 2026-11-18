@@ -1,0 +1,556 @@
+# 환경변수와 비밀값
+
+BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 읽는 설정값을 한곳에 모은 문서입니다.
+값을 어디에 넣는지, 빠지면 무엇이 보이는지, 비밀값을 어떻게 다루는지를 적습니다. (S15P31A108-27)
+
+원칙은 셋입니다.
+
+1. **비밀값은 저장소에 없습니다.** 저장소에는 이름과 빈 칸(예시 파일)만 둡니다.
+2. **환경 차이는 env 파일로만 줍니다.** compose 파일·설정 파일은 환경과 상관없이 하나입니다.
+3. **필수값이 빠지면 기동 전에 멈춥니다.** compose 는 `${VAR:?}`, backend prod 는 설정 검증이 이름을 짚어 줍니다.
+
+## 1. 값을 넣는 곳
+
+| 실행 방식 | 값을 읽는 곳 | 비밀값 출처 |
+|---|---|---|
+| 로컬 backend `./gradlew bootRun` | `application.yml`·`application-local.yml` 기본값 | 없음. 아무것도 넣지 않아도 뜹니다 |
+| 로컬 ai `uvicorn` | `ai/.env` (`ai/.env.example` 복사) | 본인 GMS 키 |
+| 로컬 frontend `npm run dev` | `frontend/.env` (`frontend/.env.example` 복사, 선택) | 없음 (`VITE_` 값은 공개됩니다) |
+| 로컬 전체 스택 compose | `infra/local.env` (더미값, 커밋됨) | GMS 키가 필요하면 셸 환경변수로 |
+| CI (`ci.yml`) | `application-test.yml` + Testcontainers | 없음 |
+| CD 이미지 빌드 (`cd.yml`) | 저장소 변수 `VITE_API_MODE` (`live`, 없으면 `mock`) | `GITHUB_TOKEN` (자동 발급) |
+| CD 배포 호출 (`cd.yml` deploy 잡) | Environment `dev` 시크릿 | `JENKINS_API_TOKEN` |
+| 서버 컨테이너 | `/opt/beez/.env.<환경>` → `deploy.sh` 가 `--env-file` 로 넘김 | 그 파일 (`640 ubuntu:beez-deploy`) |
+| Jenkins | `/etc/jenkins/casc.env` | 그 파일 (`600 root:root`) |
+| 서버 모니터링 스택 | `/opt/beez/.env.monitoring` ([아래 표](#모니터링-env-파일-optbeezenvmonitoring)) | 그 파일 (`640 ubuntu:beez-deploy`), 웹훅 주소 파일 (`640 root:nogroup`) |
+| 저장소 자동화 | 저장소 시크릿 | `PR_AUTOMERGE_TOKEN`, `GITLAB_SYNC_TOKEN` |
+
+서버 env 파일을 처음 만드는 명령과 GMS 키를 넣는 명령은 [cd.md 서버 준비](cd.md#2-env-파일)에 있습니다.
+Jenkins 비밀 파일은 [jenkins.md](jenkins.md)에 있습니다.
+
+## 2. 변수 목록
+
+### 서버 env 파일 (`/opt/beez/.env.<환경>`)
+
+compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사합니다. `infra/local.env` 가 같은 이름의 더미값을 가진
+로컬판입니다.
+
+| 이름 | 필수 | 비밀 | 의미 | 들어가는 곳 |
+|---|---|---|---|---|
+| `DB_USERNAME` | 필수 | | DB 계정 | postgres 초기화, backend |
+| `DB_PASSWORD` | 필수 | 비밀 | DB 비밀번호. **DB 를 처음 띄울 때 값으로 굳습니다** — 아래 [교체](#값이-샜을-때) 참고 | postgres 초기화, backend |
+| `DB_NAME` | | | 기본 `beez` | postgres, backend `DB_URL` |
+| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소의 **backend 전용** 키(`beez-documents` 읽기·쓰기·삭제·목록만) | seaweedfs 신원 파일, backend |
+| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, backend |
+| `SEAWEEDFS_BOOTSTRAP_ACCESS_KEY` | 필수 | 비밀 | SeaweedFS 관리 키(모든 bucket). 운영자의 관리·복원 작업에만 씁니다 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BOOTSTRAP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BACKUP_ACCESS_KEY` | 필수 | 비밀 | 백업 키(`beez-documents` 읽기·목록만) | seaweedfs 신원 파일, `backup.sh` |
+| `SEAWEEDFS_BACKUP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, `backup.sh` |
+| `DOCUMENT_S3_BUCKET` | | | 기본 `beez-documents` | seaweedfs, backend |
+| `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
+| `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
+| `GMS_CHAT_ENDPOINT` | | | 문서 검토 모델 주소. 기본 GMS 주소(`https://gms.ssafy.io/gmsapi/…/chat/completions`) | ai |
+| `PLANNING_QUESTIONS_ENABLED` | | | 기본 `false`. 기획 분석 보완 질문 생성(#133). **꺼져 있으면 그 기능이 항상 실패합니다** — [AI 기능 켜기](#ai-기능-켜기-서버) | ai |
+| `DESIGN_DRAFTS_ENABLED` | | | 기본 `false`. 답변으로 설계 초안 만들기(#134). 〃 | ai |
+| `BEE_CHAT_ENABLED` | | | 기본 `false`. 비비에게 질문(#135, BEE-A01). 〃 | ai |
+| `ASSIGNMENT_RECOMMENDATION_ENABLED` | | | 기본 `false`. 역할 분담 추천(#136). BE 계약 합의 후에만 켭니다 | ai |
+| `IMPACT_LLM_MODEL` | | | 기본 빈 값(꺼짐). 변경 영향 분석(#188)이 부를 모델 이름. 〃 (-357) | ai |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY` | | `API_KEY` 비밀 | 영향 분석용 주소·키. 주소 기본은 GMS 주소(`GMS_CHAT_ENDPOINT` 와 별개로 고정)이고, 키가 비면 ai 가 **주소가 그 GMS 주소와 똑같을 때만** `GMS_KEY` 를 씁니다. 그래서 **GMS 를 쓰면 둘 다 적지 않습니다**. 다른 주소를 쓰면 전용 키를 꼭 적습니다 — 없으면 모델을 부르지 않고 502 `model_unavailable`(팀 공용 키가 다른 서버로 나가지 않게) | ai |
+| `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | | 기본 빈 값. 응답의 모델 이름이 요청과 달라 `invalid_output` 이 날 때만, 믿을 별칭을 쉼표로 적습니다 | ai |
+| `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
+| `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
+| `SWAGGER_ENABLED` | | | 기본 `false` | backend |
+| `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 [cdc-connector.md](cdc-connector.md#6-consumer-켜기)(-295) | backend |
+| `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | | | 기본 `false`. Kafka 힌트 consumer. **위 스캔 없이 켜면 기동 거부**. Kafka 가 없어도 기동하고 30초마다 다시 붙습니다(-298) | backend |
+| `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS`·`_GROUP_ID`·`_TOPIC` | | | 기본 `kafka:9092`·`beez-published-analysis`·`beez.public.published_change_analysis`(계획 D7). 바꿀 일 없음 | backend |
+| `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
+| `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
+| `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |
+| `MAIL_HOST` | | | 가입 인증 메일 SMTP 서버. 비우면 기동은 하고 인증 메일이 503 `mail_send_failed` (-272) | backend |
+| `MAIL_PORT` | | | 기본 `587`(STARTTLS) | backend |
+| `MAIL_USERNAME` | | | SMTP 인증 계정 | backend |
+| `MAIL_PASSWORD` | | 비밀 | SMTP 인증 비밀번호(앱 비밀번호) | backend |
+| `MAIL_FROM` | | | 보내는 사람. 기본 `BEEZ <no-reply@beez.ai.kr>`. **SMTP 인증 계정 주소와 맞춥니다** — 다르면 제공자가 거부합니다 | backend |
+| `EMAIL_VERIFY_GLOBAL_SEND_LIMIT` | | | 기본 `100`. 서버 전체 시간당 가입 인증 메일 수. SMTP 계정의 발송 한도보다 낮게 | backend |
+| `AUTH_IP_LIMIT` | | | 기본 `10`. IP 하나의 시간당 가입 인증 코드(ACC-A11)+비밀번호 찾기(ACC-A07) 요청 수(합산, 메모리 카운터). 한 공유기(캠퍼스 등) 뒤에서 여럿이 가입하는 시연 때 올린다 (Q04, -273) | backend |
+| `INVITE_SEND_LIMIT` | | | 기본 `30`. 초대한 계정 하나의 시간당 초대 메일 수(MEM-A01 새 초대 + MEM-A11 다시 보내기 합산, 메모리 카운터). 넘으면 요청 전체 429 (Q05, -334) | backend |
+
+- `BACKEND_HOST_PORT` 는 기본값이 없습니다. 예전 기본값 `8080` 은 서버의 Jenkins 와 겹치는데도 점검을 통과했습니다.
+  값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.
+- `BACKEND_IMAGE`·`AI_IMAGE` 는 `deploy.sh` 가 배포 SHA 로 채웁니다. env 파일에 쓰지 않습니다.
+- `LOCAL_HTTP_PORT` 는 로컬 nginx 전용입니다(`compose.local.yaml`).
+
+### 모니터링 env 파일 (`/opt/beez/.env.monitoring`)
+
+모니터링 스택(compose 프로젝트 `beez-monitoring`)만 읽는 파일입니다. 본 스택 env 파일과 나눠 두며 배포 잡은 읽지 않습니다.
+만드는 법·키 설명은 [monitoring.md "env 파일"](monitoring.md#1-env-파일), 로컬판은 `infra/monitoring/local.env` 입니다.
+
+| 이름 | 필수 | 비밀 | 의미 |
+|---|---|---|---|
+| `GRAFANA_ADMIN_PASSWORD` | 필수 | 비밀 | Grafana 관리자. grafana 볼륨을 처음 만들 때만 쓰임 |
+| `MONITOR_DB_PASSWORD` | 필수 | 비밀 | postgres-exporter 전용 DB 계정 `beez_monitor` |
+| `ALERTMANAGER_WEBHOOK_URL_FILE` | 필수 | | Mattermost 웹훅 주소가 든 **파일 경로**(서버 `/opt/beez/.alertmanager-webhook-url`). 주소 자체는 그 파일에만 둡니다 — [monitoring-alerts.md "웹훅 넣기"](monitoring-alerts.md#웹훅-넣기-서버당-한-번) |
+
+### backend (Spring)
+
+`application.yml` 이 기본값을 갖고, `application-prod.yml` 이 운영 필수값의 기본값을 지웁니다. 서버에서는 대부분
+compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
+
+| 이름 | prod 필수 | 로컬 기본값 | compose(서버) 값 |
+|---|---|---|---|
+| `DB_URL` | 필수 | `jdbc:postgresql://localhost:5432/beez` | `jdbc:postgresql://postgres:5432/${DB_NAME}` |
+| `DB_USERNAME`·`DB_PASSWORD` | 필수 | `beez`·`beez` | env 파일 |
+| `DB_POOL_SIZE` | | `10` | 기본값 |
+| `SERVER_PORT` | | `8080` (컨테이너 안) | 기본값 |
+| `DOCUMENT_S3_ENDPOINT` | 필수 | `http://127.0.0.1:8333` | `http://seaweedfs:8333` |
+| `DOCUMENT_S3_REGION` | | `us-east-1` | 기본값 |
+| `DOCUMENT_S3_BUCKET`·`ACCESS_KEY`·`SECRET_KEY` | 필수 | `beez-documents`·`beez-local-access`·`beez-local-secret` | env 파일 (뜻은 [seaweedfs.md](seaweedfs.md)) |
+| `DOCUMENT_WORKER_ENABLED` | | `true` | 기본값 |
+| `DOCUMENT_POLL_MILLIS` | | `2000` | 기본값 |
+| `DOCUMENT_EMBEDDING_PROFILE`·`MODEL` | | `unconfigured` (색인이 멈춤) | 위 표 기본값 |
+| `CORS_ALLOWED_ORIGINS` | 필수 | `http://localhost:5173,http://127.0.0.1:5173` | `PUBLIC_ORIGIN` |
+| `AI_BASE_URL` | 필수 | `http://localhost:8000` | `http://ai:8000` |
+| `AI_INTERNAL_TOKEN` | 필수 | `change-me` | env 파일 |
+| `AI_CONNECT_TIMEOUT`·`AI_READ_TIMEOUT` | | `3s`·`20s` | 기본값 |
+| `TASK_BREAKDOWN_LLM_TIMEOUT_SECONDS`·`TASK_BREAKDOWN_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_TASK_BREAKDOWN_READ_TIMEOUT` | | `90`·`16384`·`105s` | 승인 설계 작업 분해(TSK-A09) 워커 전용. 생성 토큰에는 추론 토큰이 포함된다. 백엔드 읽기 예산은 모델 시간보다 길게 두며, 워커 리스는 백엔드 읽기 시간에 60초를 더한다. HTTP 요청은 실행을 접수하거나 상태를 조회한다. 서버 env 파일의 값은 `infra/compose.yaml`이 ai·backend 컨테이너로 전달한다. |
+| `INVITE_BASE_URL` | 필수 | `http://localhost:5173` | `PUBLIC_ORIGIN` |
+| `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
+| `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |
+| `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
+| `SCHEDULING_POOL_SIZE` | | `10` (워커마다 스레드 하나: 문서 색인·원본 정리·문서 비비 검토·검증·CDC 복구 스캔·기획 질문·설계 초안 등, S15P31A108-391에서 8→10) | 기본값 |
+| `BEEZ_PLANNING_AUTO_DRAFT_ENABLED` | | `false` | 승인된 문서 4종에서 설계 항목 후보를 자동으로 만든다(S15P31A108-389). 유료 AI 호출이 나가므로 기본은 꺼짐이고 서버 env 파일에서 `true` 로 켠다. 켜는 순간 기준 설계가 없고 4종이 승인·색인된 기존 프로젝트도 대상이 되므로, 한꺼번에 호출하지 않으려면 `BEEZ_PLANNING_AUTO_DRAFT_APPROVED_AFTER`(ISO-8601 시각, 예 `2026-11-12T00:00:00Z`, 비우면 제한 없음)를 함께 두어 그 뒤에 4종이 갖춰진 프로젝트만 보게 한다. 로컬 프로필은 켜져 있다. 자동으로 만들지 않아도 팀장이 기획 분석 창의 `문서에서 후보 만들기`로 만들 수 있다 |
+| `BEEZ_PLANNING_QUESTION_READ_TIMEOUT`·`BEEZ_PLANNING_DRAFT_READ_TIMEOUT` | | `105s`·`170s` | 기본값. 기획 보완 질문·설계 초안의 AI 읽기 제한. AI 모델 제한(`PLANNING_QUESTIONS_LLM_TIMEOUT_SECONDS` 90초·`DESIGN_DRAFTS_LLM_TIMEOUT_SECONDS` 150초)보다 길고 작업 리스(300초)보다 짧아야 하며, `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다. 비동기 작업이라 nginx 를 거치지 않는다. 담당 추천·회의 수정본은 이 값을 따르지 않는다. ai 쪽 `PLANNING_QUESTIONS_LLM_TIMEOUT_SECONDS`·`PLANNING_QUESTIONS_LLM_OUTPUT_TOKEN_LIMIT`·`DESIGN_DRAFTS_LLM_TIMEOUT_SECONDS`·`DESIGN_DRAFTS_LLM_OUTPUT_TOKEN_LIMIT`(기본 90·8192·150·16384)와 함께 서버 env 파일에 넣고 재배포하면 반영된다(`infra/compose.yaml` 이 ai·backend 로 전달, S15P31A108-388) |
+| `DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_WORKER_READ_TIMEOUT` | | `110`·`120s` | 기본값. 문서 비비 검토(DOC-A16, AI-A10) 첫 검토·재검토의 AI 모델 호출 제한(초, ai 컨테이너, 상한 120)과 backend 검토 워커의 AI 읽기 제한. 검토는 접수 뒤 backend 워커가 HTTP 요청 밖에서 하므로 **nginx 와 무관하게 모델 호출 < 워커 읽기** 만 지킨다. 워커 lease 는 워커 읽기 + 1분이다(S15P31A108-391). 서버 env 파일에 옛 값(`DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS=50`)이 남아 있으면 그 값이 이기므로 지우거나 고친다 |
+| `DOCUMENT_REVIEW_WORKER_CONCURRENCY` | | `4` | 기본값. 문서 비비 검토를 동시에 처리하는 backend 워커 스레드 수(S15P31A108-391). 스케줄 풀과 별도다 |
+| `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_READ_TIMEOUT` | | `50`·`55s` | 기본값. 문서 비비 검토의 제안 대화·직접 요청(DISCUSS·REQUEST)은 사용자 요청 안에서 기다린다. **대기 시간 사슬: 모델 호출 < backend 읽기 < nginx `/api/` 읽기 대기(60초)** 를 지킨다. nginx 값은 env 가 아니라 서버의 `dev.beez.ai.kr.conf` 의 `proxy_read_timeout` 이다(S15P31A108-382·-391) |
+| `BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT`·`BEEZ_DEVELOPMENT_CONTEXT_RATE_LIMIT_WINDOW` | | `6`·`1m` | 기본값. MCP-01 `get_development_context` 호출 한도((에이전트 토큰, 프로젝트)마다 창 안 횟수, 넘으면 429 `rate_limited`). 호출마다 유료 임베딩이 나가 반복 호출을 막는다. 메모리에만 세므로 재시작하면 처음부터다. `infra/compose.yaml` 이 backend 로 전달한다(S15P31A108-399) |
+| `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT` | | `40s` | 기본값. MCP-01 `get_development_context` 의 AI 컨텍스트 선택 호출 읽기 제한(S15P31A108-399). ai `CONTEXT_SELECTION_TOTAL_TIMEOUT_SECONDS` 보다 길게 둔다. `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다. 질의 임베딩은 이 값이 아니라 `AI_READ_TIMEOUT` 을 쓴다. `/mcp` 는 nginx 대기가 1시간이라 60초 사슬과 무관하지만 에이전트가 기다리는 동기 호출이다. `infra/compose.yaml` 이 backend 로 전달한다 |
+| `BEEZ_CHANGE_IMPACT_READ_TIMEOUT` | | `75s` | 기본값. 변경 영향 분석(재분석·발행 후 분석)의 AI 읽기 제한. ai `IMPACT_LLM_TIMEOUT_SECONDS`(60초)보다 길게 둔다. 실행 lease 는 이 값 + 연결 제한 + 1분이다. 백그라운드 실행이라 nginx 와 무관하다. **단위를 붙여 쓴다**(예 `90s`) — `90`만 쓰면 Spring 이 90ms 로 읽고, `AI_READ_TIMEOUT` 보다 짧으면 그 값(20초)이 적용돼 정상 분석을 먼저 끊는다. `infra/compose.yaml` 이 backend 로 전달한다(S15P31A108-402) |
+| `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
+| `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
+| `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
+| `VALIDATION_BUDGET_MS` | | `30000` | `infra/compose.yaml`이 backend에 전달. AI에 보내는 검증 실행 예산(ms, 1000~60000). 검증 전용 읽기 제한보다 짧게 둔다. 서버 env 파일에 이전 값 `15000`이 남아 있다면 기본값을 쓰려면 제거한다. |
+| `VALIDATION_READ_TIMEOUT` | | `40s` | `infra/compose.yaml`이 backend에 전달. 검증 워커의 `/v1/validate` 읽기 제한. 단위를 붙여 쓴다(예 `50s`). 근거 검색 임베딩은 공통 `AI_READ_TIMEOUT`을 쓴다. 검증은 비동기라 nginx 읽기 제한을 거치지 않는다. |
+| `VALIDATION_LEASE_SECONDS` | | `120` | `infra/compose.yaml`이 backend에 전달. 근거 수집, AI 연결·읽기, 결과 저장에 필요한 시간(초)을 포함한다. 읽기 제한을 늘릴 때 리스 여유도 확인한다. |
+| `MEETING_SUMMARY_READ_TIMEOUT` | | `45s` | `infra/compose.yaml`이 backend에 전달. 회의 정리의 `/v1/bee/meeting-analysis` 읽기 제한. `45s`처럼 단위를 붙인다. 동기 요청이므로 AI 모델 제한보다 길게 두고, nginx `/api/` 대기 60초 안에 요청 준비와 결과 저장까지 끝날 여유를 둔다. 0 이하 또는 60초 이상이면 backend 기동에 실패한다. |
+| `VALIDATION_FAKE_ANALYZER` | | `false` | env 파일, 없으면 `false` |
+| `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 넘기지 않음 (프로필 기본값) |
+| `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | env 파일 (위 표). prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |
+| `MAIL_SMTP_AUTH`·`MAIL_SMTP_STARTTLS` | | `true`·`true` | 기본값 |
+| `EMAIL_VERIFY_RESEND_INTERVAL`·`SEND_LIMIT`·`GLOBAL_SEND_LIMIT`·`MAX_ATTEMPTS` | | `60s`·`5`(이메일당 시간당)·`100`(서버 전체 시간당, SMTP 계정 한도보다 낮게)·`5` (Q04 기본안) | 기본값. `GLOBAL_SEND_LIMIT` 만 env 파일로 바꿀 수 있음 |
+
+prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
+오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30
+실측: `AI_*`·`INVITE_BASE_URL`·`MCP_URL` 없이 기동됨. 그대로 두면 초대 링크가 `${INVITE_BASE_URL}/invite?…` 로
+만들어질 수 있음). 빈 값이면 설정 검증이 이름을 짚어 멈춥니다.
+`DB_USERNAME` 만 예외로 `${X}` 그대로 둡니다. 빠지면 DB 접속 오류에 user `"${DB_USERNAME}"` 이 찍혀 원인이 바로
+보입니다. `DB_PASSWORD` 는 `${X}` 로 두면 글자가 비밀번호로 전송돼 "비밀번호 틀림"처럼 보이므로 `${X:}` 입니다.
+이 규칙은 `ProdProfilePropertiesTest`(빠른 층 `./gradlew test`)가 검사합니다 — prod 파일에 기본값 없는 `${X}` 가
+생기거나, `beez.cors`·`beez.ai`·`beez.invitation`·`beez.agent` 필수값에 기본값이 다시 들어가면 실패합니다.
+`DB_URL`·`DB_PASSWORD` 에 기본값을 넣는 것은 잡지 못하므로 리뷰에서 봅니다.
+
+**CDC 분석 접수(`beez.cdc.intake.*`)는 `application.yml` 에 없고 compose 가 넘깁니다.** compose 의 기본값은 꺼짐이고
+나머지 셋은 계획 D7 값이라, 서버에서는 위 "서버 env 파일" 표의 `BEEZ_CDC_INTAKE_*` 두 줄만 env 파일에 씁니다(-298).
+켜는 절차는 [cdc-connector.md](cdc-connector.md#6-consumer-켜기), 키의 뜻은
+[cdc README](../../backend/src/main/java/com/beez/backend/cdc/README.md)를 봅니다. `kafka-security.properties` 는 dev 에서
+비워 둡니다(PLAINTEXT, 계획 D3).
+
+### ai (FastAPI)
+
+`ai/app/core/config.py` 가 `ai/.env` 와 환경변수를 읽습니다(이름은 필드 이름의 대문자). 기본값과 허용 값의 정본은 이
+파일이고, 아래는 무엇이 있는지와 서버에서 어떻게 되는지만 적습니다. **서버 compose 는 앞의 셋과, 아래에
+"compose 가 ai 에 전달한다"고 적힌 것만 넘깁니다.**
+
+| 이름 | 비밀 | 의미 |
+|---|---|---|
+| `GMS_KEY` | 비밀 | 임베딩·생성 호출 키. 비면 호출이 502 `model_unavailable` |
+| `GMS_CHAT_ENDPOINT` | | 문서 검토 모델 주소. `https://gms.ssafy.io` 의 `…/chat/completions` 만 허용 |
+| `AI_INTERNAL_TOKEN` | 비밀 | backend 가 보내는 `Authorization: Bearer` 와 비교. 비거나 다르면 401 `invalid_internal_token` |
+| `VALIDATION_RESPONSE_FORMAT` | | 기본 `json_object`. 모델이 strict 출력을 지원할 때만 `json_schema` |
+| `DESIGN_RECOMMENDATION_ENABLED` | | 설계 근거 추천(#185). 기본 `false` |
+| `CONTEXT_SELECTION_ENABLED`·`CONTEXT_SELECTION_*` | | MCP-01 개발 컨텍스트 선택(#131·#132). 기본 `false`, 한도 값(`MIN_SIMILARITY`·`MAX_ITEMS`·`MAX_EVIDENCE`·`TOTAL_TIMEOUT_SECONDS`)은 기본 없음 — 하나라도 비면 503 `selection_not_configured` 이고 에이전트는 503 `context_not_ready` 를 받는다. compose 가 ai 에 전달한다(S15P31A108-399). dev 시작 제안값은 `0.3`·`10`·`8`·`30`(AI 담당 확인 전). `TOTAL_TIMEOUT_SECONDS` 는 backend `BEEZ_DEVELOPMENT_CONTEXT_READ_TIMEOUT`(40초)보다 짧게 |
+| `PLANNING_QUESTIONS_ENABLED`·`PLANNING_QUESTIONS_*` | | 기획 보완 질문(#133). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다(S15P31A108-232). 켜면 `GMS_KEY`·`BEE_DEFAULT_MODEL` 로 호출 |
+| `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
+| `ASSIGNMENT_RECOMMENDATION_ENABLED` | | 역할 분담 추천(#136). 기본 `false`; BE 계약 합의 후에만 켠다. compose 가 ai 에 전달한다 |
+| `ASSIGNMENT_RECOMMENDATION_MAX_BODY_BYTES`·`ASSIGNMENT_RECOMMENDATION_TIMEOUT_SECONDS`·`ASSIGNMENT_RECOMMENDATION_OUTPUT_TOKEN_LIMIT` | | 역할 추천 요청 크기·모델 시간·출력 토큰 한도. 기본 2 MiB·15초·4096; 직접 실행 환경에서 설정한다 |
+| `BEE_CHAT_ENABLED`·`BEE_CHAT_*` | | 비비 질문(#135, BEE-A01). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
+| `MEETING_ANALYSIS_LLM_TIMEOUT_SECONDS` | | 회의 분석(AI-A08) 모델 호출 제한. 기본 `35`초, 허용 범위는 0초 초과 60초 미만이다. 잘못된 값은 502 `model_unavailable`로 처리한다. Compose가 ai에 전달한다. 모델 호출 제한과 backend `MEETING_SUMMARY_READ_TIMEOUT`을 함께 조정하고 모델 호출 쪽을 더 짧게 둔다. |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 502 `model_unavailable`. compose 가 ai 에 전달한다 — 주소는 GMS 주소가 기본, 키·모델은 빈 값이다. 키가 비고 주소가 GMS 기본 주소와 똑같으면 `GMS_KEY` 를 쓰고, 다른 주소면 호출하지 않는다(-357) |
+| `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | 요청한 모델 이름 말고도 받아들일 응답 모델 이름(쉼표). 기본 빈 값. compose 가 ai 에 전달한다 |
+| `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT` | | 영향 분석 모델 호출 시간(초, 숫자만 — 예 `90`, **0 초과 120 이하**)·출력 토큰 상한(추론 토큰 포함, 1~4096). 기본 `60`·`4096`. 범위를 벗어나면 ai 가 모델을 부르지 않고 모든 영향 분석이 502 `model_unavailable` 로 실패한다. compose 가 ai 에 전달한다. 시간을 올리면 backend `BEEZ_CHANGE_IMPACT_READ_TIMEOUT` 도 그보다 길게 함께 올린다(S15P31A108-402) |
+| `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 출력 옵션 이름·응답 형식·요청 크기. 기본값 있음. compose 가 전달하지 않는다 |
+| `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
+| `GMS_EMBEDDING_DIMENSION` | | 기본 `1024`. backend(1024)와 같아야 합니다 |
+| `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
+| `TIKTOKEN_CACHE_DIR` | | 어휘 파일 위치. 이미지에는 `/app/.tiktoken` 으로 고정 |
+
+**서버에서는 위 기능 스위치가 기본값(꺼짐)입니다.** `PLANNING_QUESTIONS_ENABLED`·
+`DESIGN_DRAFTS_ENABLED`·`BEE_CHAT_ENABLED`·`ASSIGNMENT_RECOMMENDATION_ENABLED`와
+`IMPACT_LLM_MODEL`은 compose가 ai에 전달하므로 서버 env 파일에서 명시적으로 켤 수
+있습니다. compose는 `environment`에 적힌 변수만 컨테이너에 넣으므로, 그 밖의 변수를
+서버 env 파일에 적어도 전달되지 않습니다. 추가로 전달하려면 `infra/compose.yaml`의
+ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은
+[5절](#5-비밀값-규칙)을 따릅니다. 어느 기능을 dev에서 켤지는 담당자와 정합니다.
+
+#### AI 기능 켜기 (서버)
+
+아래 네 기능은 env 파일에 줄이 없으면 **모델을 부르기 전에 거절**되어 항상 실패합니다. 키·호출
+한도·시간 초과가 아니므로 다시 시도해도 같습니다(2026-11-10 dev 실측, S15P31A108-357). 이 넷과 아직 켜지
+않는 역할 분담 추천·설계 근거 추천·컨텍스트 선택을 뺀 나머지 AI 기능(문서 검토·작업 계획 검증·문서 색인·
+회의 분석·문서 수정 초안 등)은 `GMS_KEY`만 있으면 됩니다.
+
+| env 파일에 쓰는 줄 | 켜지는 기능 | 없을 때 ai 응답 | 화면·API에 보이는 것 |
+|---|---|---|---|
+| `PLANNING_QUESTIONS_ENABLED=true` | 기획 분석 보완 질문 생성 | 503 `planning_questions_not_configured` | 질문 생성 `FAILED`·`ai_unavailable` |
+| `DESIGN_DRAFTS_ENABLED=true` | 답변으로 설계 초안 만들기 | 503 `design_drafts_not_configured` | 초안 생성 `FAILED`·`ai_unavailable` (접수 뒤 1초 안에 실패) |
+| `BEE_CHAT_ENABLED=true` | 비비에게 질문 | 503 `bee_chat_not_configured` | 답 없이 찾은 문서만 나오는 템플릿 응답 |
+| `IMPACT_LLM_MODEL=gpt-6-luna` | 변경 제안 영향 분석 | 502 `model_unavailable` | 영향 분석 `FAILED`·`model_unavailable` |
+
+- 보완 질문·설계 초안·변경 초안은 backend가 ai의 503·404를 모두 `ai_unavailable`로 바꿔 보여 줍니다. 어느 쪽인지는
+  ai 응답 코드로 가립니다. 비비 질문은 오류 코드 없이 템플릿 응답으로 끝납니다.
+- `gpt-6-luna`는 영향 분석을 GMS로 한 번 호출해 본 조합입니다
+  ([change_impact README](../../ai/app/services/change_impact/README.md)). 다른 모델로 바꾸면 응답 형식·모델 이름이
+  맞는지 배포 뒤에 실제 호출로 확인합니다.
+- 영향 분석은 주소·키 줄을 쓰지 않습니다. 주소 기본값이 GMS 주소이고, 키가 비면 ai가 그 주소에서만
+  `GMS_KEY`를 씁니다. `IMPACT_LLM_ENDPOINT`를 굳이 적으면 기본값과 **글자 하나까지 같아야** 합니다. 대소문자나
+  끝 `/`만 달라도 다른 주소로 보고 공용 키를 쓰지 않아 502 `model_unavailable`이 납니다.
+- 영향 분석의 모델 시간 제한은 `IMPACT_LLM_TIMEOUT_SECONDS` 기본 60초, 출력 상한은 `IMPACT_LLM_OUTPUT_TOKEN_LIMIT`
+  기본 4,096(허용 최대, 추론 토큰 포함)입니다. backend는 영향 분석 전용 읽기 제한 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`
+  (기본 75초)을 쓰며, 모델 시간 제한보다 길어야 합니다. 세 변수 모두 compose가 전달하므로 아래 명령의 `vals`에
+  적으면 반영됩니다(S15P31A108-402). 기본값 그대로면 쓸 필요가 없습니다. 시간을 올릴 때는 두 값을 함께 적고,
+  backend 값에는 단위를 붙입니다. 예: `IMPACT_LLM_TIMEOUT_SECONDS=90`과 `BEEZ_CHANGE_IMPACT_READ_TIMEOUT=105s`.
+  `BEEZ_CHANGE_IMPACT_READ_TIMEOUT=105`처럼 단위를 빼면 Spring이 105ms로 읽어 공통 제한 20초가 적용됩니다.
+  `IMPACT_LLM_TIMEOUT_SECONDS`는 **최대 120초**(0 초과 120 이하)입니다. `150`처럼 넘기면 compose에는 들어가지만 ai가
+  설정을 거절해 모든 영향 분석이 502 `model_unavailable`로 실패합니다. 출력 상한도 4,096을 넘기면 같습니다.
+- 출력 상한 1,024이던 11-11에는 설계 40개 프로젝트(입력 약 1.1만 토큰)에서 영향 분석이 4번 모두 출력 1,024토큰에서 끊겨
+  실패했습니다(약 12초). 잘림은 이제 `model_unavailable`이 아니라 `model_output_truncated`로 남고, ai 로그에
+  `impact_completion … finish_reason=length` 한 줄이 WARNING으로 찍힙니다(정상 호출의 같은 줄은 INFO라 서버 로그에 안 보입니다). `model_timeout`이면 `llm_usage.latency_ms`로 실제 지연을
+  보고 모델 시간 제한과 backend 읽기 제한을 함께 올립니다.
+- **켜도 남는 실패(2026-11-10 기준)**: 보완 질문·설계 초안은 ai가 400 `validation_failed`로 거절합니다(BE가
+  해시를 `sha256:` 접두어째 보냄, S15P31A108-373). 비비 질문은 모델이 답해도 ai 검증에서 거절돼 템플릿으로
+  끝납니다(S15P31A108-374). 이 둘은 env로 고칠 수 없으니 설정을 다시 의심하지 않습니다.
+- 역할 분담 추천(작업 현황의 '후보 추천받기')은 위 넷과 달리 기본으로 꺼 둡니다. 꺼져 있으면 ai가 503
+  `assignment_recommendation_not_configured`로 거절하고, 화면·API에는 503 `assignment_suggestion_disabled`
+  ("담당 후보 추천은 아직 사용할 수 없어요.")로 보이며 버튼이 잠깁니다(S15P31A108-405). 켜기로 정하면 아래 명령의
+  `vals`에 `ASSIGNMENT_RECOMMENDATION_ENABLED=true` 한 줄을 적습니다.
+- **새 서버(운영·발표 환경)에도 같은 줄이 필요합니다.** [cd.md 서버 준비](cd.md#2-env-파일)의 명령이 만드는 파일에는
+  이 줄들이 없습니다.
+
+서버에서 넣습니다. 원본을 읽지 못하거나 중간에 실패하면 env 파일을 바꾸지 않습니다
+([cd.md GMS 키 넣기](cd.md#3-gms-키-넣기바꾸기)와 같은 방식). 바꿀 값은 맨 위 `vals`에만 적습니다.
+
+```bash
+( f=/opt/beez/.env.dev; umask 027
+  vals='PLANNING_QUESTIONS_ENABLED=true
+DESIGN_DRAFTS_ENABLED=true
+BEE_CHAT_ENABLED=true
+IMPACT_LLM_MODEL=gpt-6-luna'
+  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL|IMPACT_LLM_TIMEOUT_SECONDS|IMPACT_LLM_OUTPUT_TOKEN_LIMIT|BEEZ_CHANGE_IMPACT_READ_TIMEOUT|ASSIGNMENT_RECOMMENDATION_ENABLED)=[A-Za-z0-9._-]*$' \
+    && { echo "vals 형식이 다름(아래 허용 이름=값만) — 바꾸지 않음"; exit 1; }
+  keys=$(printf '%s\n' "$vals" | cut -d= -f1 | paste -sd'|')
+  [ -n "$keys" ] || { echo "vals 가 비었음 — 바꾸지 않음"; exit 1; }
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
+  rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
+  grep -Ev "^($keys)=" "$f" > "$f.new"; rc=$?
+  if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+  if [ -n "$(tail -c1 "$f.new")" ]; then echo >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }; fi
+  printf '%s\n' "$vals" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+  mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; }
+  grep -E "^($keys)=" "$f" && ls -l "$f" ) \
+&& sudo -u jenkins test -r /opt/beez/.env.dev && echo "jenkins can read"
+```
+
+- `vals`에 적은 이름만 옛 줄을 지우고 끝에 새로 씁니다. 적지 않은 스위치는 그대로 둡니다(이미 켠 기능을 빼고
+  돌려도 꺼지지 않습니다). 여러 번 돌려도 줄이 겹치지 않습니다.
+- `vals`에 허용한 여덟 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다. 위 네 스위치에 더해
+  영향 분석 한도 `IMPACT_LLM_TIMEOUT_SECONDS`·`IMPACT_LLM_OUTPUT_TOKEN_LIMIT`·`BEEZ_CHANGE_IMPACT_READ_TIMEOUT`과
+  역할 분담 추천 스위치 `ASSIGNMENT_RECOMMENDATION_ENABLED`를 받습니다(기본값으로 충분하면 적지 않습니다).
+  `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`은 backend 설정이라 적용할 때 backend도 다시 만들어집니다.
+- 원본이 개행 없이 끝나면 한 줄을 먼저 넣습니다. 그러지 않으면 새 줄이 마지막 줄 뒤에 붙어 두 값이 함께 깨집니다.
+- 실패하면 `jenkins can read`를 찍지 않습니다. 이 줄이 보여야 반영된 것입니다.
+- 끄려면 그 줄의 값을 `false`(모델은 빈 값, `IMPACT_LLM_MODEL=`)로 바꿔 같은 명령을 돌립니다. 줄을 지우면 그
+  스위치는 건드리지 않습니다.
+- 넣은 값은 **다음 배포 때** 컨테이너가 다시 만들어지면서 적용됩니다. 바로 적용하려면 지금 떠 있는 SHA로
+  [손으로 배포](cd.md#손으로-배포롤백)합니다(값이 바뀐 컨테이너만 다시 만들어집니다 — 보통 ai, `BEEZ_CHANGE_IMPACT_READ_TIMEOUT`을
+  바꿨으면 backend도).
+
+적용됐는지는 컨테이너의 값(비밀 아님)과 실제 호출로 봅니다.
+
+```bash
+docker exec beez-ai-1 env | grep -E '_ENABLED=|^IMPACT_LLM_MODEL=' | sort
+```
+
+화면에서는 기획 분석의 **보완 질문 만들기**, **답변으로 보완 초안 만들기**, 비비 질문 한 번, 설계 항목을 바꾸는 변경
+제안의 영향 분석을 한 번씩 해 봅니다. 영향 분석이 `invalid_output`으로 실패하면 응답의 모델 이름이 요청과 다른
+것이므로 `IMPACT_LLM_ALLOWED_RESPONSE_MODELS`를 봅니다.
+
+변경 제안의 **비비에게 초안 받기**(CHG-A07 → AI-A06 `/v1/bee/draft`)는 스위치가 없습니다. 2026-11-10 현재 ai에 이
+경로가 없어 404이고 화면에는 `ai_unavailable`로 보입니다(env로 고칠 수 없음).
+
+**로컬 함정**: backend 를 `bootRun` 으로 띄우면 `AI_INTERNAL_TOKEN` 기본값이 `change-me` 입니다. `ai/.env.example` 을
+그대로 복사하면 빈 값이라 backend → ai 호출이 전부 401 입니다. 로컬에서는 `ai/.env` 에 `AI_INTERNAL_TOKEN=change-me`
+를 넣거나, 두 쪽에 같은 값을 환경변수로 줍니다. 로컬 compose 는 `infra/local.env` 하나에서 양쪽에 넣으므로 이 문제가
+없습니다.
+
+### frontend (Vite)
+
+| 이름 | 의미 |
+|---|---|
+| `VITE_API_MODE` | `live` 면 `/api` 를 호출, **그 밖의 값이나 빈 값은 모두 `mock`** |
+
+- `VITE_` 값은 빌드 결과(JS)에 글자로 들어가 누구나 볼 수 있습니다. **비밀값을 넣지 않습니다.**
+- 빌드할 때 굳습니다. 서버에서 바꾸려면 다시 빌드해야 합니다. CD 는 저장소 변수 `VITE_API_MODE` 를 빌드 인자로
+  넘기고, 변수가 없으면 `mock` 입니다. 2026-11-02부터 저장소 변수가 `live` 라 dev 서버는 실제 API를 부릅니다.
+
+### CI·CD·Jenkins
+
+| 이름 | 위치 | 쓰는 곳 | 교체 |
+|---|---|---|---|
+| `GITHUB_TOKEN` | Actions 자동 발급 | `cd.yml` GHCR push | 필요 없음 |
+| `JENKINS_API_TOKEN` | Environment `dev` 시크릿 | `cd.yml` → Jenkins 배포 잡 호출 | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
+| `PR_AUTOMERGE_TOKEN` | 저장소 시크릿 | `pr-auto-merge.yml` | 발급한 사람이 갱신 |
+| `GITLAB_SYNC_TOKEN` | 저장소 시크릿 | `sync-gitlab.yml` (SSAFY GitLab 미러) | 〃 |
+| `JENKINS_ADMIN_ID`·`JENKINS_ADMIN_PASSWORD` | 서버 `/etc/jenkins/casc.env` | Jenkins 관리자 (JCasC) | [jenkins.md](jenkins.md) |
+| `JENKINS_DEPLOY_PASSWORD` | 〃 | Jenkins `github-actions` 계정 | 〃 |
+
+CI(`ci.yml`)는 비밀값을 쓰지 않습니다. backend 테스트는 Testcontainers 가 DB 를 띄우고 나머지는
+`application-test.yml` 의 고정값을 씁니다.
+
+## 3. 빠졌을 때 보이는 것
+
+2026-10-30 실측입니다(이미지 `9f9af95` + 이 문서와 같은 PR 의 `application-prod.yml`).
+
+| 상황 | 결과 | 보이는 문구 |
+|---|---|---|
+| 서버 env 파일에 필수값 없음·빈 값 | **배포 전 점검이 멈춤**, 컨테이너는 그대로 | `필수값 DB_PASSWORD 이 없거나 빈 값` (compose 원문 `required variable DB_PASSWORD is missing a value` 를 바꿔 보여 줌) |
+| 서버 env 파일을 읽을 수 없음 | `deploy.sh` 가 멈춤 | `env 파일을 읽을 수 없음: /opt/beez/.env.dev` |
+| backend prod, `DB_URL` 없음 | 기동 실패 | `Failed to configure a DataSource: 'url' attribute is not specified` |
+| backend prod, `DB_USERNAME` 없음 | 기동 실패 | `password authentication failed for user "${DB_USERNAME}"` |
+| backend prod, `DB_PASSWORD` 없음 | 기동 실패 | `The server requested SCRAM-based authentication, but no password was provided.` |
+| backend prod, `CORS_ALLOWED_ORIGINS` 없음 | 기동 실패 | `Property: beez.cors.allowedOrigins … must not be empty` |
+| backend prod, `AI_*`·`INVITE_BASE_URL`·`MCP_URL` 없음 | 기동 실패 | `Property: beez.agent.mcpUrl … must not be blank` (먼저 걸린 것 하나만 나옴) |
+| backend prod, `DOCUMENT_S3_*` 없음 또는 버킷 이름 형식 틀림 | 기동 실패 | `SeaweedFS endpoint, region, bucket and credentials required` |
+| backend, 임베딩 프로필 비어 있음 | 기동은 됨, 색인이 멈춤 | `embedding_profile_not_configured` |
+| ai, `AI_INTERNAL_TOKEN` 비었거나 backend 와 다름 | 기동은 됨(`/health` 200), 호출이 401 | `invalid_internal_token` |
+| ai, `GMS_KEY` 비어 있음 | 기동은 됨, 호출이 502 | `model_unavailable` |
+| ai, 기능 스위치(`PLANNING_QUESTIONS_ENABLED` 등) 없음 | 기동은 됨, 그 기능만 503 | ai `…_not_configured`, 화면은 `ai_unavailable` — [AI 기능 켜기](#ai-기능-켜기-서버) (2026-11-10 실측) |
+| ai, `IMPACT_LLM_MODEL` 없음 | 기동은 됨, 영향 분석만 502 | `model_unavailable` (〃) |
+| frontend, `VITE_API_MODE` 오타 | 조용히 `mock` | 없음 — 화면이 목데이터 |
+
+서버에서는 compose 가 먼저 걸러 주므로 backend 의 prod 검증까지 가는 일은 거의 없습니다. prod 검증은 compose 밖에서
+jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
+
+### 배포 전에 점검하기
+
+서버 env 파일을 **배포하지 않고** 두 가지로 확인합니다. 비밀값은 화면에 나오지 않습니다.
+점검은 저장소 파일 [`infra/deploy/check-port.sh`](../../infra/deploy/check-port.sh) 하나이고, 배포(`deploy.sh`)도
+컨테이너를 바꾸기 전에 같은 파일을 부릅니다. 실패하면 배포는 이미지 받기·컨테이너 교체·프론트 전환을 하지 않고 멈춥니다.
+
+```bash
+# 로컬 PC (Git Bash, 저장소 루트). 점검 스크립트와 compose 파일을 서버 임시 폴더에 풀어 그 자리에서 검사
+HOST=beez               # 그 환경의 서버. ~/.ssh/config 의 Host 별칭
+ENV_NAME=dev            # 검사할 환경. 서버 env 파일 /opt/beez/.env.<ENV_NAME>
+REF=dev                 # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
+
+# 1) 필수값이 다 있는가  2) backend 포트를 다른 프로그램이 쓰지 않고, Nginx 가 보내는 포트와 같은가
+# 성공이면 env ok · port ok 두 줄, 실패하면 그 자리에서 멈추고 exit 1
+git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy/check-port.sh |
+  ssh "$HOST" "set -- $ENV_NAME port;"' d=$(mktemp -d) && tar -x -C "$d" &&
+    bash "$d/infra/deploy/check-port.sh" "$2" "/opt/beez/.env.$1" "$d/infra/compose.yaml"; r=$?; rm -rf "$d"; exit $r'
+```
+
+- **`env ok` 는 값이 있는지만 봅니다.** 값이 맞는지(포트, `PUBLIC_ORIGIN` 형식, 비밀값이 DB 와 같은지)는 보지 않습니다.
+  그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다.
+  - `port 충돌`: 그 포트를 backend 가 아닌 곳이 씁니다. 두 가지로 봅니다.
+    (a) Nginx 의 켜진 사이트 설정 중 `upstream beez_backend` 밖에서 그 포트로 보내는 곳이 있으면 걸립니다.
+    `8080` 이면 Jenkins 설정에 걸리므로 Jenkins 가 잠깐 꺼져 있어도 잡힙니다.
+    (b) 지금 그 포트를 연 프로그램(`ss -Hltn` 은 LISTEN 중인 TCP 포트를 숫자로 보여 줌)이 떠 있는 backend 컨테이너가
+    아니면 걸립니다. backend 인지는 compose 라벨(`com.docker.compose.project=beez`, `service=backend`)로 찾습니다.
+    Nginx 에 없고 지금 꺼져 있는 프로그램의 포트는 잡지 못합니다.
+  - `port 다름`: Nginx 의 `upstream beez_backend` 가 다른 포트로 보냅니다. backend 는 떠도 API 가 실패합니다.
+
+  backend 의 healthcheck 는 컨테이너 안(`127.0.0.1:8080`)만 보므로 포트가 어긋나도 통과합니다. 그래서 배포가 이 점검을
+  먼저 돌립니다. 값을 바꿨다면 배포 전에 위 명령으로 한 번 돌려 봅니다.
+- 포트 값은 env 파일을 직접 읽지 않고 compose 가 해석한 값(`config --environment`)으로 봅니다. 그래서
+  `BACKEND_HOST_PORT=8081 # 주석`, 따옴표, CRLF, 같은 키 두 번(마지막 값)을 배포 때와 똑같이 읽습니다.
+  이 명령은 env 파일의 모든 값을 내보내므로 스크립트 안에서 필요한 값만 꺼내고 화면에는 찍지 않습니다.
+- Nginx 사이트 설정은 `PUBLIC_ORIGIN` 의 호스트 이름으로 찾습니다(`/etc/nginx/sites-enabled/<호스트>.conf`,
+  dev 는 `dev.beez.ai.kr.conf`). 배포 스크립트에 환경별 값을 넣지 않기 위해서입니다.
+- **지원하는 upstream 주소 표기는 `127.0.0.1:<포트>` 와 `localhost:<포트>` 둘입니다.** (a) 다른 사이트의 충돌과
+  upstream 일치를 같은 표기로 판정합니다. upstream 의 server 가 그 밖의 주소(`[::1]:8081`, 다른 이름)면
+  `지원하지 않는 upstream 주소` 로 멈춥니다. backend 는 `127.0.0.1` 에만 열립니다. 이름 조회는 하지 않습니다.
+- **compose 오류 문구도 그대로 보여 주지 않습니다.** compose 는 따옴표가 안 닫힌 값(`unterminated quoted value "<값>`),
+  포트 형식 오류(`invalid hostPort: <값>`), `${` 문법 오류(`Invalid template: "<값>"`)에서 값을 그대로 찍습니다
+  (2026-10-30 로컬 실측). 그래서 `safe` 는 **compose 의 원문 줄을 한 줄도 내보내지 않습니다.** 값이 여러 줄이면
+  오류 문구 중간의 아무 줄이든 값이 될 수 있어, 줄 모양으로 골라 내보내는 방식은 안전하지 않기 때문입니다.
+  해석하는 것도 **오류의 첫 줄**(compose 자신의 문구)뿐이고, 그 뒤 줄은 값의 나머지일 수 있어 읽지 않습니다.
+  나오는 문구는 셋뿐입니다 — `필수값 X 이 없거나 빈 값`(X 가 compose 파일에 `${X` 로 있는 이름일 때만),
+  `env 파일 형식 오류`, 그 밖의 `compose 오류 (값이 섞일 수 있어 문구는 숨김)`.
+  2026-11-04 실측: 포트 값 `S3cretXYZ command not found`, 여러 줄 값 안의 `couldn't find env file: …`·
+  `required variable <변수 이름> is missing a value`·`failed to read …: line 7:` 에서 값은 한 번도 출력되지 않았고,
+  원인과 다른 안내도 나오지 않았습니다.
+  docker·env 파일·compose 버전처럼 값과 무관한 원인은 오류 문구를 읽지 않고 스크립트가 먼저 직접 확인합니다.
+  형식 오류가 몇째 줄인지 같은 자세한 원인은 일부러 보여 주지 않습니다. 서버에서 직접 compose 를 돌려 봅니다
+  (채팅·PR 에 붙여 넣지 않습니다).
+- **배포 로그도 같습니다.** `deploy.sh` 는 이 점검을 통과한 env 파일만 `compose pull`·`up` 에 넘기므로, env 파일
+  형식 오류의 원문이 Jenkins 콘솔에 남지 않습니다(합성 env 파일로 확인).
+- **2) 는 디스크의 Nginx 설정 파일을 읽습니다. 실행 중인 Nginx 가 아닙니다.** 파일을 고친 뒤 reload 하기 전에는
+  `port ok` 가 나와도 Nginx 는 이전 포트로 보냅니다. 설정을 고쳤다면 `sudo nginx -t && sudo systemctl reload nginx` 까지
+  하고, 포트가 반영됐는지는 아래 [Nginx 반영 확인](#nginx-반영-확인)으로 봅니다. 배포는 컨테이너를 바꾼 뒤 같은 확인을
+  돌리고, 실패하면 프론트를 바꾸지 않고 멈춥니다.
+- `upstream beez_backend` 에 `server` 가 둘 이상이면 멈춥니다. 하나만 맞아도 Nginx 는 나머지로도 요청을 보내므로,
+  compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
+- **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
+  실패는 모두 exit 1 입니다.
+  `서버에 docker 없음`·`서버에 curl 없음` 은 말 그대로입니다(curl 은 교체 뒤 [Nginx 반영 확인](#nginx-반영-확인)에
+  쓰지만, 없으면 컨테이너를 바꾼 뒤에야 멈추므로 여기서 미리 봅니다). `env 파일 없음·읽기 불가` 는 `ENV_NAME` 이 틀렸거나 SSH 사용자가 읽을 수 없는 것,
+  `config --environment 를 모름` 은 서버에 compose 플러그인이 없거나 이 옵션보다 오래된 것입니다(서버 v5.6.1·로컬 v5.2.0
+  에는 있음, 2026-10-30).
+  `env 점검 실패`(1) 와 `env 읽기 실패`(2) 는 바로 위에 찍힌 줄로 원인을 구분합니다.
+  `필수값 X 이 없거나 빈 값` 은 말 그대로이고, `env 파일 형식 오류` 는 따옴표가 안 닫혔거나 `${` 문법·키 형식이
+  틀린 줄이 있는 것입니다.
+  `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다(값은 찍지 않습니다).
+  `PUBLIC_ORIGIN 에서 호스트를 읽지 못함` 은 값이 `http://`·`https://` 로 시작하지 않거나 호스트가 이상한 것입니다.
+  `Nginx 설정 없음` 은 `PUBLIC_ORIGIN` 의 호스트와 사이트 설정 파일 이름이 다르거나 사이트가 꺼진 것입니다.
+  `Nginx 설정 읽기 실패` 는 켜진 사이트 중 읽을 수 없는 파일(권한, 깨진 링크)이 있는 것입니다.
+  `upstream beez_backend 없음` 은 그 설정 파일에 블록이 없는 것입니다(upstream 을 다른 파일로 옮김).
+  `ss 실행 실패` 는 서버에 `ss`(iproute2)가 없거나 실행이 실패한 것입니다.
+  `docker 조회 실패` 는 SSH 사용자에게 docker 권한이 없거나 데몬이 멈춘 것입니다.
+- 다른 환경(운영 등)은 위 세 변수를 바꿉니다. 운영 서버가 따로 있으면(S15P31A108-73) `HOST` 를 그 서버의 별칭으로 바꿉니다.
+  `ENV_NAME` 만 바꾸면 여전히 dev 서버를 검사합니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
+- **서버 하나에 환경 하나**가 전제입니다. 2) 는 upstream 이름 `beez_backend` 와 compose 프로젝트 이름 `beez` 를
+  고정으로 봅니다. 한 서버에 dev 와 운영을 같이 두면 Nginx 가 upstream 이름 중복을 허용하지 않아 운영 쪽 이름이
+  달라지고, 2) 가 `port 충돌` 이나 `upstream beez_backend 없음` 으로 잘못 멈춥니다. compose 프로젝트 이름도 같아
+  컨테이너부터 겹칩니다. 같은 서버에 두기로 하면 이 점검과 compose 이름을 함께 고칩니다.
+- **검사 기준은 `REF` 의 compose 파일과 점검 스크립트입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로,
+  `REF=dev` 로 검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
+- 브랜치 이름이 틀리면 `fatal: not a valid object name` 과 `tar` 오류만 나오고 점검은 돌지 않습니다(`env ok` 는 나오지 않음).
+- 점검 스크립트와 compose 파일은 `git archive` 로 묶어 서버의 임시 폴더(`mktemp -d`)에 풀고, 끝나면 지웁니다.
+- `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 compose 는 위 표 첫 줄 문구를
+  내고, 이 점검은 그것을 `필수값 DB_PASSWORD 이 없거나 빈 값` 으로 바꿔 보여 줍니다.
+- 값의 길이만 보려면 [cd.md](cd.md#2-env-파일)의 `awk` 명령을 씁니다.
+- 위 경계 처리는 [`infra/deploy/test_check_port.py`](../../infra/deploy/test_check_port.py) 가 고정합니다.
+  `infra/deploy/`·`infra/compose.yaml`·`infra/local.env` 를 바꾼 PR 에서는 CI 의 `deploy-scripts` 잡이 이 시험을 돌리고,
+  로컬에서는 `python infra/deploy/test_check_port.py` 로 돌립니다. 실제 docker compose 로 env 파일을 해석하고(데몬은 필요 없음),
+  docker ps·`ss`·`curl`·Nginx 설정 폴더는 가짜로 둡니다. Windows 는 Git Bash 를 씁니다.
+  시험은 `CHECK_PORT_TEST_*` 환경변수로 Nginx 설정 폴더와 재시도 대기를 바꿉니다. 이 값이 설정돼 있으면 점검이 첫 줄에
+  `주의: 시험용 값 사용 중` 을 찍으므로, 배포 로그에 이 줄이 보이면 서버 환경에서 그 변수를 지웁니다.
+
+로컬 전체 스택도 같은 방식입니다.
+
+```bash
+docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet && echo "env ok"
+```
+
+#### Nginx 반영 확인
+
+위 점검은 디스크의 설정 파일을 봅니다. Nginx 설정을 고치고 reload 했다면, **실행 중인 Nginx 가 지금 떠 있는 backend 로
+보내는지**를 응답으로 확인합니다. 배포(`deploy.sh`)도 컨테이너를 바꾼 뒤 같은 확인을 돌리고, 실패하면 프론트를 바꾸지
+않고 멈춥니다(backend·ai 는 이미 새 버전). 손으로 볼 때는 위 명령에서 `port` 를 `nginx` 로 바꿉니다(위의 `HOST`·`ENV_NAME`·`REF`
+그대로, backend 가 떠 있을 때).
+
+```bash
+# 로컬 PC (Git Bash, 저장소 루트). 같은 /api/ping 을 Nginx 를 거쳐 한 번, compose backend 컨테이너가 연 포트로 직접 한 번 부른다.
+# started_at(그 backend 프로세스의 기동 시각)이 같으면 nginx ok
+git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy/check-port.sh |
+  ssh "$HOST" "set -- $ENV_NAME nginx;"' d=$(mktemp -d) && tar -x -C "$d" &&
+    bash "$d/infra/deploy/check-port.sh" "$2" "/opt/beez/.env.$1" "$d/infra/compose.yaml"; r=$?; rm -rf "$d"; exit $r'
+```
+
+- **HTTP 200 만으로는 판단하지 않습니다.** 실행 중인 설정에 `/api/` 프록시가 없으면 SPA fallback 이 `index.html` 을 200 으로
+  주고, 예전 포트의 backend 가 아직 살아 있어도 200 이 나옵니다. 그래서 응답 본문의 `started_at` 을 비교합니다.
+  다른 backend 면 시각이 달라 `nginx 다름` 으로, HTML 이면 `started_at` 이 없어 `nginx 확인 실패: … JSON 아님(HTTP 200, …)`
+  으로 걸립니다(2026-11-04 서버 실측: `nginx ok`, `/api-nope` 같은 HTML 응답은 빈 값).
+- **시각 비교의 실패 문구는 둘입니다.** 그 앞 단계의 실패는 아래 backend 포트·`docker 조회 실패` 와 위 점검의 env 문구입니다.
+  `nginx 다름` 은 두 쪽이 다 응답했는데 시각이 다른 것으로, 대개 upstream 포트를 고치고 reload 하지 않은 것입니다. `nginx 확인 실패` 는 한쪽이 응답하지 않았거나 JSON 이 아닌 것으로, 원인을 `응답 없음(curl 종료 코드 N)`
+  또는 `JSON 아님(HTTP N, …)` 으로 보여 줍니다. curl 종료 코드는 7 연결 거부, 28 시간 초과, 35·60 TLS(인증서) 입니다.
+  curl 의 오류 문구와 응답 본문은 내보내지 않습니다.
+- Nginx 경유 요청은 `PUBLIC_ORIGIN` 주소 그대로(호스트 이름·인증서 이름) 보내되, 연결만 이 서버의 Nginx(`127.0.0.1`)로
+  붙습니다(`curl --connect-to`). DNS·외부 경로는 보지 않습니다.
+- backend 컨테이너가 연 `127.0.0.1` 포트가 하나가 아니면(컨테이너가 없거나 둘 이상) `backend 컨테이너 포트가 N 개` 로,
+  docker 를 못 부르면 `docker 조회 실패` 로 멈춥니다. 평소 compose 배포에서는 backend 가 하나입니다.
+- **이 확인이 보증하는 것은 `/api/` 가 지금 compose backend 로 간다는 것까지입니다.** reload 를 했는지 가려 주는 것은
+  upstream 포트를 바꿨을 때뿐입니다(reload 를 안 했으면 예전 포트로 가서 시각이 다름). 포트는 그대로 두고 다른 설정
+  (요청 크기 한도, `/mcp` 시간 제한 등)만 바꿨다면 reload 를 안 해도 `nginx ok` 가 나오므로, 그 설정은 각각 그 동작으로
+  확인합니다.
+- **판정은 응답 한 쌍으로 합니다.** upstream 의 server 가 하나라는 전제(위 점검 2)에서는 한 쌍으로 충분합니다.
+  처음을 포함해 3번까지 묻습니다. 한쪽이라도 응답을 못 받았을 때만 2초 뒤 다시 묻고(컨테이너 교체 직후의 일시 실패에
+  배포가 멈추지 않게), 3번 다 못 받으면 `(3회 시도)` 를 붙여 멈춥니다. 둘 다 응답했는데 시각이 다르면 다시 물어도
+  같으므로 바로 멈춥니다.
+  실행 중인 설정에 server 가 둘 이상이면 요청마다 갈 곳이 달라 이 확인으로는 판단할 수 없습니다. 그런 설정 파일은
+  위 점검이 먼저 멈추므로, 위 점검을 통과한 설정을 reload 한 뒤에 이 확인을 돌립니다.
+- Nginx worker 의 시작 시각은 reload 의 증거로 쓰지 않습니다. worker 는 비정상 종료 뒤 다시 뜨거나 재시작으로도 새로
+  떠서, 시각이 바뀌었다고 마지막 reload 가 이 설정을 읽었다고 단정할 수 없습니다.
+- `started_at` 은 비밀이 아니라 화면·배포 로그에 찍어도 됩니다.
+
+## 4. 환경별 차이
+
+| 항목 | 로컬 `bootRun` | 로컬 compose | CI 테스트 | 서버 dev |
+|---|---|---|---|---|
+| Spring 프로필 | `local` | `local` | `test` | `prod` |
+| DB | `backend/compose.yaml` 자동 기동 | compose postgres | Testcontainers | compose postgres (볼륨 `beez_pgdata`) |
+| 문서 원본 | `127.0.0.1:8333` | `seaweedfs:8333` | 닫힌 주소(`127.0.0.1:1`) | `seaweedfs:8333` |
+| AI 주소 | `localhost:8000` | `ai:8000` | 닫힌 주소 | `ai:8000` |
+| `AI_INTERNAL_TOKEN` | `change-me` | `local.env` | 기본값 | env 파일 (난수) |
+| CORS·초대·MCP 주소 | `localhost:5173` 계열 | `http://localhost:8088` | 기본값 | `https://dev.beez.ai.kr` |
+| 세션 쿠키 `Secure` | 꺼짐 | 꺼짐 | 꺼짐 | 켜짐 (HTTPS 전용) |
+| Swagger | 켜짐 | 켜짐 | — | 꺼짐 |
+| 비밀값 | 없음 | 더미 | 없음 | env 파일 |
+
+## 5. 비밀값 규칙
+
+### 저장소에서 빼는 규칙
+
+`.gitignore` 가 이미 막고 있습니다.
+
+| 파일 | 규칙 | 결과 |
+|---|---|---|
+| 루트 `.gitignore` | `.env`, `.env.*`, `!.env.example` | 어느 폴더의 `.env`·`.env.dev` 사본도 무시, 예시 파일만 추적 |
+| `frontend/.gitignore` | 같음 | |
+| `ai/.gitignore` | `.env` | |
+
+- 예시 파일은 `ai/.env.example`, `frontend/.env.example`, `infra/local.env` 셋입니다. `local.env` 는 이름이 `.env.` 로
+  시작하지 않아 추적되는 **더미값 파일**입니다. 서버·운영 값을 여기에 쓰지 않습니다.
+- 서버용 예시 파일은 따로 두지 않습니다. 서버 파일은 [cd.md](cd.md#2-env-파일)의 명령이 난수와 함께 만들고, 이름 목록은
+  위 표가 정본입니다.
+- 비밀값을 채팅·메신저·PR 코멘트에 붙여 넣지 않습니다. 서버에 넣을 때는 `read -rs` 로 입력받습니다(cd.md GMS 키 절차).
+
+### 값이 샜을 때
+
+이력에서 지우는 것보다 **값을 바꾸는 것이 먼저**입니다. 공개 저장소라 푸시된 순간 복사됐다고 봅니다.
+
+| 값 | 바꾸는 방법 |
+|---|---|
+| `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용. 영향 분석도 GMS 주소에서는 이 키를 쓰므로 따로 할 일이 없습니다 |
+| `IMPACT_LLM_API_KEY` | env 파일에 **따로 적은 경우만** 해당합니다. 적힌 줄을 새 값으로 바꾸고 재배포합니다. 줄을 지우면 GMS 주소에서는 `GMS_KEY` 를 쓰고, 다른 주소에서는 영향 분석이 멈춥니다 |
+| `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
+| `DOCUMENT_S3_*`·`SEAWEEDFS_*` | 새 키를 넣고 같은 SHA 로 다시 배포. **access key 와 secret key 를 함께** 바꿉니다 — [seaweedfs.md 키 교체](seaweedfs.md#키-교체) |
+| `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
+| `JENKINS_API_TOKEN` | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
+| Jenkins 비밀번호 | [jenkins.md 비밀번호 바꾸기](jenkins.md#비밀번호-바꾸기) |
+
+## 6. 변수를 추가할 때
+
+1. backend 는 `application.yml` 에 로컬 기본값과 함께 넣고, 운영에서 반드시 받아야 하면 `application-prod.yml` 에
+   `${X:}` 로 덮고 설정 클래스에 `@NotBlank` 등 검증을 답니다. 새 설정 클래스면 `ProdProfilePropertiesTest` 의
+   바인딩 시험에 한 줄 추가합니다.
+2. 컨테이너에 넘겨야 하면 `infra/compose.yaml` 에 넣습니다. 필수면 `${X:?X is required}`.
+3. 서버 env 파일에 들어가는 값이면 [cd.md 서버 준비 2](cd.md#2-env-파일)의 **파일을 만드는 명령에도** 키를 더합니다.
+   그 명령이 키를 직접 나열하므로, 빠뜨리면 새 서버(-73 운영 등)에서 만든 파일에 그 키가 없어 첫 배포가 멈춥니다.
+4. frontend `VITE_` 값은 빌드할 때 굳습니다. 서버 화면에도 쓰려면 `infra/frontend-dist/Dockerfile` 의 `ARG` 와
+   `.github/workflows/cd.yml` 의 `build-args` 를 **둘 다** 고칩니다. 하나라도 빠지면 로컬에서는 되고 서버 화면만
+   조용히 기본값으로 돕니다. 비밀값은 넣지 않습니다.
+   지금 `cd.yml` 의 `frontend-dist` 항목은 `build-args` 가 값 하나짜리 한 줄입니다. 두 개 이상이면 여러 줄로 바꿉니다.
+   값마다 `|| '기본값'` 을 붙입니다. 저장소 변수가 없을 때 빈 값이 넘어가면 Dockerfile `ARG` 의 기본값을 덮습니다.
+
+   ```yaml
+   build-args: |
+     VITE_API_MODE=${{ vars.VITE_API_MODE || 'mock' }}
+     VITE_NEW_VALUE=${{ vars.VITE_NEW_VALUE || '<ARG 와 같은 기본값>' }}
+   ```
+5. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example`·`frontend/.env.example`)에 빈 칸을 넣습니다.
+6. 이 문서의 표를 고칩니다.
+7. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
+   배포 전 점검에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)를
+   **`REF=<그 PR 브랜치>`** 로 돌려 확인합니다.

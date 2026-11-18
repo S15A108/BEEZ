@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "member_id": "22",
+      "online": true,
+      "last_seen_at": "2026-11-11T03:00:00Z",
+      "zone": "dev",
+      "seat": "A-3",
+      "panel": "tasks"
+    },
+    {
+      "member_id": "23",
+      "online": false,
+      "last_seen_at": "2026-11-11T01:00:00Z",
+      "zone": "lobby"
+    },
+    {
+      "member_id": "24",
+      "online": false
+    }
+  ]
+}

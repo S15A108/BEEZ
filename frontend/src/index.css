@@ -1,0 +1,193 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
+
+@custom-variant dark (&:is(.dark *));
+
+/* 글자 크기 단계(D49). 본문 text-body 15px, 설명·보조 text-sub 13px, 날짜 같은 메타·캡션 text-caption 12px,
+   단축키 표시 text-kbd 11px. 버튼·입력·목록 제목은 text-sm(14px) 그대로 쓴다. 11px는 키 표시에만 쓴다.
+   새 이름은 lib/utils.ts의 cn()에도 등록해 색 클래스(text-muted-foreground 등)와 함께 써도 지워지지 않게 한다. */
+@theme {
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.6;
+  --text-sub: 0.8125rem;
+  --text-sub--line-height: 1.5;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-kbd: 0.6875rem;
+  --text-kbd--line-height: 1;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-destructive-ink: var(--destructive-ink);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-ink: var(--primary-ink);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(0.985 0.008 90);
+  --foreground: oklch(0.28 0.018 90);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.84 0.16 90);
+  --primary-foreground: oklch(0.28 0.04 85);
+  /* 밝은 바탕 위 꿀색 글자(링크 등). #7e5e00, 흰 바탕 6.04:1 · primary/20 위 5.46:1 (S15P31A108-442) */
+  --primary-ink: oklch(0.5 0.105 86);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  /* 따뜻한 회갈색(#706c60). 앱의 가장 짙은 베이지·노란 바탕(#f0eee8)에서도 4.5:1 이상이다(S15P31A108-440). */
+  --muted-foreground: oklch(0.53 0.018 90);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  /* 안 읽음 같은 상태 점(D49). 흰 바탕 3.67:1, 노란 옅은 바탕 3.57:1, 회색 호버 바탕 3.36:1 */
+  --success: oklch(0.596 0.145 163.2);
+  /* destructive/10·/20 바탕 위 글자. #ac1a1b, 4.81:1 이상 (S15P31A108-442) */
+  --destructive-ink: oklch(0.48 0.18 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.72 0.14 88);
+  /* 차트 색은 브랜드 꿀색 단계다(S15P31A108-449). chart-1은 막대 하나짜리 차트의 기본 색이고 흰 카드에서 3.4:1,
+     회색 트랙에서 3.1:1이라 그래픽 대비 3:1을 넘는다. 밝은 chart-3·5는 혼자 서는 막대나 글자에 쓰지 않는다. */
+  --chart-1: oklch(0.64 0.13 80);
+  --chart-2: oklch(0.5 0.09 65);
+  --chart-3: oklch(0.78 0.12 85);
+  --chart-4: oklch(0.4 0.06 60);
+  --chart-5: oklch(0.88 0.06 90);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.765 0.177 163.2);
+  --primary-ink: var(--primary);
+  --destructive-ink: var(--destructive);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /* 글자 드래그 선택을 막는다. 입력칸은 브라우저가 따로 선택을 허용하고, 문서 본문·복사해서 쓰는 값은 select-text로 연다. */
+  body {
+    @apply bg-background text-foreground select-none;
+  }
+  img,
+  a {
+    -webkit-user-drag: none;
+  }
+  html {
+    @apply font-sans;
+  }
+  /* 업무 창 스크롤바(S15P31A108-455): 6px로 얇게, 스크롤하는 동안만 보인다(data-scrolling, 업무 창이 붙였다 뗀다).
+     막대는 늘 그 자리에 있어 휠·키보드·끌기는 그대로 되고, 막대 위에 올리면 보인다.
+     Chromium·Safari는 ::-webkit-scrollbar로, 그것이 없는 Firefox는 표준 속성으로 그린다. */
+  .pane-scrollbars ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .pane-scrollbars ::-webkit-scrollbar-track,
+  .pane-scrollbars ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  .pane-scrollbars ::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: transparent;
+  }
+  .pane-scrollbars [data-scrolling]::-webkit-scrollbar-thumb,
+  .pane-scrollbars ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--foreground) 28%, transparent);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    .pane-scrollbars * {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .pane-scrollbars [data-scrolling] {
+      scrollbar-color: color-mix(in oklab, var(--foreground) 28%, transparent)
+        transparent;
+    }
+  }
+}

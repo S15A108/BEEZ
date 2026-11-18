@@ -1,0 +1,106 @@
+import { act, renderHook } from '@testing-library/react'
+import { expect, it, vi } from 'vitest'
+import {
+  useClearPaneOnLeave,
+  useOfficeTime,
+  useRemembered,
+  useWorkspaceStore,
+} from './workspaceStore'
+
+// PR #72 4차 조사 FOURTH-UI-01: A 프로젝트의 작업 상세를 연 채 떠나면 다음 프로젝트에 그 작업 id가 남지 않는다.
+it('워크스페이스를 떠나면 열려 있던 창과 대상 id를 비운다', () => {
+  const view = renderHook(() => useClearPaneOnLeave())
+  useWorkspaceStore.getState().openPane('tasks', '501')
+  view.unmount()
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: null,
+    focusId: null,
+  })
+})
+
+// PR #72 6차 UI-01: 프로젝트를 만든 뒤 부지 저장이 실패하면 생성 실패로 보여, 다시 누르면 프로젝트가 또 생겼다.
+it('브라우저 저장소에 쓰지 못해도 부지 배치는 예외 없이 바뀐다', () => {
+  const original = Storage.prototype.setItem
+  let writes = 0
+  Storage.prototype.setItem = () => {
+    writes++
+    throw new DOMException('가득 참', 'QuotaExceededError')
+  }
+  try {
+    expect(() =>
+      useWorkspaceStore
+        .getState()
+        .placeProjects('11', [{ id: '301', lot: 4, design: 'modern' }]),
+    ).not.toThrow()
+    expect(writes).toBeGreaterThan(0)
+    expect(useWorkspaceStore.getState().placements['11:301']).toEqual({
+      lot: 4,
+      design: 'modern',
+    })
+  } finally {
+    Storage.prototype.setItem = original
+  }
+})
+
+// 나의 도시는 마지막으로 연 프로젝트 건물을 가운데에 두고 시작한다(D33). 계정마다 따로 남긴다.
+it('마지막으로 연 프로젝트를 계정마다 따로 기억하고, 새로 열면 바꾼다', () => {
+  const { visitProject } = useWorkspaceStore.getState()
+  visitProject('11', '101')
+  visitProject('12', '201')
+  visitProject('11', '102')
+  expect(useWorkspaceStore.getState().lastVisited).toMatchObject({
+    '11': '102',
+    '12': '201',
+  })
+  // 브라우저 설정으로 저장한다(부지 배치와 같은 저장소)
+  expect(localStorage.getItem('beez.scene.preferences.v1')).toContain(
+    '"lastVisited":{"11":"102","12":"201"',
+  )
+})
+
+// D39: 고정한 동안 시간이 지났어도 자동으로 바꾸면 1분을 기다리지 않고 바로 지금 시각의 빛이 된다. 그 뒤로는 1분마다 다시 본다.
+it('사무실 시간대를 자동으로 바꾸면 바로 지금 시각을 따르고 시간이 지나면 바뀐다', () => {
+  vi.useFakeTimers({ now: new Date('2026-11-05T07:59:30Z') }) // 한국 시각 16:59:30, 낮
+  useWorkspaceStore.getState().setOfficeTime('night')
+  const { result } = renderHook(() => useOfficeTime())
+  expect(result.current).toBe('night')
+  act(() => {
+    vi.advanceTimersByTime(2 * 60_000) // 17:01:30, 노을
+  })
+  expect(result.current).toBe('night')
+  act(() => useWorkspaceStore.getState().setOfficeTime('auto'))
+  expect(result.current).toBe('sunset')
+  act(() => {
+    vi.advanceTimersByTime(2 * 60 * 60_000) // 19:01:30, 밤
+  })
+  expect(result.current).toBe('night')
+  vi.useRealTimers()
+})
+
+// S15P31A108-431: 업무 창을 다른 메뉴로 바꾸거나 닫았다 열어도 보던 자리를 잇고, 대상을 정해 열면 그 대상을 연다.
+it('useRemembered는 다시 열면 보던 값을 잇고, 대상을 정해 열거나 프로젝트를 떠나면 처음 값으로 연다', () => {
+  const open = (fresh = false) =>
+    renderHook(() => useRemembered('documents.view', 'list', fresh)).result
+      .current[0]
+  const remember = () =>
+    useWorkspaceStore.setState({
+      paneMemory: { 'documents.view': 'detail:201' },
+    })
+
+  const view = renderHook(() => useRemembered('documents.view', 'list'))
+  act(() => view.result.current[1]('detail:201'))
+  view.unmount()
+  expect(open()).toBe('detail:201')
+
+  remember()
+  useWorkspaceStore.getState().openPane('documents', '202')
+  expect(open()).toBe('list')
+  useWorkspaceStore.getState().openPane(null)
+
+  remember()
+  expect(open(true)).toBe('list')
+
+  remember()
+  renderHook(() => useClearPaneOnLeave()).unmount()
+  expect(open()).toBe('list')
+})

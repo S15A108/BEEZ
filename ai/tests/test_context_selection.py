@@ -1,0 +1,558 @@
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.retrieval import EmbeddingUsage
+from app.services.retrieval.context_selection import (
+    ApprovedEvidence,
+    ApprovedItem,
+    ContextSelectionError,
+    DesignRelation,
+    DirectMatchTruncation,
+    SelectionInput,
+    SelectionProposal,
+    TaskDesignRef,
+    select_context,
+)
+
+
+def item(item_id, version_id, **changes):
+    values = {
+        "design_item_id": item_id,
+        "design_item_version_id": version_id,
+        "project_id": "project",
+        "baseline_id": "baseline",
+        "status": "APPROVED",
+        "text": "approved",
+    }
+    values.update(changes)
+    return ApprovedItem(**values)
+
+
+def relation(source, target, **changes):
+    values = {
+        "from_design_item_id": source,
+        "to_design_item_id": target,
+        "from_design_item_version_id": source + "-v1",
+        "to_design_item_version_id": target + "-v1",
+        "relation": "DEPENDS_ON",
+        "origin": "EXPLICIT",
+        "status": "CONFIRMED",
+    }
+    values.update(changes)
+    return DesignRelation(**values)
+
+
+def snapshot(**changes):
+    values = {
+        "project_id": "project",
+        "baseline_id": "baseline",
+        "request": "로그인 구현",
+        "task_id": None,
+        "document_version_ids": ("document-v1",),
+        "items": (item("A", "A-v1"), item("B", "B-v1"), item("C", "C-v1")),
+        "evidence": (
+            ApprovedEvidence(
+                evidence_id="e1",
+                document_version_id="document-v1",
+                project_id="project",
+                baseline_id="baseline",
+                text="원문",
+            ),
+        ),
+        "relations": (),
+        "task_design_refs": (),
+        "search_status": "COMPLETE",
+    }
+    values.update(changes)
+    return SelectionInput(**values)
+
+
+class FakeSelector:
+    def __init__(self, items=(), evidence=()):
+        self.proposal = SelectionProposal(
+            design_item_version_ids=items, evidence_ids=evidence
+        )
+        self.calls = 0
+
+    async def select(self, request):
+        self.calls += 1
+        return self.proposal
+
+
+@pytest.mark.asyncio
+async def test_unreported_direct_truncation_remains_unknown():
+    result = await select_context(snapshot(), FakeSelector(("A-v1",)))
+    assert result.direct_match_truncation is None
+    assert result.model_dump(mode="json")["direct_match_truncation"] is None
+
+
+@pytest.mark.asyncio
+async def test_impossible_reported_truncation_is_rejected_with_usage():
+    usage = EmbeddingUsage(
+        request_key="call",
+        model="fake",
+        latency_ms=1,
+        failed=False,
+        tokens_known=True,
+        input_tokens=1,
+        output_tokens=0,
+    )
+
+    class InvalidSelector:
+        async def select(self, request):
+            return SelectionProposal(
+                design_item_version_ids=("A-v1",),
+                evidence_ids=(),
+                usage=(usage,),
+                direct_match_truncation=DirectMatchTruncation(items=3, evidence=0),
+            )
+
+    with pytest.raises(ContextSelectionError) as error:
+        await select_context(snapshot(), InvalidSelector())
+    assert error.value.code == "invalid_selection"
+    assert error.value.usage == (usage,)
+
+
+@pytest.mark.parametrize("category", ["items", "evidence"])
+@pytest.mark.asyncio
+async def test_all_direct_matches_truncated_does_not_report_no_match(category):
+    usage = EmbeddingUsage(
+        request_key="call",
+        model="fake",
+        latency_ms=1,
+        failed=False,
+        tokens_known=True,
+        input_tokens=1,
+        output_tokens=0,
+    )
+
+    class TruncatingSelector:
+        async def select(self, request):
+            return SelectionProposal(
+                design_item_version_ids=(),
+                evidence_ids=(),
+                usage=(usage,),
+                direct_match_truncation=DirectMatchTruncation(
+                    items=int(category == "items"),
+                    evidence=int(category == "evidence"),
+                ),
+            )
+
+    with pytest.raises(ContextSelectionError) as error:
+        await select_context(snapshot(), TruncatingSelector())
+    assert error.value.code == "selection_incomplete"
+    assert error.value.usage == (usage,)
+
+
+@pytest.mark.asyncio
+async def test_matching_and_task_refs_expand_only_confirmed_forward_one_hop():
+    request = snapshot(
+        task_id="task",
+        task_design_refs=(
+            TaskDesignRef(design_item_id="B", design_item_version_id="B-v1"),
+        ),
+        relations=(
+            relation("A", "B"),
+            relation("B", "C"),
+            relation("C", "A"),
+            relation("A", "C", status="NEEDS_RECHECK"),
+            relation("A", "outside-ai", origin="AI_CANDIDATE"),
+            relation("A", "outside"),
+            relation("C", "outside"),
+        ),
+    )
+    result = await select_context(request, FakeSelector(("A-v1",), ("e1",)))
+    assert [(x.design_item_version_id, x.reasons) for x in result.design_items] == [
+        ("A-v1", ("MATCHED",)),
+        ("B-v1", ("TASK_PLAN", "DEPENDENCY")),
+        ("C-v1", ("DEPENDENCY",)),
+    ]
+    assert result.evidence_ids == ("e1",)
+    # A confirmed one-hop edge from A has an unavailable target. Its ID is
+    # not returned, but omitting it cannot be presented as complete expansion.
+    assert result.unresolved == ("DEPENDENCY_UNVERIFIED",)
+    assert "outside" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_cycle_cannot_expand_past_one_hop_or_reverse():
+    result = await select_context(
+        snapshot(
+            relations=(
+                relation("A", "B"),
+                relation("B", "C"),
+                relation("B", "A"),
+                relation("C", "A"),
+            )
+        ),
+        FakeSelector(("A-v1",)),
+    )
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1", "B-v1"]
+    assert result.design_items[0].reasons == ("MATCHED",)
+
+
+@pytest.mark.parametrize(
+    ("edge", "expected_unresolved"),
+    [
+        (
+            relation("A", "B", from_design_item_version_id="A-old"),
+            ("DEPENDENCY_UNVERIFIED",),
+        ),
+        (
+            relation("A", "B", to_design_item_version_id="B-old"),
+            ("DEPENDENCY_UNVERIFIED",),
+        ),
+        (relation("A", "B", status="NEEDS_RECHECK"), ("DEPENDENCY_UNVERIFIED",)),
+        (relation("A", "B", status="RELEASED"), ()),
+        (relation("A", "B", origin="AI_CANDIDATE"), ()),
+        (relation("A", "B", relation="RELATES_TO"), ()),
+    ],
+)
+@pytest.mark.asyncio
+async def test_unconfirmed_or_stale_edges_cannot_expand(edge, expected_unresolved):
+    result = await select_context(snapshot(relations=(edge,)), FakeSelector(("A-v1",)))
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert result.unresolved == expected_unresolved
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        relation("A", "B"),
+        relation("A", "B", status="NEEDS_RECHECK"),
+        relation("A", "B", status="RELEASED"),
+        relation("A", "B", origin="AI_CANDIDATE", status="CANDIDATE"),
+        relation("A", "B", from_design_item_version_id="A-old"),
+    ],
+)
+def test_duplicate_directed_dependency_rejected_before_selection(other):
+    # A current dependency snapshot cannot contain two rows for the same
+    # directed pair, even when one appears confirmed and the other does not.
+    with pytest.raises(ValidationError, match="duplicate dependency pair"):
+        snapshot(relations=(relation("A", "B"), other))
+
+
+@pytest.mark.asyncio
+async def test_other_relation_types_and_reverse_dependencies_remain_valid():
+    request = snapshot(
+        relations=(
+            relation("A", "B"),
+            relation("A", "B", relation="RELATES_TO"),
+            relation("B", "A"),
+        )
+    )
+    result = await select_context(request, FakeSelector(("A-v1",)))
+    assert [(x.design_item_version_id, x.reasons) for x in result.design_items] == [
+        ("A-v1", ("MATCHED",)),
+        ("B-v1", ("DEPENDENCY",)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "reason", ["missing_target", "source_version", "target_version"]
+)
+@pytest.mark.asyncio
+async def test_unverifiable_confirmed_one_hop_is_marked_without_exposing_id(reason):
+    usage = EmbeddingUsage(
+        request_key="call",
+        model="fake",
+        latency_ms=1,
+        failed=False,
+        tokens_known=True,
+        input_tokens=4,
+        output_tokens=0,
+    )
+    edge = (
+        relation("A", "private-missing")
+        if reason == "missing_target"
+        else relation("A", "B", from_design_item_version_id="A-old")
+        if reason == "source_version"
+        else relation("A", "B", to_design_item_version_id="B-old")
+    )
+
+    class UsedSelector:
+        async def select(self, request):
+            return SelectionProposal(
+                design_item_version_ids=("A-v1",), evidence_ids=(), usage=(usage,)
+            )
+
+    result = await select_context(snapshot(relations=(edge,)), UsedSelector())
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert result.search_status == "COMPLETE"
+    assert result.unresolved == ("DEPENDENCY_UNVERIFIED",)
+    assert result.usage == (usage,)
+    assert "private-missing" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("seed", ["matched", "task_plan"])
+@pytest.mark.parametrize("target_present", [False, True])
+@pytest.mark.asyncio
+async def test_recheck_edge_marks_unverified_without_expansion_or_id_leak(
+    seed, target_present
+):
+    target = "B" if target_present else "private-missing"
+    edge = relation("A", target, status="NEEDS_RECHECK")
+    changes = {"relations": (edge,)}
+    if seed == "task_plan":
+        changes.update(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            ),
+        )
+    selector = FakeSelector(("A-v1",) if seed == "matched" else ())
+    result = await select_context(snapshot(**changes), selector)
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert result.design_items[0].reasons == (
+        ("MATCHED",) if seed == "matched" else ("TASK_PLAN",)
+    )
+    assert result.unresolved == (
+        ("DEPENDENCY_UNVERIFIED",)
+        if seed == "matched"
+        else ("NO_MATCH", "DEPENDENCY_UNVERIFIED")
+    )
+    assert "private-missing" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_released_candidate_reverse_and_two_hop_edges_do_not_mark_unverified():
+    result = await select_context(
+        snapshot(
+            relations=(
+                relation("A", "B"),
+                relation("A", "missing-released", status="RELEASED"),
+                relation(
+                    "A", "missing-ai", origin="AI_CANDIDATE", status="NEEDS_RECHECK"
+                ),
+                relation(
+                    "A", "missing-other", relation="RELATES_TO", status="NEEDS_RECHECK"
+                ),
+                relation("C", "A", status="NEEDS_RECHECK"),
+                relation("B", "missing-two-hop", status="NEEDS_RECHECK"),
+            )
+        ),
+        FakeSelector(("A-v1",)),
+    )
+    assert not result.unresolved
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1", "B-v1"]
+
+
+@pytest.mark.asyncio
+async def test_task_only_no_match_and_unverified_dependency_are_both_visible():
+    result = await select_context(
+        snapshot(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            ),
+            relations=(relation("A", "private-missing"),),
+        ),
+        FakeSelector(),
+    )
+    assert result.unresolved == ("NO_MATCH", "DEPENDENCY_UNVERIFIED")
+    assert result.design_items[0].reasons == ("TASK_PLAN",)
+    assert "private-missing" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_evidence_only_and_successful_empty_are_distinct_from_failure():
+    only = await select_context(snapshot(items=()), FakeSelector(evidence=("e1",)))
+    assert (
+        not only.design_items and only.evidence_ids == ("e1",) and not only.unresolved
+    )
+    fake = FakeSelector()
+    empty = await select_context(snapshot(items=(), evidence=()), fake)
+    assert empty.unresolved == ("NO_MATCH",) and fake.calls == 0
+    for status, code in (
+        ("NOT_READY", "context_not_ready"),
+        ("FAILED", "search_failed"),
+    ):
+        with pytest.raises(ContextSelectionError, match=code):
+            await select_context(snapshot(search_status=status), fake)
+    assert fake.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_task_reference_does_not_hide_missing_search_matches():
+    result = await select_context(
+        snapshot(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            ),
+        ),
+        FakeSelector(),
+    )
+    assert [
+        (item.design_item_version_id, item.reasons) for item in result.design_items
+    ] == [("A-v1", ("TASK_PLAN",))]
+    assert result.unresolved == ("NO_MATCH",)
+
+
+@pytest.mark.asyncio
+async def test_rejects_unknown_or_duplicate_model_ids_and_provider_failure():
+    for fake in (
+        FakeSelector(("unknown",)),
+        FakeSelector(evidence=("unknown",)),
+        FakeSelector(("A-v1", "A-v1")),
+    ):
+        with pytest.raises(ContextSelectionError, match="invalid_selection"):
+            await select_context(snapshot(), fake)
+
+    class Failure:
+        async def select(self, request):
+            raise RuntimeError("provider response with sensitive data")
+
+    with pytest.raises(ContextSelectionError, match="selection_failed"):
+        await select_context(snapshot(), Failure())
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_error_does_not_expose_sensitive_code_and_keeps_usage():
+    usage = EmbeddingUsage(
+        request_key="request-1",
+        model="model",
+        latency_ms=10,
+        failed=True,
+        tokens_known=True,
+        input_tokens=2,
+        output_tokens=0,
+    )
+
+    class Failure:
+        async def select(self, request):
+            raise ContextSelectionError("secret-token-in-provider-error", (usage,))
+
+    with pytest.raises(ContextSelectionError) as exc:
+        await select_context(snapshot(), Failure())
+    assert exc.value.code == "selection_failed"
+    assert str(exc.value) == "selection_failed"
+    assert exc.value.usage == (usage,)
+    assert exc.value.__suppress_context__
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code",
+    [
+        "invalid_embedding_input",
+        "embedding_profile_mismatch",
+        "embedding_limit_exceeded",
+        "tokenizer_failure",
+        "embedding_timeout",
+        "invalid_embedding_usage",
+        "embedding_provider_failed",
+        "invalid_embedding_output",
+        "selection_incomplete",
+        "selection_failed",
+        "context_not_ready",
+        "search_failed",
+        "invalid_selection",
+    ],
+)
+async def test_known_provider_error_codes_remain_distinguishable(code):
+    class Failure:
+        async def select(self, request):
+            raise ContextSelectionError(code)
+
+    with pytest.raises(ContextSelectionError) as exc:
+        await select_context(snapshot(), Failure())
+    assert exc.value.code == code
+    assert str(exc.value) == code
+
+
+def test_invalid_scope_or_task_ref_rejected_before_model_call():
+    with pytest.raises(ValidationError):
+        snapshot(items=(item("A", "A-v1", baseline_id="old"),))
+    with pytest.raises(ValidationError):
+        snapshot(
+            evidence=(
+                ApprovedEvidence(
+                    evidence_id="foreign",
+                    document_version_id="other",
+                    project_id="project",
+                    baseline_id="baseline",
+                    text="원문",
+                ),
+            )
+        )
+    with pytest.raises(ValidationError):
+        snapshot(
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            )
+        )
+    with pytest.raises(ValidationError):
+        snapshot(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="outside", design_item_version_id="old"),
+            ),
+        )
+    with pytest.raises(ValidationError):
+        snapshot(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="old"),
+            ),
+        )
+    with pytest.raises(ValidationError):
+        snapshot(request="   ")
+
+
+@pytest.mark.asyncio
+async def test_recorded_nara_fake_scenarios_are_contract_regressions():
+    fixture_path = (
+        Path(__file__).parent / "fixtures/retrieval/context-selection-131.json"
+    )
+    data = json.loads(fixture_path.read_text(encoding="utf-8"))
+    assert data["label_author"] == "agent-authored; human review pending"
+    # Keep the original fixture unchanged for the recorded model evaluations.
+    # These two historical scenarios now expose the recheck-pending edge.
+    current_expected_unresolved = {
+        "upload-create-one-hop": ["DEPENDENCY_UNVERIFIED"],
+        "task-plan-adds-current-reference": ["DEPENDENCY_UNVERIFIED"],
+    }
+    for case in data["scenarios"]:
+        values = dict(data["snapshot"])
+        values["request"] = case["request"]
+        for key in ("task_id", "task_design_refs", "search_status"):
+            if key in case:
+                values[key] = case[key]
+        if "evidence_override" in case:
+            values["evidence"] = case["evidence_override"]
+        request = SelectionInput.model_validate_json(
+            json.dumps(values, ensure_ascii=False)
+        )
+        proposal = case.get("fake_proposal", {})
+        fake = FakeSelector(
+            tuple(proposal.get("design_item_version_ids", ())),
+            tuple(proposal.get("evidence_ids", ())),
+        )
+        if "expected_error" in case:
+            with pytest.raises(ContextSelectionError, match=case["expected_error"]):
+                await select_context(request, fake)
+            assert fake.calls == case["expect_provider_calls"], case["id"]
+            continue
+        result = await select_context(request, fake)
+        selected = [x.model_dump(mode="json") for x in result.design_items]
+        if "expected_irrelevant_ids" in case:
+            # A valid ID alone cannot prove semantic relevance; deliberately
+            # preserve the incorrect proposal as a negative control.
+            ids = {x.design_item_version_id for x in result.design_items} | set(
+                result.evidence_ids
+            )
+            assert set(case["expected_irrelevant_ids"]).issubset(ids)
+            continue
+        assert selected == case["expected_design_items"], case["id"]
+        assert list(result.evidence_ids) == case["expected_evidence_ids"], case["id"]
+        assert list(result.unresolved) == current_expected_unresolved.get(
+            case["id"], case.get("expected_unresolved", [])
+        ), case["id"]
+        ids = {x.design_item_version_id for x in result.design_items} | set(
+            result.evidence_ids
+        )
+        assert ids.isdisjoint(case.get("excluded_ids", [])), case["id"]

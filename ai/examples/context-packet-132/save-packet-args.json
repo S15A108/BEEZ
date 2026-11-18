@@ -1,0 +1,33 @@
+{
+  "request": "로그인 화면을 구현해 주세요.",
+  "project_id": "101",
+  "task_id": "501",
+  "expected_baseline_id": "401",
+  "design_item_version_ids": [
+    "311",
+    "312",
+    "313"
+  ],
+  "constraints": [
+    "비밀번호를 5회 연속 틀리면 계정을 10분 동안 잠근다."
+  ],
+  "unresolved": [
+    "INSUFFICIENT_EVIDENCE: 비밀번호 재설정 흐름은 선택된 승인 설계·근거에 없어 확인이 필요합니다.",
+    "SELECTION_TRUNCATED: 직접 일치 후보 중 설계 0건, 원문 1건이 직접 선택 상한으로 제외됐습니다."
+  ],
+  "related_tasks": [
+    {
+      "task_id": "501",
+      "plan_revision_id": "512",
+      "status": "IN_PROGRESS"
+    }
+  ],
+  "sources": [
+    {
+      "document_id": "201",
+      "document_version_id": "211",
+      "version_no": 1,
+      "location": "3. 계정 관리 / ACC-02"
+    }
+  ]
+}

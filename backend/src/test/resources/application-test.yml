@@ -1,0 +1,46 @@
+# 테스트 프로필: DB 는 Testcontainers 가 전담 (datasource 는 @ServiceConnection 으로 주입). compose 자동 기동은 명시적으로 끈다.
+spring:
+  # 여러 Spring 테스트 컨텍스트가 PostgreSQL 컨테이너 하나를 공유한다.
+  # 컨텍스트마다 기본 10개 연결을 유지하면 합계가 max_connections를 초과한다.
+  datasource:
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 0
+      idle-timeout: 10000
+  # 실험용 migration은 테스트 classpath에서만 추가한다. 운영 Flyway에는 노출하지 않는다.
+  flyway:
+    locations: classpath:db/migration,classpath:db/cdc-poc
+  docker:
+    compose:
+      enabled: false
+
+# ai 서버는 닫힌 포트로 두어 ai_reachable=false 경로를 검증한다.
+beez:
+  # 통합 시험은 모두 127.0.0.1 에서 부른다. IP 한도(운영 10)에 걸리지 않게 넉넉히 둔다.
+  # 한도 시험(ClientIpRateLimitIntegrationTest)은 이 값을 읽어 다른 IP(X-Forwarded-For)로 채운다
+  auth-guard:
+    ip-limit: 1000
+  # MCP-01 호출 한도(운영 1분 6회)도 같은 이유로 넉넉히 둔다. 한도 규칙은 DevelopmentContextLimiterTest 가 본다 (-399)
+  development-context:
+    rate-limit: 1000
+  validation:
+    worker-enabled: false   # 시험은 ValidationWorker.runOnce 를 직접 부른다
+  planning:
+    worker-enabled: false   # 시험은 PlanningQuestionGenerator/DesignDraftRunner 의 runOnce 를 직접 부른다
+  task-breakdown:
+    worker-enabled: false   # 시험은 TaskBreakdownService.runNext 를 직접 부른다
+  document:
+    worker-enabled: false
+    object-storage:
+      endpoint: http://127.0.0.1:1
+      bucket: beez-documents
+      access-key: fixture-access
+      secret-key: fixture-secret
+  ai:
+    base-url: http://127.0.0.1:1
+    connect-timeout: 500ms
+    read-timeout: 500ms
+
+logging:
+  level:
+    com.beez: INFO

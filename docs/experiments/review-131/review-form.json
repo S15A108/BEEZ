@@ -1,0 +1,54 @@
+{
+  "fixture_sha256": "144c16074b4a04f303db53c82e79765c733ca5db49659f7876d0f3df585b4cd6",
+  "source_sha256": {
+    "ai/evaluations/data/plan.md": "f8e265adf8d8be5ee57309613f5bbe84035e3aa6af5fd98c7dc4bc4bc1be1dd8",
+    "ai/evaluations/data/requirements.md": "f34e4411607078fcc70f508daa1308195c7f873c1fa3842a278228a4965bc5e2",
+    "ai/evaluations/data/api-spec.md": "1522fb43dde5f2db7b2e5628cf8cff3befe6ff3482cc3b7767b23d0bdd03141b",
+    "ai/evaluations/data/data-design.md": "3177765e5bfa43cceca0dccc942c0cc25b5a904f53c8187fdb02fb54bb486c1a"
+  },
+  "case_input_sha256": {
+    "CASE-01": "baa00e4dd82e06e6d23ba267898f90c9d8991eed2ceae0e894a331a949514e85",
+    "CASE-02": "aa4bb6793fc4e4eaab592368b119f99721d1451bf67f093d21c22e5839f87139",
+    "CASE-03": "6205dcce889782e5909ffba8208599a3fe61eeda6fb72d52b294661d1f2b92a6",
+    "CASE-04": "beef6ae59765f6685fb4c14ebc1fb8890d710602d000739906ced62e450059ff",
+    "CASE-05": "0d97f4ba071ac5fc0436bdd9559d59cbe81265cf25942658c900cb72c0d4f7a1"
+  },
+  "reviewer": null,
+  "cases": [
+    {
+      "case": "CASE-01",
+      "uncertain": null,
+      "direct_item_ids": null,
+      "expected_evidence_ids": null,
+      "no_match": null
+    },
+    {
+      "case": "CASE-02",
+      "uncertain": null,
+      "direct_item_ids": null,
+      "expected_evidence_ids": null,
+      "no_match": null
+    },
+    {
+      "case": "CASE-03",
+      "uncertain": null,
+      "direct_item_ids": null,
+      "expected_evidence_ids": null,
+      "no_match": null
+    },
+    {
+      "case": "CASE-04",
+      "uncertain": null,
+      "direct_item_ids": null,
+      "expected_evidence_ids": null,
+      "no_match": null
+    },
+    {
+      "case": "CASE-05",
+      "uncertain": null,
+      "direct_item_ids": null,
+      "expected_evidence_ids": null,
+      "no_match": null
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+name: Enable PR auto-merge
+
+on:
+  pull_request_target:
+    branches: [dev, main]
+    types: [opened, reopened, ready_for_review, synchronize, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Existing pull request number
+        required: true
+        type: string
+
+# Only trusted base-branch workflow code runs; never check out PR code here.
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-auto-merge-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  enable:
+    if: github.repository == 'S15A108/BEEZ'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reserve merge after review and branch protection requirements
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PR_AUTOMERGE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo '::error::Add the PR_AUTOMERGE_TOKEN repository secret. See docs/pr-auto-merge.md.'
+            exit 1
+          fi
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo '::error::A positive pull request number is required.'
+            exit 1
+          fi
+
+          pr=$(gh pr view "$PR_NUMBER" --json state,isDraft,baseRefName,headRefOid,autoMergeRequest,title)
+          if [[ $(jq -r '.state' <<< "$pr") != OPEN ]] || [[ $(jq -r '.isDraft' <<< "$pr") == true ]]; then
+            echo 'Closed and draft pull requests are skipped.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          base=$(jq -r '.baseRefName' <<< "$pr")
+          if [[ "$base" != dev && "$base" != main ]]; then
+            echo 'Only dev and main pull requests are eligible.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ $(jq -r '.autoMergeRequest != null' <<< "$pr") == true ]]; then
+            echo 'Auto-merge is already enabled.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # PR metadata is passed as arguments, never evaluated as shell code.
+          # No --admin and no automatic approval: repository protections apply.
+          gh pr merge "$PR_NUMBER" --auto --merge \
+            --match-head-commit "$(jq -r '.headRefOid' <<< "$pr")" \
+            --subject "$(jq -r '.title' <<< "$pr")"
+          echo "Merge-commit auto-merge requested for PR #$PR_NUMBER." >> "$GITHUB_STEP_SUMMARY"

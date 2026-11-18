@@ -1,0 +1,275 @@
+package com.beez.backend.planning.repository;
+
+import static com.beez.backend.designitem.support.DesignJson.canonical;
+
+import com.beez.backend.document.QuestionBasisVersion;
+
+import java.sql.Types;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+/** 기획 보완 질문(PLN-A03·A04)과 문서 버전별 질문 생성 실행의 저장소. 모든 쓰기는 호출한 서비스의 트랜잭션 안에서 한다. */
+@Repository
+public class PlanningQuestionRepository {
+    private final JdbcClient jdbc;
+
+    public PlanningQuestionRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
+
+    // ---- 생성 실행 ----
+
+    /**
+     * 질문을 만들 차례인 문서 버전 하나. 분석이 끝났고(COMPLETED) 기준 설계가 아직 없으며, 아직 생성하지 않았거나 분석이
+     * 다시 돌았거나(attempt·text_hash 가 달라짐) 멈춘 실행(lease 만료)이다. FAILED 실행은 PLN-A02 가 PENDING 으로 되돌릴 때만 다시 잡는다.
+     * error_code 가 남은 PENDING 은 재시도 가능한 실패 뒤 자동으로 한 번 더 도는 실행이다(auto_retry, S15P31A108-396).
+     * 그사이 문서가 다시 분석됐으면(attempt·text_hash 가 달라짐) 새 본문의 첫 실행이므로 자동 재시도로 보지 않는다.
+     * 질문은 문서의 기준 버전({@link QuestionBasisVersion}, 승인본 우선)에만 만든다. 승인본 뒤에 다시 낸 초안은 승인돼 기준이 되면 만든다.
+     */
+    public Optional<Map<String, Object>> nextRunnable() {
+        return jdbc.sql("""
+                SELECT dp.document_version_id,dp.attempt,dp.text_hash,v.content_text,v.content_hash,v.storage_key,v.version_no,
+                       d.id AS document_id,d.project_id,d.type,
+                       (r.status='PENDING' AND r.error_code IS NOT NULL
+                        AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) AS auto_retry
+                  FROM document_processing dp
+                  JOIN document_version v ON v.id=dp.document_version_id
+                  JOIN document d ON d.id=v.document_id
+                  JOIN project p ON p.id=d.project_id
+                  LEFT JOIN planning_question_run r ON r.document_version_id=dp.document_version_id
+                 WHERE dp.status='COMPLETED' AND v.id=%s AND v.content_text IS NOT NULL
+                   AND p.archived_at IS NULL AND p.current_baseline_id IS NULL
+                   AND (r.document_version_id IS NULL OR r.status='PENDING'
+                        OR (r.status IN ('COMPLETED','FAILED') AND (r.analysis_attempt<>dp.attempt OR r.text_hash<>dp.text_hash))
+                        OR (r.status='RUNNING' AND r.lease_until<now()))
+                 ORDER BY dp.updated_at
+                 LIMIT 1 FOR UPDATE OF dp SKIP LOCKED
+                """.formatted(QuestionBasisVersion.idOf("d.id"))).query().listOfRows().stream().findFirst();
+    }
+
+    public void startRun(long version, int attempt, String textHash, String requestKey, int leaseSeconds) {
+        jdbc.sql("""
+                INSERT INTO planning_question_run(document_version_id,analysis_attempt,text_hash,status,request_key,lease_until)
+                VALUES(:version,:attempt,:hash,'RUNNING',:key,now()+make_interval(secs=>:lease))
+                ON CONFLICT (document_version_id) DO UPDATE SET analysis_attempt=:attempt,text_hash=:hash,status='RUNNING',
+                  request_key=:key,error_code=null,retryable=false,lease_until=now()+make_interval(secs=>:lease),updated_at=now()
+                """).param("version", version).param("attempt", attempt).param("hash", textHash).param("key", requestKey)
+                .param("lease", leaseSeconds).update();
+    }
+
+    /** 이 실행(request_key)이 아직 RUNNING 이고 분석이 그대로일 때만 true. 다른 워커가 이어받았거나 문서가 바뀌었으면 결과를 버린다. */
+    public boolean runStillCurrent(long version, String requestKey, String textHash) {
+        return jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM planning_question_run r JOIN document_processing dp ON dp.document_version_id=r.document_version_id
+                               WHERE r.document_version_id=:version AND r.request_key=:key AND r.status='RUNNING' AND dp.text_hash=:hash)
+                """).param("version", version).param("key", requestKey).param("hash", textHash).query(Boolean.class).single();
+    }
+
+    /**
+     * 실행을 끝낸다. status=PENDING 은 재시도 가능한 첫 실패를 자동 재시도로 돌릴 때만 쓰며, error_code·retryable 을 남겨
+     * 다음 실행이 자동 재시도임을 nextRunnable 이 알게 한다. startRun 이 둘을 지운다.
+     */
+    public boolean finishRun(long version, String requestKey, String status, String errorCode, boolean retryable) {
+        return jdbc.sql("""
+                UPDATE planning_question_run SET status=:status,error_code=:error,retryable=:retryable,lease_until=null,updated_at=now()
+                 WHERE document_version_id=:version AND request_key=:key AND status='RUNNING'
+                """).param("status", status).param("error", errorCode, Types.VARCHAR).param("retryable", retryable)
+                .param("version", version).param("key", requestKey).update() == 1;
+    }
+
+    public Optional<Map<String, Object>> run(long version) {
+        return jdbc.sql("SELECT * FROM planning_question_run WHERE document_version_id=:version FOR UPDATE")
+                .param("version", version).query().listOfRows().stream().findFirst();
+    }
+
+    /** PLN-A02: 질문 생성이 실패한 버전을 다시 대기 상태로 돌린다. 되돌렸으면 true. */
+    public boolean resetFailedRun(long version) {
+        return jdbc.sql("""
+                UPDATE planning_question_run SET status='PENDING',error_code=null,retryable=false,lease_until=null,updated_at=now()
+                 WHERE document_version_id=:version AND status='FAILED'
+                """).param("version", version).update() == 1;
+    }
+
+    // ---- 질문 ----
+
+    /** 이 문서 버전의 SUPERSEDED 아닌 질문 전부(재분석 병합용). */
+    public List<Map<String, Object>> liveQuestions(long project, long version) {
+        return jdbc.sql("SELECT * FROM planning_question WHERE project_id=:project AND document_version_id=:version AND status<>'SUPERSEDED' ORDER BY id")
+                .param("project", project).param("version", version).query().listOfRows();
+    }
+
+    public void insertQuestion(Map<String, Object> q) {
+        var p = new HashMap<>(q);
+        jdbc.sql("""
+                INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,status,analysis_request_key,question_key,
+                  question_type,answer_format,evidence_status,summary,signal,unverified_reason,evidence,rank)
+                VALUES(:project,:version,:kind,:question,:origin,'OPEN',:run,:key,:type,cast(:format AS jsonb),:basis,:summary,:signal,
+                  :reason,cast(:evidence AS jsonb),:rank)
+                """).params(p).update();
+    }
+
+    /** 아직 답하지 않은 질문은 새 결과로 갱신한다(답변된·닫힌 질문은 건드리지 않는다). */
+    public void refreshOpenQuestion(long id, Map<String, Object> q) {
+        var p = new HashMap<>(q);
+        p.put("id", id);
+        jdbc.sql("""
+                UPDATE planning_question SET kind=:kind,question=:question,origin=:origin,analysis_request_key=:run,question_type=:type,
+                  answer_format=cast(:format AS jsonb),evidence_status=:basis,summary=:summary,signal=:signal,unverified_reason=:reason,
+                  evidence=cast(:evidence AS jsonb),rank=:rank,updated_at=now()
+                 WHERE id=:id AND status='OPEN'
+                """).params(p).update();
+    }
+
+    public void supersedeOpen(List<Long> ids) {
+        for (long id : ids) {
+            jdbc.sql("UPDATE planning_question SET status='SUPERSEDED',updated_at=now() WHERE id=:id AND status='OPEN'").param("id", id).update();
+        }
+    }
+
+    /** 기준 설계가 발행됐거나 프로젝트가 보관돼 워커가 더는 질문을 만들지 않는다. */
+    private static final String FROZEN = "(p.current_baseline_id IS NOT NULL OR p.archived_at IS NOT NULL)";
+
+    /** 현재 버전의 질문이 지금 분석으로 다 만들어졌거나, 워커가 다시 만들 일이 없다(본문 없음·분석 기록 없음). */
+    private static final String SETTLED = "(cur.content_text IS NULL OR dp.document_version_id IS NULL"
+            + " OR (dp.status='COMPLETED' AND r.status='COMPLETED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash))";
+
+    /**
+     * 질문이 지금 본문으로 만든 것인지(S15P31A108-396). 판정은 질문이 붙은 버전이 아니라 그 문서의 <b>현재 버전</b>(워커가 질문을
+     * 만드는 기준 버전 {@link QuestionBasisVersion}, 승인본 우선)으로 한다. 현재 버전의 질문 생성이 지금 분석(attempt·text_hash)으로 끝났으면 CURRENT, 분석이나 질문
+     * 생성이 도는 중이면 REFRESHING, 그러다 실패했으면 REFRESH_FAILED 다. 첫 제출이 반려돼 문서에 기준 버전이 아직 없으면
+     * AWAITING_RESUBMISSION 이다 — 다시 제출해야 새 본문으로 질문을 만든다. 워커({@link #nextRunnable})가 다시 만들 일이 없는 경우 —
+     * 버전 없는 옛 질문·기준 설계 발행·보관된 프로젝트·본문 없음·분석 기록 없음 — 와 실행 기록이 없는 같은 버전의 옛 질문은
+     * CURRENT 로 둬 '갱신 중'이 영원히 남지 않게 한다.
+     *
+     * <p>현재 버전이 아닌(반려 뒤 다시 낸 초안·새로 승인한 버전에 밀린) 버전의 미답변 질문은 현재 버전 질문이 다 만들어지면
+     * SUPERSEDED 다. 행을 바꾸지 않고 조회할 때 판정하므로, 새 버전이 반려돼 현재 버전이 되돌아오면 그 질문이 다시 보인다.
+     * 목록·개수는 이 행을 빼고, 답변은 409 question_superseded 다. 답한·닫은 질문은 이력이라 CURRENT 로 남는다.
+     * 등록을 취소한(DOC-A25, discarded_at) 문서는 다시 제출할 수 없으므로 그 문서의 미답변 질문도 같은 방식으로 대체로 판정한다.
+     */
+    private static final String FRESHNESS = "CASE WHEN v.id IS NULL THEN 'CURRENT'"
+            // 대체·폐기 판정이 기준 발행·보관보다 먼저다 — 발행 뒤 숨겼던 이전 질문이 다시 나오지 않게(#279 리뷰).
+            + " WHEN qd.discarded_at IS NOT NULL THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
+            + " WHEN cur.id IS NOT NULL AND q.document_version_id<>cur.id AND (" + FROZEN + " OR " + SETTLED + ")"
+            + " THEN CASE WHEN q.status='OPEN' THEN 'SUPERSEDED' ELSE 'CURRENT' END"
+            + " WHEN " + FROZEN + " THEN 'CURRENT'"
+            + " WHEN cur.id IS NULL THEN 'AWAITING_RESUBMISSION'"
+            + " WHEN " + SETTLED + " OR (r.document_version_id IS NULL AND cur.id=q.document_version_id AND dp.status='COMPLETED') THEN 'CURRENT'"
+            + " WHEN dp.status='FAILED' OR (r.status='FAILED' AND r.analysis_attempt=dp.attempt AND r.text_hash=dp.text_hash) THEN 'REFRESH_FAILED'"
+            + " ELSE 'REFRESHING' END AS freshness";
+
+    /** 질문 버전 {@code v} 를 조인한 뒤 붙인다. 앞뒤 공백을 넣어 이어 붙인다(텍스트 블록은 앞 공백을 지운다). */
+    private static final String FRESHNESS_JOINS = " LEFT JOIN project p ON p.id=q.project_id"
+            + " LEFT JOIN document qd ON qd.id=v.document_id"
+            + " LEFT JOIN document_version cur ON cur.id=" + QuestionBasisVersion.idOf("v.document_id")
+            + " LEFT JOIN document_processing dp ON dp.document_version_id=cur.id"
+            + " LEFT JOIN planning_question_run r ON r.document_version_id=cur.id ";
+
+    /**
+     * 목록 정렬 키는 id 하나다. id 는 만든 뒤 바뀌지 않고 새 질문은 항상 더 큰 id 를 받으므로, 쪽 사이에 어느 문서에서든
+     * 질문이 생기거나 SUPERSEDED 되거나 rank 가 바뀌어도 다음 쪽이 밀리지 않고 새 질문은 끝에서 이어서 나온다.
+     */
+    public record Position(long id) { }
+
+    /**
+     * 번호(number)는 필터가 적용된 목록 안의 1부터 이어지는 표시용 순번이다(쪽마다 다시 센다). 쪽 경계는 번호가 아니라
+     * 앞 쪽 마지막 질문의 정렬 키({@code after}) 뒤부터다.
+     */
+    public List<Map<String, Object>> page(long project, Long version, Position after, int limit) {
+        var p = new HashMap<String, Object>();
+        p.put("project", project); p.put("limit", limit);
+        String filter = "";
+        if (version != null) { filter = " AND q.document_version_id=:version"; p.put("version", version); }
+        String cursor = "";
+        if (after != null) {
+            cursor = " WHERE t.id > :ai";
+            p.put("ai", after.id());
+        }
+        // 번호는 조회할 때 대체로 판정된 질문을 뺀 뒤에 센다.
+        return jdbc.sql("SELECT * FROM (SELECT x.*, row_number() OVER (ORDER BY x.id) AS number FROM (" + live(filter) + ") x) t" + cursor
+                + " ORDER BY t.id LIMIT :limit").params(p).query().listOfRows();
+    }
+
+    public long count(long project, Long version) {
+        var p = new HashMap<String, Object>();
+        p.put("project", project);
+        String filter = "";
+        if (version != null) { filter = " AND q.document_version_id=:version"; p.put("version", version); }
+        return jdbc.sql("SELECT count(*) FROM (" + live(filter) + ") x").params(p).query(Long.class).single();
+    }
+
+    /**
+     * 질문을 만들 버전에 넘길 같은 프로젝트의 기존 질문(S15P31A108-414). 목록에 보이는 질문({@link #live}) 중 이 버전의 질문은
+     * 빼고(재분석 병합 대상이다), 최근(id 큰) 것부터 {@code limit} 개다.
+     *
+     * <p>같은 문서의 이전 버전 질문은 답한·닫은 것만 넣는다. 이 버전은 그 문서의 기준 버전이라, 이 실행이 끝나면 이전 버전의
+     * 미답변 질문은 조회할 때 대체로 판정돼 사라진다 — 넘기면 모델이 그 결정을 묻지 않아 아무도 묻지 않게 된다.
+     * 다른 문서의 미답변 질문도 지금 답할 수 있는 것(freshness CURRENT)만 넣는다. 갱신 중·갱신 실패·다시 제출 대기인 문서의
+     * 미답변 질문은 답할 수 없고(question_outdated) 그 문서가 다시 만들어지면 대체돼 사라질 수 있다 — 넘기면 이 문서도 묻지 않아
+     * 그 결정을 아무도 묻지 않게 된다. 답한·닫은 질문은 이력이라 freshness 와 상관없이 넣는다.
+     *
+     * <p>다른 문서에서 닫은(DISMISSED) 질문은 넣지 않는다. 닫으면 답이 지워져 결정이 남지 않으므로 초안(related_answers)에도 넘어가지
+     * 않는다 — 넘기면 이 문서도 묻지 않아 그 결정이 프로젝트 어디에도 남지 않는다. 닫은 이유가 '그 문서에서는 필요 없음'(예: 요구사항에서
+     * 'API 명세에서 정할 일')일 수 있어 다른 문서에서는 물어야 할 수도 있다. 다시 나오면 다시 닫으면 되니 그쪽이 싸다.
+     * 같은 문서의 이전 버전에서 닫은 질문은 '이 문서에는 필요 없음'이 새 버전에도 맞을 가능성이 커서 넣는다.
+     *
+     * <p>등록을 취소한(DOC-A25) 문서의 질문은 답한 것도 넣지 않는다 — 철회된 문서의 답이 다른 문서의 질문을 막으면 안 된다.
+     * 설계 초안의 related_answers({@link DesignDraftRepository#relatedAnswers})도 같은 이유로 뺀다.
+     * {@link #page} 를 쓰지 않은 이유: 오름차순 커서 목록이라 '최근 것부터 N개'와 '이 버전 제외'를 표현할 수 없다.
+     */
+    public List<Map<String, Object>> knownQuestions(long project, long version, long document, int limit) {
+        String filter = " AND q.document_version_id<>:version AND qd.discarded_at IS NULL"
+                + " AND (v.document_id=:document AND q.status<>'OPEN' OR v.document_id<>:document AND q.status<>'DISMISSED')";
+        return jdbc.sql("SELECT question,status,answer,answer_payload FROM (" + live(filter) + ") x"
+                        + " WHERE x.status<>'OPEN' OR x.freshness='CURRENT' ORDER BY x.id DESC LIMIT :limit")
+                .param("project", project).param("version", version).param("document", document).param("limit", limit)
+                .query().listOfRows();
+    }
+
+    /** 목록에 보이는 질문(저장된 SUPERSEDED 와 조회할 때 대체로 판정된 질문 제외)과 그 freshness. */
+    private static String live(String filter) {
+        return "SELECT * FROM (SELECT q.*,v.version_no,v.document_id," + FRESHNESS
+                + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
+                + " WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter + ") f WHERE f.freshness<>'SUPERSEDED'";
+    }
+
+    public Optional<Map<String, Object>> findForUpdate(long project, long id) {
+        return jdbc.sql("SELECT q.*,v.version_no,v.document_id," + FRESHNESS
+                + " FROM planning_question q LEFT JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
+                + " WHERE q.project_id=:project AND q.id=:id FOR UPDATE OF q")
+                .param("project", project).param("id", id).query().listOfRows().stream().findFirst();
+    }
+
+    public Optional<Map<String, Object>> find(long project, long id) {
+        return jdbc.sql("SELECT q.*,v.version_no,v.document_id," + FRESHNESS
+                + " FROM planning_question q LEFT JOIN document_version v ON v.id=q.document_version_id" + FRESHNESS_JOINS
+                + " WHERE q.project_id=:project AND q.id=:id")
+                .param("project", project).param("id", id).query().listOfRows().stream().findFirst();
+    }
+
+    public void answer(long id, String text, Object payload, long account) {
+        jdbc.sql("""
+                UPDATE planning_question SET status='ANSWERED',answer=:answer,answer_payload=cast(:payload AS jsonb),answered_by=:account,
+                  answered_at=now(),updated_at=now() WHERE id=:id
+                """).param("answer", text).param("payload", payload == null ? null : canonical(payload), Types.VARCHAR)
+                .param("account", account).param("id", id).update();
+    }
+
+    public void dismiss(long id) {
+        jdbc.sql("""
+                UPDATE planning_question SET status='DISMISSED',answer=null,answer_payload=null,answered_by=null,answered_at=null,updated_at=now()
+                 WHERE id=:id
+                """).param("id", id).update();
+    }
+
+    public boolean hasBaseline(long project) {
+        return jdbc.sql("SELECT current_baseline_id IS NOT NULL FROM project WHERE id=:project").param("project", project)
+                .query(Boolean.class).optional().orElse(false);
+    }
+
+    public boolean projectActive(long project) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM project WHERE id=:project AND archived_at IS NULL)").param("project", project)
+                .query(Boolean.class).single();
+    }
+}

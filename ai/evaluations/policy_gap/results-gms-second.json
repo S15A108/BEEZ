@@ -1,0 +1,876 @@
+{
+  "created_at": "2026-11-03T05:29:18.546185+00:00",
+  "provider_host": "gms.ssafy.io",
+  "model": "gpt-6-luna",
+  "response_format": "json_object",
+  "scope": "synthetic FastAPI ASGI route and real GMS model; no BE, database or retrieval",
+  "cases": [
+    {
+      "name": "login_supported",
+      "split": "development",
+      "expectation": "SUPPORTED",
+      "passed": true,
+      "detail": "expected=SUPPORTED; states=['SUPPORTED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "login-lock-threshold-duration",
+              "topic": "로그인 실패 횟수 및 계정 잠금 시간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "로그인 5회 실패하면 계정을 30분 잠근다."
+              },
+              "state": "SUPPORTED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "로그인 5회 실패하면 계정을 30분 잠근다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계정 잠금 기준과 시간이 승인된 정책 내용과 일치합니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246400-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 5547,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2232,
+            "output_tokens": 490
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"login-lock-threshold-duration\",\n      \"topic\": \"로그인 실패 횟수 및 계정 잠금 시간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"로그인 5회 실패하면 계정을 30분 잠근다.\"\n      },\n      \"state\": \"SUPPORTED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"로그인 5회 실패하면 계정을 30분 잠근다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계정 잠금 기준과 시간이 승인된 정책 내용과 일치합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "upload_undecided",
+      "split": "development",
+      "expectation": "EXPLICITLY_UNDECIDED",
+      "passed": true,
+      "detail": "expected=EXPLICITLY_UNDECIDED; states=['EXPLICITLY_UNDECIDED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "MISSING_POLICY",
+              "severity": "BLOCKING",
+              "message": "업로드 파일 보관 기간 정책이 미정으로 확인되어, 계획에 적힌 정책 적용 요건을 확정할 수 없습니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "보관 기간 정책을 확정한 뒤 계획에 반영하세요.",
+              "policy_need_id": "policy-need-1",
+              "conflicting_design_refs": []
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "policy-need-1",
+              "topic": "업로드 파일 보관 기간 정책 적용",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "업로드 파일의 보관 기간 정책을 적용한다."
+              },
+              "state": "EXPLICITLY_UNDECIDED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "업로드 파일 보관 기간 정책을 결정한다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "원문에 업로드 보관 정책이 미정이라고 명시되어 있습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246401-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 14250,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2198,
+            "output_tokens": 1463
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"MISSING_POLICY\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"업로드 파일 보관 기간 정책이 미정으로 확인되어, 계획에 적힌 정책 적용 요건을 확정할 수 없습니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"보관 기간 정책을 확정한 뒤 계획에 반영하세요.\",\n      \"policy_need_id\": \"policy-need-1\",\n      \"conflicting_design_refs\": []\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"policy-need-1\",\n      \"topic\": \"업로드 파일 보관 기간 정책 적용\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"업로드 파일의 보관 기간 정책을 적용한다.\"\n      },\n      \"state\": \"EXPLICITLY_UNDECIDED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"업로드 파일 보관 기간 정책을 결정한다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"원문에 업로드 보관 정책이 미정이라고 명시되어 있습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "login_mismatch",
+      "split": "development",
+      "expectation": "CONTRADICTORY",
+      "passed": true,
+      "detail": "expected=CONTRADICTORY; states=['CONTRADICTORY']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "MISMATCH",
+              "severity": "BLOCKING",
+              "message": "계획은 로그인 10회 실패 시 계정을 잠그도록 하지만, 승인된 정책은 5회 실패 시 잠그도록 하여 기준이 다릅니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "계획의 잠금 기준을 승인된 정책과 맞추거나, 정책 변경을 승인받으세요.",
+              "policy_need_id": "need-1",
+              "conflicting_design_refs": []
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "need-1",
+              "topic": "로그인 실패에 따른 계정 잠금 기준",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "로그인 10회 실패하면 계정을 30분 잠근다."
+              },
+              "state": "CONTRADICTORY",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "로그인 5회 실패하면 계정을 30분 잠근다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획과 승인된 정책의 잠금 실패 횟수가 각각 10회와 5회로 다릅니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246402-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 11438,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2232,
+            "output_tokens": 1148
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"MISMATCH\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획은 로그인 10회 실패 시 계정을 잠그도록 하지만, 승인된 정책은 5회 실패 시 잠그도록 하여 기준이 다릅니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"계획의 잠금 기준을 승인된 정책과 맞추거나, 정책 변경을 승인받으세요.\",\n      \"policy_need_id\": \"need-1\",\n      \"conflicting_design_refs\": []\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"need-1\",\n      \"topic\": \"로그인 실패에 따른 계정 잠금 기준\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"로그인 10회 실패하면 계정을 30분 잠근다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"로그인 5회 실패하면 계정을 30분 잠근다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획과 승인된 정책의 잠금 실패 횟수가 각각 10회와 5회로 다릅니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "two_designs_conflict",
+      "split": "development",
+      "expectation": "CONFLICT",
+      "passed": false,
+      "detail": "no validated model result",
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246403-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 14812,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 2465,
+            "output_tokens": 1416
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"candidate-design-312\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"CONFLICT\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"로그인 잠금 정책의 실패 횟수와 잠금 시간이 승인된 설계 간에 서로 다릅니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"적용할 로그인 잠금 기준을 확정하고 승인된 설계를 일치시키세요.\",\n      \"policy_need_id\": \"login-lock-policy\",\n      \"conflicting_design_refs\": [\n        {\n          \"design_item_id\": \"302\",\n          \"design_item_version_id\": \"312\",\n          \"evidence_ids\": [\n            \"policy-source-2\"\n          ],\n          \"content_paths\": [\n            [\n              \"description\"\n            ]\n          ]\n        }\n      ]\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"login-lock-policy\",\n      \"topic\": \"로그인 실패 시 계정 잠금 기준\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"로그인 실패 시 계정 잠금 정책을 적용한다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\",\n        \"312\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"로그인 5회 실패하면 계정을 30분 잠근다.\"\n        },\n        {\n          \"design_item_version_id\": \"312\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"로그인 3회 실패하면 계정을 10분 잠근다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"explanation\": \"두 승인 설계가 로그인 실패 횟수와 잠금 시간에 대해 서로 다른 기준을 제시합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "missing_search",
+      "split": "development",
+      "expectation": "INSUFFICIENT",
+      "passed": true,
+      "detail": "expected=INSUFFICIENT; states=['INSUFFICIENT']; policy_unassessed=True",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [
+            "plan-completeness"
+          ],
+          "unassessed": [
+            {
+              "check_key": "policy-gap-v1",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획은 관리자에게 보고서 삭제 권한을 부여하는 정책을 요구하지만, 승인된 설계나 근거가 없어 정책의 구체적 조건을 확인할 수 없습니다."
+            }
+          ],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "policy-1",
+              "topic": "관리자의 보고서 삭제 권한",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "관리자가 보고서를 삭제할 수 있는 권한 정책을 적용한다."
+              },
+              "state": "INSUFFICIENT",
+              "design_item_version_ids": [],
+              "approved_content_refs": [],
+              "evidence_ids": [],
+              "explanation": "관리자에게 보고서 삭제 권한을 부여하는 요구는 드러나지만, 그 권한의 조건이나 범위는 제공된 승인 설계와 근거만으로 확인할 수 없습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246404-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 8875,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1981,
+            "output_tokens": 804
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"계획은 관리자에게 보고서 삭제 권한을 부여하는 정책을 요구하지만, 승인된 설계나 근거가 없어 정책의 구체적 조건을 확인할 수 없습니다.\"\n    }\n  ],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"policy-1\",\n      \"topic\": \"관리자의 보고서 삭제 권한\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"관리자가 보고서를 삭제할 수 있는 권한 정책을 적용한다.\"\n      },\n      \"state\": \"INSUFFICIENT\",\n      \"design_item_version_ids\": [],\n      \"approved_content_refs\": [],\n      \"evidence_ids\": [],\n      \"explanation\": \"관리자에게 보고서 삭제 권한을 부여하는 요구는 드러나지만, 그 권한의 조건이나 범위는 제공된 승인 설계와 근거만으로 확인할 수 없습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "unrelated_document",
+      "split": "development",
+      "expectation": "INSUFFICIENT",
+      "passed": true,
+      "detail": "expected=INSUFFICIENT; states=['INSUFFICIENT']; policy_unassessed=True",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311"
+          ],
+          "unassessed": [
+            {
+              "check_key": "policy-gap-v1",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획은 알림 재전송 간격 정책 적용을 요구하지만, 적용할 간격이나 해당 정책을 확인할 수 있는 근거가 제공되지 않아 정책 요구사항의 구체적 내용을 평가할 수 없습니다."
+            }
+          ],
+          "findings": [
+            {
+              "check_key": "plan-completeness",
+              "kind": "MISSING_INPUT",
+              "severity": "BLOCKING",
+              "message": "접근 방법과 완료 기준이 모두 알림 재전송 간격 정책을 적용한다는 내용뿐입니다. 구현하고 완료 여부를 확인할 수 있도록 적용할 정책의 구체적인 내용이나 해당 정책을 식별할 참조가 필요합니다.",
+              "sources": [],
+              "evidence_ids": [],
+              "suggested_action": "적용할 재전송 간격 정책을 구체화하고, 완료 기준에 그 정책의 적용 여부를 검증하는 방법을 명시하세요."
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "notification-resend-interval-policy",
+              "topic": "알림 재전송 간격 정책",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "알림 재전송 간격 정책을 적용한다."
+              },
+              "state": "INSUFFICIENT",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "프로필 사진은 PNG 형식이다."
+                }
+              ],
+              "evidence_ids": [],
+              "explanation": "제공된 승인 내용은 프로필 사진 형식에 관한 것이며 알림 재전송 간격을 정하지 않습니다. 따라서 이 자료로 계획의 정책 요구사항을 확정할 수 없습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246405-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 21827,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2319,
+            "output_tokens": 1905
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"계획은 알림 재전송 간격 정책 적용을 요구하지만, 적용할 간격이나 해당 정책을 확인할 수 있는 근거가 제공되지 않아 정책 요구사항의 구체적 내용을 평가할 수 없습니다.\"\n    }\n  ],\n  \"findings\": [\n    {\n      \"check_key\": \"plan-completeness\",\n      \"kind\": \"MISSING_INPUT\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"접근 방법과 완료 기준이 모두 알림 재전송 간격 정책을 적용한다는 내용뿐입니다. 구현하고 완료 여부를 확인할 수 있도록 적용할 정책의 구체적인 내용이나 해당 정책을 식별할 참조가 필요합니다.\",\n      \"design_item_id\": null,\n      \"design_item_version_id\": null,\n      \"related_task_id\": null,\n      \"sources\": [],\n      \"evidence_ids\": [],\n      \"suggested_action\": \"적용할 재전송 간격 정책을 구체화하고, 완료 기준에 그 정책의 적용 여부를 검증하는 방법을 명시하세요.\",\n      \"policy_need_id\": null,\n      \"conflicting_design_refs\": null\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"notification-resend-interval-policy\",\n      \"topic\": \"알림 재전송 간격 정책\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"알림 재전송 간격 정책을 적용한다.\"\n      },\n      \"state\": \"INSUFFICIENT\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"프로필 사진은 PNG 형식이다.\"\n        }\n      ],\n      \"evidence_ids\": [],\n      \"explanation\": \"제공된 승인 내용은 프로필 사진 형식에 관한 것이며 알림 재전송 간격을 정하지 않습니다. 따라서 이 자료로 계획의 정책 요구사항을 확정할 수 없습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "refund_supported",
+      "split": "holdout",
+      "expectation": "SUPPORTED",
+      "passed": true,
+      "detail": "expected=SUPPORTED; states=['SUPPORTED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "refund-eligibility",
+              "topic": "환불 대상 및 기간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "구매 후 7일 이내이고 미사용인 주문만 환불한다."
+              },
+              "state": "SUPPORTED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "미사용 주문은 구매 후 7일 이내에만 환불한다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획의 환불 대상과 기간이 승인된 정책 내용 및 근거 발췌와 일치합니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246406-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 7187,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2241,
+            "output_tokens": 563
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"refund-eligibility\",\n      \"topic\": \"환불 대상 및 기간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"구매 후 7일 이내이고 미사용인 주문만 환불한다.\"\n      },\n      \"state\": \"SUPPORTED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"미사용 주문은 구매 후 7일 이내에만 환불한다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획의 환불 대상과 기간이 승인된 정책 내용 및 근거 발췌와 일치합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "retention_mismatch",
+      "split": "holdout",
+      "expectation": "CONTRADICTORY",
+      "passed": true,
+      "detail": "expected=CONTRADICTORY; states=['CONTRADICTORY']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "MISMATCH",
+              "severity": "BLOCKING",
+              "message": "계획은 접속 로그를 7일 보관한다고 하지만 승인 정책은 30일 보관한다고 명시합니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "계획의 보관 기간을 승인 정책과 일치시키거나 정책 변경을 승인받으세요.",
+              "policy_need_id": "need-1",
+              "conflicting_design_refs": []
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "need-1",
+              "topic": "접속 로그 보관 기간 및 삭제",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "접속 로그를 7일 보관하고 삭제한다."
+              },
+              "state": "CONTRADICTORY",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "접속 로그는 30일 보관한 뒤 삭제한다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획의 7일 보관과 승인 정책의 30일 보관이 다릅니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246407-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 11047,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2211,
+            "output_tokens": 1096
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"MISMATCH\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획은 접속 로그를 7일 보관한다고 하지만 승인 정책은 30일 보관한다고 명시합니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"계획의 보관 기간을 승인 정책과 일치시키거나 정책 변경을 승인받으세요.\",\n      \"policy_need_id\": \"need-1\",\n      \"conflicting_design_refs\": []\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"need-1\",\n      \"topic\": \"접속 로그 보관 기간 및 삭제\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"접속 로그를 7일 보관하고 삭제한다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"접속 로그는 30일 보관한 뒤 삭제한다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획의 7일 보관과 승인 정책의 30일 보관이 다릅니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "export_undecided",
+      "split": "holdout",
+      "expectation": "EXPLICITLY_UNDECIDED",
+      "passed": true,
+      "detail": "expected=EXPLICITLY_UNDECIDED; states=['EXPLICITLY_UNDECIDED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "MISSING_POLICY",
+              "severity": "BLOCKING",
+              "message": "계획은 데이터 내보내기 권한 정책 적용을 요구하지만, 승인 근거에는 해당 정책이 미확정이라고 명시되어 있습니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "정책을 확정하고 승인된 정책 내용을 계획에 반영하세요.",
+              "policy_need_id": "need-export-permission-policy",
+              "conflicting_design_refs": []
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "need-export-permission-policy",
+              "topic": "데이터 내보내기 권한 정책",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "데이터 내보내기 권한 정책을 적용한다."
+              },
+              "state": "EXPLICITLY_UNDECIDED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "데이터 내보내기 권한은 결정이 필요하다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "근거에 내보내기 권한 정책이 미확정이라고 명시되어 있습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246408-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 13547,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2215,
+            "output_tokens": 1281
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"MISSING_POLICY\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획은 데이터 내보내기 권한 정책 적용을 요구하지만, 승인 근거에는 해당 정책이 미확정이라고 명시되어 있습니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"정책을 확정하고 승인된 정책 내용을 계획에 반영하세요.\",\n      \"policy_need_id\": \"need-export-permission-policy\",\n      \"conflicting_design_refs\": []\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"need-export-permission-policy\",\n      \"topic\": \"데이터 내보내기 권한 정책\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"데이터 내보내기 권한 정책을 적용한다.\"\n      },\n      \"state\": \"EXPLICITLY_UNDECIDED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"데이터 내보내기 권한은 결정이 필요하다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"근거에 내보내기 권한 정책이 미확정이라고 명시되어 있습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "quota_supported",
+      "split": "holdout",
+      "expectation": "SUPPORTED",
+      "passed": true,
+      "detail": "expected=SUPPORTED; states=['SUPPORTED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "need-1",
+              "topic": "사용자별 하루 요청 제한",
+              "plan_evidence": {
+                "field": "included_scope",
+                "index": 0,
+                "quote": "사용자별 하루 요청을 100건으로 제한한다."
+              },
+              "state": "SUPPORTED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "사용자별 하루 요청은 최대 100건이다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획의 사용자별 일일 100건 제한은 승인된 정책의 최대 100건 기준과 일치합니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246409-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 7327,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2213,
+            "output_tokens": 510
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"need-1\",\n      \"topic\": \"사용자별 하루 요청 제한\",\n      \"plan_evidence\": {\n        \"field\": \"included_scope\",\n        \"index\": 0,\n        \"quote\": \"사용자별 하루 요청을 100건으로 제한한다.\"\n      },\n      \"state\": \"SUPPORTED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"사용자별 하루 요청은 최대 100건이다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획의 사용자별 일일 100건 제한은 승인된 정책의 최대 100건 기준과 일치합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "documentation_only",
+      "split": "holdout",
+      "expectation": "NO_REQUIREMENTS",
+      "passed": false,
+      "detail": "expected=NO_REQUIREMENTS; states=['INSUFFICIENT']; policy_unassessed=True",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [
+            "plan-completeness"
+          ],
+          "unassessed": [
+            {
+              "check_key": "policy-gap-v1",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획은 권한과 데이터 처리를 변경하지 않겠다고 명시하지만, 이를 비교할 승인된 설계나 근거가 제공되지 않았습니다."
+            }
+          ],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "permission-changes",
+              "topic": "권한 변경 금지",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "권한, 데이터 처리는 변경하지 않는다."
+              },
+              "state": "INSUFFICIENT",
+              "design_item_version_ids": [],
+              "approved_content_refs": [],
+              "evidence_ids": [],
+              "explanation": "계획에 권한 변경 금지가 명시되어 있으나 대조할 승인 설계 근거가 없습니다."
+            },
+            {
+              "need_id": "data-processing-changes",
+              "topic": "데이터 처리 변경 금지",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "권한, 데이터 처리는 변경하지 않는다."
+              },
+              "state": "INSUFFICIENT",
+              "design_item_version_ids": [],
+              "approved_content_refs": [],
+              "evidence_ids": [],
+              "explanation": "계획에 데이터 처리 변경 금지가 명시되어 있으나 대조할 승인 설계 근거가 없습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246410-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 10469,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2021,
+            "output_tokens": 1010
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"계획은 권한과 데이터 처리를 변경하지 않겠다고 명시하지만, 이를 비교할 승인된 설계나 근거가 제공되지 않았습니다.\"\n    }\n  ],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"permission-changes\",\n      \"topic\": \"권한 변경 금지\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"권한, 데이터 처리는 변경하지 않는다.\"\n      },\n      \"state\": \"INSUFFICIENT\",\n      \"design_item_version_ids\": [],\n      \"approved_content_refs\": [],\n      \"evidence_ids\": [],\n      \"explanation\": \"계획에 권한 변경 금지가 명시되어 있으나 대조할 승인 설계 근거가 없습니다.\"\n    },\n    {\n      \"need_id\": \"data-processing-changes\",\n      \"topic\": \"데이터 처리 변경 금지\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"권한, 데이터 처리는 변경하지 않는다.\"\n      },\n      \"state\": \"INSUFFICIENT\",\n      \"design_item_version_ids\": [],\n      \"approved_content_refs\": [],\n      \"evidence_ids\": [],\n      \"explanation\": \"계획에 데이터 처리 변경 금지가 명시되어 있으나 대조할 승인 설계 근거가 없습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "mixed_incomplete",
+      "split": "holdout",
+      "expectation": "INSUFFICIENT",
+      "passed": true,
+      "detail": "expected=INSUFFICIENT; states=['INSUFFICIENT', 'SUPPORTED']; policy_unassessed=True",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311"
+          ],
+          "unassessed": [
+            {
+              "check_key": "policy-gap-v1",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "업로드 파일 보관 기간 정책을 적용한다는 계획은 있으나, 제공된 승인 설계와 발췌문만으로는 해당 정책의 기간이나 구체적 요구사항을 확인할 수 없습니다."
+            }
+          ],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "need-1",
+              "topic": "업로드 파일 크기 제한",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "파일 업로드는 10MB 이하만 허용"
+              },
+              "state": "SUPPORTED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "파일은 최대 10MB까지 업로드할 수 있다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획의 10MB 이하 제한은 승인 설계의 최대 10MB 업로드 정책과 일치합니다."
+            },
+            {
+              "need_id": "need-2",
+              "topic": "업로드 파일 보관 기간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "업로드 파일 보관 기간 정책도 적용한다."
+              },
+              "state": "INSUFFICIENT",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [],
+              "evidence_ids": [],
+              "explanation": "제공된 승인 내용과 발췌문은 업로드 크기만 다루므로 보관 기간 정책의 구체적인 기준을 확인할 수 없습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683695476246411-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 24281,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2248,
+            "output_tokens": 2262
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"업로드 파일 보관 기간 정책을 적용한다는 계획은 있으나, 제공된 승인 설계와 발췌문만으로는 해당 정책의 기간이나 구체적 요구사항을 확인할 수 없습니다.\"\n    }\n  ],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"need-1\",\n      \"topic\": \"업로드 파일 크기 제한\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"파일 업로드는 10MB 이하만 허용\"\n      },\n      \"state\": \"SUPPORTED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"파일은 최대 10MB까지 업로드할 수 있다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획의 10MB 이하 제한은 승인 설계의 최대 10MB 업로드 정책과 일치합니다.\"\n    },\n    {\n      \"need_id\": \"need-2\",\n      \"topic\": \"업로드 파일 보관 기간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"업로드 파일 보관 기간 정책도 적용한다.\"\n      },\n      \"state\": \"INSUFFICIENT\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [],\n      \"evidence_ids\": [],\n      \"explanation\": \"제공된 승인 내용과 발췌문은 업로드 크기만 다루므로 보관 기간 정책의 구체적인 기준을 확인할 수 없습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    }
+  ]
+}

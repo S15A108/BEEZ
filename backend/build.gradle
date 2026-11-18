@@ -1,0 +1,121 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+}
+
+group = 'com.beez'
+version = '0.0.1-SNAPSHOT'
+description = 'BEEZ backend — 도메인·권한·판정의 진실의 원천'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    springdocVersion = '3.1.1'   // Spring Boot 4 대응 라인
+    awsSdkVersion = '2.57.3'
+    mcpSdkVersion = '2.1.0'     // MCP Java SDK. Jackson 3(tools.jackson) 바인딩을 함께 가져온다
+}
+
+dependencies {
+    // Spring Boot BOM 으로 버전 관리 (별도 dependency-management 플러그인 불필요)
+    // annotationProcessor 는 implementation 을 상속하지 않으므로 BOM 을 따로 걸어야 lombok 등 버전이 잡힌다
+    implementation platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+    annotationProcessor platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+    developmentOnly platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    // /actuator/prometheus (S15P31A108-262). 버전은 Spring Boot BOM 이 잡는다
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    // 웹 세션을 PostgreSQL 에 저장 (S15P31A108-242). 배포로 backend 컨테이너가 바뀌어도 로그인이 유지된다
+    implementation 'org.springframework.boot:spring-boot-starter-session-jdbc'
+    implementation 'org.springframework.kafka:spring-kafka'
+    // 메일 발송 (S15P31A108-219). beez.mail.mode=smtp 일 때만 JavaMailSender 를 쓴다
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+    // OpenAPI 문서 (/swagger-ui.html, /v3/api-docs)
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+
+    // S3-compatible API: explicit SeaweedFS endpoint, not an implicit AWS connection.
+    implementation platform("software.amazon.awssdk:bom:${awsSdkVersion}")
+    implementation('software.amazon.awssdk:s3') {
+        exclude group: 'software.amazon.awssdk', module: 'apache-client'
+        exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
+    }
+    implementation 'software.amazon.awssdk:url-connection-client'
+
+    // MCP 서버 (/mcp, Streamable HTTP). mcp = mcp-core(서블릿 전송 포함) + mcp-json-jackson3
+    implementation "io.modelcontextprotocol.sdk:mcp:${mcpSdkVersion}"
+
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+    implementation 'org.postgresql:postgresql' // Structured constraint diagnostics; never log server detail/message.
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+    // 개발 중 compose.yaml 의 Postgres 를 자동으로 띄우고 연결 (테스트 classpath 에는 포함되지 않음)
+    developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'   // Testcontainers 2.x 이름
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+springBoot {
+    buildInfo()   // /actuator/info 에 빌드 정보 노출
+}
+
+// 테스트 계층 분리.
+//  - test            : 빠른 층(단위·슬라이스). PR 마다 돈다. Docker 불필요. 시간 예산 60초.
+//  - integrationTest : 느린 층(@Tag("integration") — SpringBootTest + Testcontainers). Docker 필요.
+//                      PR 에서는 핵심만, 전체는 dev 머지 후 돈다. `build`/`check` 에는 포함하지 않는다.
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'integration'
+    }
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'Runs @Tag("integration") tests (Spring context + Testcontainers). Docker required.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+    shouldRunAfter tasks.named('test')
+    // 클래스를 JVM 여러 개에 나눠 돌린다. fork 마다 Postgres 컨테이너를 따로 띄우므로 "DB 를 비우지 않고 공유" 전제는 fork 안에서 유지된다.
+    // fork 가 늘면 시험 하나하나가 CPU 경합으로 느려져서 코어 4개당 1개, 최대 4개로 둔다 (22코어 PC 585s → 381s, -354).
+    // CI 러너(4 vCPU)는 1개 그대로다. 바꿔 보려면 -PintegrationTestForks=N.
+    def forks = project.findProperty('integrationTestForks')
+    maxParallelForks = forks ? Integer.parseInt(forks.toString())
+            : Math.max(1, Math.min(4, Runtime.runtime.availableProcessors().intdiv(4)))
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}

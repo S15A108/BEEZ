@@ -1,0 +1,36 @@
+{
+  "input": {
+    "contract_version": 2,
+    "project_id": "1",
+    "document_id": "1",
+    "revision": 1,
+    "kind": "PLAN",
+    "content": "# 계획\n로그인한다.\n",
+    "content_hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764",
+    "reference_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "request_key": "document-review-fixture",
+    "unavailable_references": ["API_SPEC", "ERD", "REQ_SPEC"],
+    "references": []
+  },
+  "response": {
+    "origin": "MODEL",
+    "result": {
+      "document_id": "1",
+      "revision": 1,
+      "content_hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764",
+      "reference_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "request_key": "document-review-fixture",
+      "summary": "본문 검토 완료. 승인 비교 자료가 없습니다.",
+      "review_status": "PARTIAL",
+      "steps": [
+        {"step": "BODY", "status": "COMPLETE", "reason": "REVIEWED", "reference_ids": []},
+        {"step": "API_SPEC", "status": "SKIPPED", "reason": "REFERENCE_UNAVAILABLE", "reference_ids": []},
+        {"step": "ERD", "status": "SKIPPED", "reason": "REFERENCE_UNAVAILABLE", "reference_ids": []},
+        {"step": "REQ_SPEC", "status": "SKIPPED", "reason": "REFERENCE_UNAVAILABLE", "reference_ids": []}
+      ],
+      "references_used": [],
+      "suggestions": [{"type": "COMMENT", "step": "BODY", "explanation": "승인 자료를 추가하면 비교 검토를 할 수 있습니다.", "sources": []}]
+    },
+    "usage": [{"request_key": "document-review-fixture", "feature": "BEE_DRAFT", "model": "fixture-model", "latency_ms": 1, "failed": false, "tokens_known": false}]
+  }
+}

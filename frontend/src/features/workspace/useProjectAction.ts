@@ -1,0 +1,42 @@
+import { useCallback, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { getApiErrorStatus } from '@/api/error'
+
+export function useProjectAction(projectId: string) {
+  const queryClient = useQueryClient()
+  const [message, setMessage] = useState('')
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['projects', projectId] }),
+      queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+    ])
+  const mutation = useMutation({
+    mutationFn: (action: () => Promise<unknown>) => action(),
+    onSuccess: refresh,
+    onError: async (error) => {
+      if (getApiErrorStatus(error) === 409) await refresh()
+    },
+  })
+  const clearMessage = useCallback(() => setMessage(''), [])
+  const run = async (
+    action: () => Promise<unknown>,
+    success = '처리했어요.',
+  ) => {
+    setMessage('')
+    const result = await mutation.mutateAsync(action)
+    setMessage(success)
+    return result
+  }
+  return {
+    run,
+    // 실패가 오류가 아니라 정상 단계일 때(예: 사유 입력 요구) 일반 오류 띠를 지운다.
+    reset: mutation.reset,
+    // 진행 안내(예: 영향 분석을 시작했어요)가 작업이 끝난 뒤에도 남지 않게 지운다.
+    clearMessage,
+    busy: mutation.isPending,
+    message,
+    error: mutation.error
+      ? '요청을 처리하지 못했어요. 최신 상태와 권한을 확인해 주세요.'
+      : '',
+  }
+}

@@ -1,0 +1,15 @@
+# Grafana 대시보드 프로비저닝 (S15P31A108-264). JSON 은 grafana/dashboards/ 에 있고 compose 가 /etc/grafana/dashboards 로 붙인다.
+# 화면에서 고친 내용은 저장되지 않는다(allowUiUpdates: false). 바꾸려면 화면에서 고친 뒤 "Export → JSON"을 받아
+# 저장소 파일을 바꾸고 PR 로 올린다(docs/infra/monitoring-alerts.md "대시보드 바꾸기").
+apiVersion: 1
+
+providers:
+  - name: beez
+    folder: BEEZ
+    type: file
+    # false: 저장소에서 JSON 을 지우거나 uid 를 바꾸면 Grafana 에서도 지운다(파일이 정본). true 면 옛 대시보드가 남는다
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/dashboards

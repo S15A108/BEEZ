@@ -1,0 +1,12 @@
+{
+  "finished_at": "2026-11-10T01:27:32.845493+00:00",
+  "returncode": 0,
+  "fresh_report": true,
+  "passed": true,
+  "tests": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "created_at": "2026-10-29T02:28:10.875656+00:00",
+  "provider_host": "api.openai.com",
+  "requested_model": "gpt-4o-mini-2024-07-18",
+  "scope": "FastAPI route with test-injected provider; no BE/DB or configured GMS route integration",
+  "cases": [
+    {
+      "name": "normal",
+      "expectation": "COMPLETE, no blocking findings",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-601-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 2890,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1138,
+            "output_tokens": 105
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"referenced-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"plan-completeness\",\n      \"reason\": \"계획의 완전성을 판단할 수 있는 추가 정보 부족\",\n      \"message\": \"계획의 모든 요소가 충족되었는지 확인할 수 없습니다.\"\n    }\n  ],\n  \"findings\": []\n}"
+      ]
+    },
+    {
+      "name": "mismatch",
+      "expectation": "BLOCKING MISMATCH with design version 311 describing userId versus memberId",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-602-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 3905,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1134,
+            "output_tokens": 287
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"referenced-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"plan-completeness\",\n      \"reason\": \"내용 부족\",\n      \"message\": \"계획의 완전성을 판단하기 위한 필요한 정보가 부족합니다.\"\n    }\n  ],\n  \"findings\": [\n    {\n      \"check_key\": \"referenced-design-311\",\n      \"kind\": \"MISMATCH\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"API 요청 필드가 승인된 계약과 일치하지 않습니다. 요청 필드는 'memberId'이 필수로 지정되어 있으나, 계획에서는 'userId'만 필수로 지정되어 있습니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": \"501\",\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"location\": \"회원 조회 API / 요청 본문\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"e-member-api\"\n      ],\n      \"suggested_action\": \"계획을 수정하여 승인된 계약의 요청 필드와 일치시켜야 합니다.\"\n    }\n  ]\n}"
+      ]
+    },
+    {
+      "name": "policy_unresolved",
+      "expectation": "PARTIAL with EVIDENCE_INSUFFICIENT, not PASS",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-603-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 1812,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1165,
+            "output_tokens": 126
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"referenced-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"evaluation-184-policy-unresolved\",\n      \"reason\": \"정책의 범위 및 결여에 대한 확인할 수 있는 구조화된 계약이 없어 평가할 수 없음.\",\n      \"message\": \"회원 정보를 조회할 수 있는 사용자 권한 정책이 아직 결정되지 않았습니다. 이에 대한 추가 정보가 필요합니다.\"\n    }\n  ],\n  \"findings\": []\n}"
+      ]
+    },
+    {
+      "name": "document_conflict",
+      "expectation": "MISMATCH or CONFLICT referencing design version 311 and the supplied contradictory document evidence",
+      "criterion": "model call or output validation failed",
+      "passed": false,
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-604-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-4o-mini-2024-07-18",
+            "latency_ms": 1907,
+            "failed": true,
+            "tokens_known": true,
+            "input_tokens": 1132,
+            "output_tokens": 96
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"referenced-design-311\"\n  ],\n  \"unassessed\": [\n    {\n      \"check_key\": \"referenced-design-311\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"위험 평가 입력 정보가 부족하여 확인할 수 없습니다.\"\n    }\n  ],\n  \"findings\": []\n}"
+      ]
+    }
+  ]
+}

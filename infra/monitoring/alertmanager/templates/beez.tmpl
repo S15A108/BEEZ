@@ -1,0 +1,16 @@
+{{/* Mattermost 알림 문구 (S15P31A108-264). alertmanager.yml 의 mattermost_configs 가 쓴다.
+     넣는 값은 규칙 이름·담당·요약·대상(instance)·시각뿐. 규칙 라벨에 프로젝트 ID·원문이 없으므로 여기에도 없다. */}}
+
+{{ define "beez.owner" }}{{ if eq . "app" }}앱 · 양지훈{{ else if eq . "infra" }}인프라 · 전진{{ else }}담당 미지정{{ end }}{{ end }}
+
+{{ define "beez.title" -}}
+{{ if eq .Status "firing" }}🚨 {{ .CommonLabels.alertname }} 발생{{ if gt (len .Alerts.Firing) 1 }} ({{ len .Alerts.Firing }}건){{ end }}{{ else }}✅ {{ .CommonLabels.alertname }} 해소{{ end }}
+{{- end }}
+
+{{ define "beez.text" -}}
+**1차 대응**: {{ template "beez.owner" .CommonLabels.team }}
+{{ range .Alerts -}}
+- {{ if eq .Status "firing" }}{{ .Annotations.summary }}{{ else }}해소: {{ .Annotations.summary }}{{ end }}{{ if .Labels.instance }} · `{{ .Labels.instance }}`{{ end }} · {{ (.StartsAt | tz "Asia/Seoul").Format "01-02 15:04" }} 시작
+{{ end -}}
+제목을 누르면 대응 절차(런북)가 열립니다. 일시 중지는 런북 "알림 일시 중지".
+{{- end }}
