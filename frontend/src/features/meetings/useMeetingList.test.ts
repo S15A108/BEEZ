@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { Meeting } from '@/api/contracts/common'
-import { openMeetingCount } from './useMeetingList'
+import { myOpenMeetings } from './useMeetingList'
 
 const meeting = (
   id: string,
@@ -15,7 +15,7 @@ const meeting = (
   created_at: '2026-10-28T01:40:00Z',
 })
 
-it('내가 참여 중인 진행 중 회의만 센다', () => {
+it('내가 참여 중인 진행 중 회의만 고른다', () => {
   const meetings = [
     meeting('1', 'OPEN', [{ member_id: '11', status: 'JOINED' }]),
     // status가 없으면 진행 중으로 본다
@@ -24,6 +24,9 @@ it('내가 참여 중인 진행 중 회의만 센다', () => {
     meeting('4', 'OPEN', [{ member_id: '12', status: 'JOINED' }]),
     meeting('5', 'OPEN', [{ member_id: '11', status: 'DECLINED' }]),
   ]
-  expect(openMeetingCount(meetings, '11')).toBe(2)
-  expect(openMeetingCount(meetings, undefined)).toBe(0)
+  expect(myOpenMeetings(meetings, '11').map((item) => item.id)).toEqual([
+    '1',
+    '2',
+  ])
+  expect(myOpenMeetings(meetings, undefined)).toEqual([])
 })

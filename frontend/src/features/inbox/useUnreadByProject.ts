@@ -4,7 +4,7 @@ import type { Notification, Page } from '@/api/contracts/common'
 
 export type UnreadCount = { text: string; label: string }
 
-/** 화면에 보일 수. 0이면 없고, 99를 넘으면 99+, 더 있을 수 있으면 벨 팝오버처럼 '3+'다. */
+/** 화면에 보일 수. 0이면 없고, 99를 넘으면 99+, 더 있을 수 있으면 '3+'다. */
 export function unreadCount(
   count: number,
   hasMore: boolean,

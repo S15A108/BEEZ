@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleHelp,
   Lock,
   MapPin,
@@ -23,9 +24,9 @@ import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import type { GetResponse as Project } from '@/features/projects/schemas'
 import type { OnboardingResponse } from '@/features/projects/schemas'
-import { InboxPopover } from '@/features/inbox/InboxPopover'
+import { foldUnread } from '@/features/inbox/foldUnread'
 import {
-  openMeetingCount,
+  myOpenMeetings,
   useMeetingList,
 } from '@/features/meetings/useMeetingList'
 import {
@@ -40,7 +41,7 @@ import { Hotbar } from './Hotbar'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 import { Button } from '@/components/ui/button'
-import { countText, describeContent, statusLabel } from '@/lib/display'
+import { countText, statusLabel } from '@/lib/display'
 import { presenceQuery } from '@/features/presence/presenceQuery'
 import { presenceView } from '@/features/presence/presenceText'
 import { formatAgo, formatShort } from '@/lib/formatDate'
@@ -48,16 +49,13 @@ import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
 
-// '지금 할 일' 한 줄: 설명 한 줄과 바로 가기. 변경 제안 줄은 −/+ 미리 보기와 영향까지(SCR-06-v2-workspace-hotbar).
-type Todo = {
+// '할 일' 한 줄: 종류 한 단어, 제목, 메타 한 줄. 줄 전체가 그 창을 여는 버튼이다(S15P31A108-444).
+type Row = {
   key: string
-  mark: string
-  tone: 'review' | 'alert' | 'done'
+  kind: string
   title: string
-  detail: string
-  preview?: { before?: string; after?: string }
-  note?: string
-  action: string
+  meta: string
+  targets: string[]
   open: () => void
 }
 
@@ -184,16 +182,19 @@ export function WorkspaceHud({
       inboxApi.list({ project_id: project.id, unread: true, limit: 20 }),
   })
   const queryClient = useQueryClient()
-  // '지금 할 일' 첫 줄(SCR-06-v2-workspace-hotbar): 검토를 기다리는 첫 변경 제안의 상세·영향. 키는 변경 제안 창과 같다.
+  // 할 일의 '변경 검토' 줄(팀장만): 검토를 기다리는 첫 변경 제안과 제안자. 키는 변경 제안 창과 같다.
   const reviewList = useQuery({
     queryKey: ['projects', project.id, 'hud-review'],
     queryFn: () =>
       changesApi.list(project.id, { group: 'IN_PROGRESS', limit: 20 }),
-    // 창이 열린 동안은 '지금 할 일'이 가려지므로 부르지 않는다(목 모드 부하, E2E 시간).
+    // 창이 열린 동안은 할 일이 가려지므로 부르지 않는다(목 모드 부하, E2E 시간).
     enabled:
-      started && !pane && (changeCounts.data?.review_required_count ?? 0) > 0,
+      isLeader &&
+      started &&
+      !pane &&
+      (changeCounts.data?.review_required_count ?? 0) > 0,
   })
-  // '지금 할 일'의 담당자 없는 작업(TSK-A02 unassigned=true). 대시보드와 같은 키라 한 번만 부른다.
+  // 할 일의 담당자 없는 작업(TSK-A02 unassigned=true). 대시보드와 같은 키라 한 번만 부른다.
   const unassigned = useQuery({
     ...openTasksQuery(project.id, { unassigned: true }),
     enabled: started && !pane,
@@ -204,11 +205,6 @@ export function WorkspaceHud({
   const reviewDetail = useQuery({
     queryKey: ['projects', project.id, 'change', firstReview?.id],
     queryFn: () => changesApi.get(project.id, firstReview!.id),
-    enabled: !!firstReview && !pane,
-  })
-  const reviewImpact = useQuery({
-    queryKey: ['projects', project.id, 'impact', firstReview?.id],
-    queryFn: () => changesApi.impact(project.id, firstReview!.id),
     enabled: !!firstReview && !pane,
   })
   const [, rerender] = useState(0)
@@ -524,12 +520,8 @@ export function WorkspaceHud({
       0,
     ) ?? 0
   const reviewCount = changeCounts.data?.review_required_count ?? 0
-  // 회의실 배지: 회의실 창과 같은 목록 캐시. 시작 전에는 회의실이 잠겨 부르지 않는다.
+  // 할 일의 회의 줄: 회의실 창과 같은 목록 캐시. 시작 전에는 회의실이 잠겨 부르지 않는다.
   const meetingList = useMeetingList(project.id, started)
-  const meetingCount = openMeetingCount(
-    meetingList.data?.pages.flatMap((page) => page.items) ?? [],
-    me?.id,
-  )
   const inProgress =
     taskCounts.data?.by_status.find((item) => item.status === 'IN_PROGRESS')
       ?.count ?? 0
@@ -541,29 +533,6 @@ export function WorkspaceHud({
   const nameOfAccount = (id: string) =>
     members.find((member) => member.account_id === id)?.name ?? '팀원'
   const proposal = reviewDetail.data?.proposal
-  // −/+ 미리 보기는 item_texts(195 미구현)를 먼저 쓰고, 없으면 CHG-A03 비교 값을 쓴다. 둘 다 없으면 줄 없이 둔다.
-  const firstText = reviewDetail.data?.item_texts?.find(
-    (text) => text.before_text || text.after_text,
-  )
-  const firstComparison = reviewDetail.data?.comparisons.find(
-    (comparison) =>
-      comparison.target_type === 'DESIGN_ITEM' &&
-      comparison.proposed_content !== undefined,
-  )
-  const preview = firstText
-    ? { before: firstText.before_text, after: firstText.after_text }
-    : firstComparison
-      ? {
-          before:
-            (firstComparison.current_content ?? firstComparison.base_content)
-              ? describeContent(
-                  firstComparison.current_content ??
-                    firstComparison.base_content,
-                )
-              : undefined,
-          after: describeContent(firstComparison.proposed_content),
-        }
-      : undefined
   // 줄 글은 보드 길이로 짧게: '김동료 · 10분 전 · 설계 항목 3개'. 잘린 글은 title로 전체를 본다.
   const reviewSummary = proposal
     ? [
@@ -575,78 +544,80 @@ export function WorkspaceHud({
         .filter(Boolean)
         .join(' · ')
     : '승인을 기다리는 제안이 있어요'
-  const firstUnread = unreadItems[0]
   const firstReady = readyTasks[0]
   const orphans = unassigned.data?.items ?? []
-  const todos = (
+  const openReviews = (reviewList.data?.items ?? []).filter((item) =>
+    ['PROPOSED', 'IN_REVIEW'].includes(item.status),
+  )
+  // 회의 줄: 내가 참여한 진행 중 회의마다 한 줄.
+  const myMeetings = myOpenMeetings(
+    meetingList.data?.pages.flatMap((page) => page.items) ?? [],
+    me?.id,
+  )
+  // '할 일'(S15P31A108-444): 사무실에서 받은편지함은 여기 하나다. 줄은 지금 상태에서 계산해 일이 끝나면 저절로 빠지고,
+  // 줄마다 종류 한 단어·제목·메타 한 줄만 둔다. 노란 바탕·숫자 원·−/+ 미리 보기·영향은 그 창에서 본다.
+  // targets는 줄이 가리키는 대상('MEETING:901')이다. 같은 대상의 안 읽은 알림은 그 줄에 접는다(foldUnread).
+  const rows = (
     [
       // 담당자가 나가거나 제외돼 빈 열린 작업(SCR-06-v2-workspace-unassigned). 팀장은 정하고, 팀원은 열어서 맡는다.
       // API 없음: 누가 나가서 비었는지('김동료가 오늘 나갔어요')는 작업 응답에 없어 쓰지 않는다.
       unassigned.data &&
         orphans.length > 0 && {
           key: 'unassigned',
-          mark: '!',
-          tone: 'review',
+          kind: isLeader ? '담당자 정하기' : '맡을 작업',
           title: `담당자 없는 작업 ${openTaskCount(unassigned.data)}`,
-          detail: `${orphans
+          meta: orphans
             .slice(0, 3)
             .map((task) => `${task.key} ${taskText[task.status]}`)
-            .join(', ')} · 상태와 검증은 그대로예요`,
-          action: isLeader ? '담당자 정하기' : '작업 열기',
+            .join(', '),
+          targets: orphans.map((task) => `TASK:${task.id}`),
           open: () => openPane('tasks', orphans[0].id),
         },
-      reviewCount > 0 && {
-        key: 'review',
-        mark: '!',
-        tone: 'review',
-        title: firstReview
-          ? `변경 제안 검토 · ${firstReview.title}`
-          : `변경 제안 ${reviewCount}건 검토하기`,
-        detail: reviewSummary,
-        preview,
-        note: reviewImpact.data
-          ? `영향 작업 ${reviewImpact.data.explicit.length} · 승인하면 설계 기준 v${(project.current_baseline?.version_no ?? 0) + 1}`
-          : undefined,
-        action: '검토하러 가기',
-        open: () => openPane('changes', firstReview?.id),
-      },
-      firstUnread && {
-        key: 'unread',
-        mark: String(unreadItems.length),
-        tone: 'alert',
-        title: `읽지 않은 알림 ${unreadItems.length} · ${firstUnread.title}`,
-        detail: `${firstUnread.body} · ${formatAgo(firstUnread.created_at)}`,
-        action: `${targetLabel[firstUnread.target_type]} 열기`,
-        // 벨 팝오버처럼 누르면 그 창으로 가고 그 알림만 읽음 처리한다.
-        open: () => {
-          void inboxApi
-            .markRead({ ids: [firstUnread.id] })
-            .then(() =>
-              queryClient.invalidateQueries({ queryKey: ['notifications'] }),
-            )
-          openPane(
-            targetPane[firstUnread.target_type],
-            targetFocus(firstUnread),
-          )
+      // 검토 대기 제안은 팀장만 결정한다. 팀원에게는 줄을 두지 않는다(11-16 사용자 결정). 검토자로 불린 팀원은 알림이 새 소식에 뜬다.
+      isLeader &&
+        reviewCount > 0 && {
+          key: 'review',
+          kind: '변경 검토',
+          title: firstReview?.title ?? `변경 제안 ${reviewCount}건`,
+          meta: [reviewSummary, reviewCount > 1 && `외 ${reviewCount - 1}건`]
+            .filter(Boolean)
+            .join(' · '),
+          targets: openReviews.map((item) => `CHANGE_PROPOSAL:${item.id}`),
+          open: () => openPane('changes', firstReview?.id),
         },
-      },
+      ...myMeetings.map((meeting) => ({
+        key: `meeting-${meeting.id}`,
+        kind: '회의',
+        title: meeting.title,
+        meta: meeting.origin === 'BEE_CONFLICT' ? '비비가 엶' : '진행 중',
+        targets: [`MEETING:${meeting.id}`],
+        open: () => openPane('meetings', meeting.id),
+      })),
       firstReady && {
         key: 'ready',
-        mark: '✓',
-        tone: 'done',
-        title: `${firstReady.key} 시작하기${readyTasks.length > 1 ? ` 외 ${readyTasks.length - 1}건` : ''}`,
-        detail: [
+        kind: '작업 시작',
+        title: `${firstReady.key} ${firstReady.current_plan_revision.plan.title}`,
+        meta: [
           `계획 r${firstReady.current_plan_revision.revision_no} 검증 통과`,
-          firstReady.validation?.finished_at &&
-            formatAgo(firstReady.validation.finished_at),
+          readyTasks.length > 1 && `외 ${readyTasks.length - 1}건`,
         ]
           .filter(Boolean)
           .join(' · '),
-        action: '작업 열기',
+        targets: readyTasks.map((task) => `TASK:${task.id}`),
         open: () => openPane('tasks', firstReady.id),
       },
-    ] satisfies (Todo | false | undefined)[]
-  ).flatMap((todo) => (todo ? [todo] : []))
+    ] satisfies (Row | false | undefined)[]
+  ).flatMap((row) => (row ? [row] : []))
+  // 시작 가이드가 할 일 자리를 차지하는 동안은 줄을 보이지 않으니 접지 않고 모든 알림을 새 소식으로 보인다(회의 초대 포함, 11-16 결정).
+  const { byRow, news } = foldUnread(unreadItems, guideOpen ? [] : rows)
+  const markRead = (ids: string[]) => {
+    if (!ids.length) return
+    void inboxApi
+      .markRead({ ids })
+      .then(() =>
+        queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      )
+  }
   const chips = [
     ...(isLeader
       ? [
@@ -844,7 +815,6 @@ export function WorkspaceHud({
         shortcutsOff={tour !== null || accountOpen}
         locked={started ? [] : ['changes', 'meetings', 'tasks', 'relations']}
         lockedReason="프로젝트를 시작하면 열려요"
-        badges={{ changes: reviewCount, meetings: meetingCount }}
         highlight={isLeader && !allUploaded ? 'documents' : undefined}
       />
       <div
@@ -860,7 +830,6 @@ export function WorkspaceHud({
         >
           <CircleHelp />
         </Button>
-        <InboxPopover projectId={project.id} />
         <span className="relative">
           <Button
             size="icon"
@@ -1076,94 +1045,121 @@ export function WorkspaceHud({
           <>
             <h2
               id="todo-title"
-              className="flex items-center justify-between px-1 text-sm font-bold"
+              className="flex items-baseline justify-between px-1 text-sm font-bold"
             >
-              지금 할 일
-              <span className="text-xs text-muted-foreground">
-                {todos.length}
+              할 일
+              <span className="text-xs font-normal text-muted-foreground">
+                {rows.length}
               </span>
             </h2>
-            <ul className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-1">
-              {todos.map((todo) => (
-                <li
-                  key={todo.key}
-                  className={cn(
-                    'flex min-w-0 gap-2.5 rounded-xl p-2.5',
-                    todo.tone === 'review' && 'bg-primary/15',
-                  )}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-extrabold',
-                      todo.tone === 'review' &&
-                        'bg-primary text-primary-foreground',
-                      todo.tone === 'alert' && 'bg-red-100 text-red-700',
-                      todo.tone === 'done' && 'bg-green-100 text-green-700',
-                    )}
+            <ul className="mt-1 grid grid-cols-[minmax(0,1fr)]">
+              {rows.map((row) => {
+                const related = byRow.get(row.key) ?? []
+                return (
+                  <li
+                    key={row.key}
+                    className="border-b border-border/70 last:border-0"
                   >
-                    {todo.mark}
-                  </span>
-                  <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-1">
-                    <strong
-                      title={todo.title}
-                      className="truncate text-[13px] leading-[18px]"
+                    <button
+                      type="button"
+                      // 줄을 열면 그 줄에 접힌 알림도 함께 읽음 처리한다.
+                      onClick={() => {
+                        markRead(related.map((item) => item.id))
+                        row.open()
+                      }}
+                      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-2 py-2.5 text-left hover:bg-muted"
                     >
-                      {todo.title}
-                    </strong>
-                    <span
-                      title={todo.detail}
-                      className="truncate text-xs text-muted-foreground"
-                    >
-                      {todo.detail}
-                    </span>
-                    {todo.preview && (
-                      <div className="rounded-lg bg-card px-2 py-1.5 text-xs leading-[17px]">
-                        {todo.preview.before && (
-                          <span
-                            title={todo.preview.before}
-                            className="block truncate text-red-700"
-                          >
-                            − {todo.preview.before}
+                      <span className="col-start-1 text-xs font-semibold text-primary-ink">
+                        {row.kind}
+                        {related.length > 0 && (
+                          <span className="ml-1.5 font-normal text-muted-foreground">
+                            새 알림 {related.length}
                           </span>
                         )}
-                        {todo.preview.after && (
-                          <span
-                            title={todo.preview.after}
-                            className="block truncate text-green-700"
-                          >
-                            + {todo.preview.after}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {todo.note && (
-                      <span
-                        title={todo.note}
-                        className="truncate text-xs text-muted-foreground"
-                      >
-                        {todo.note}
                       </span>
-                    )}
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="justify-self-end"
-                      onClick={todo.open}
-                    >
-                      {todo.action}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-              {!todos.length && (
-                <li className="p-2 text-xs text-muted-foreground">
+                      <ChevronRight
+                        aria-hidden="true"
+                        className="col-start-2 row-span-3 row-start-1 size-4 text-muted-foreground"
+                      />
+                      <strong
+                        title={row.title}
+                        className="col-start-1 truncate text-sm"
+                      >
+                        {row.title}
+                      </strong>
+                      <span
+                        title={row.meta}
+                        className="col-start-1 truncate text-xs text-muted-foreground"
+                      >
+                        {row.meta}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+              {!rows.length && (
+                <li className="px-2 py-3 text-xs text-muted-foreground">
                   지금 처리할 일이 없어요.
                 </li>
               )}
             </ul>
           </>
         )}
+        {/* 할 일 줄에 접히지 않은 안 읽은 알림. 종 대신 여기와 알림함 창에서 본다(S15P31A108-444). */}
+        <div className="mt-1 grid gap-0.5 border-t pt-2">
+          {news.length > 0 && (
+            <>
+              <h3 className="px-2 text-xs font-semibold">
+                새 소식{' '}
+                <span className="font-normal text-muted-foreground">
+                  {news.length}
+                  {unread.data?.has_more ? '+' : ''}
+                </span>
+              </h3>
+              <ul className="grid grid-cols-[minmax(0,1fr)]">
+                {news.slice(0, 2).map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        markRead([item.id])
+                        openPane(
+                          targetPane[item.target_type],
+                          targetFocus(item),
+                        )
+                      }}
+                      className="flex w-full min-w-0 gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="mt-1.5 size-1.5 shrink-0 rounded-full bg-foreground/70"
+                      />
+                      <span className="grid min-w-0">
+                        <span className="truncate text-[13px]">
+                          {item.title}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {targetLabel[item.target_type]} ·{' '}
+                          {formatAgo(item.created_at)}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => openPane('inbox')}
+            className="flex items-center justify-between rounded-lg px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {news.length > 2
+              ? `알림함에서 ${news.length - 2}건 더 보기`
+              : '알림함 열기'}
+            <ChevronRight aria-hidden="true" className="size-3.5" />
+          </button>
+        </div>
       </section>
       <TourGuide accountId={me?.account_id} mode={tour} onChange={setTour} />
       {notice && (
