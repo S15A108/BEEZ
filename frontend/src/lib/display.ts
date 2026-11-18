@@ -157,7 +157,7 @@ export const countText = (
 // (사용자 요청 11-02). 탭 밑줄, 단축 바의 열린 칸, 비비 대화 테두리는 목록 선택이 아니라 따로 둔다.
 export const LIST_SELECTED = 'border-primary/30 bg-primary/5'
 
-// 목록·상세 업무 창(작업 현황·변경 제안·회의실·설계 관계)의 공통 배치(S15P31A108-455). 넓은 화면에서 왼쪽 목록은 256px로
+// 목록·상세 업무 창(공용 문서함·작업 현황·변경 제안·회의실·설계 관계)의 공통 배치(S15P31A108-455, 문서함은 -445). 넓은 화면에서 왼쪽 목록은 256px로
 // 창 왼쪽에 붙이고, 오른쪽 상세는 남은 자리 가운데에 1120px까지 넓힌다. 업무 창이 이 창들은 1200px 기둥 대신 화면 폭을 다 준다.
 export const SPLIT_COLUMNS = 'lg:grid-cols-[256px_minmax(0,1fr)]'
 export const SPLIT_DETAIL = 'lg:w-full lg:max-w-[1120px] lg:justify-self-center'

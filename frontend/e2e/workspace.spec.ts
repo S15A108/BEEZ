@@ -102,11 +102,12 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await expect(
     dialog.getByRole('heading', { name: '공용 문서함', exact: true }).first(),
   ).toBeVisible()
+  // S15P31A108-445: 목록은 왼쪽에 남고, 그냥 열면 첫 문서가 오른쪽에 펼쳐진다.
   await expect(
-    dialog.getByRole('heading', { name: '현재 문서', exact: true }),
+    dialog.getByRole('list', { name: /^현재 문서 \d+개$/ }),
   ).toBeVisible()
   await expect(
-    dialog.getByText('팀장이 승인해 지금 기준으로 쓰는 문서예요.'),
+    dialog.getByRole('button', { name: '수정 제안하기' }),
   ).toBeVisible()
   await dialog.getByLabel('검색어').fill('로그인')
   await dialog.getByRole('button', { name: '검색', exact: true }).click()

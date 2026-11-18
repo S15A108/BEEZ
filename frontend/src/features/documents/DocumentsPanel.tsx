@@ -1,17 +1,15 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
   ChevronLeft,
-  Code,
-  Database,
   Download,
+  Ellipsis,
   FileText,
-  ListChecks,
   Lock,
+  Plus,
   Search,
   Sparkles,
   Upload,
@@ -24,13 +22,27 @@ import { AsyncState } from '@/components/AsyncState'
 import { MarkdownView } from '@/components/MarkdownView'
 import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
+import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { Toast } from '@/components/Toast'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useRemembered, useWorkspaceStore } from '@/stores/workspaceStore'
-import { statusLabel } from '@/lib/display'
+import {
+  LIST_ROW,
+  LIST_SELECTED,
+  SPLIT_COLUMNS,
+  SPLIT_DETAIL,
+  statusLabel,
+} from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { parseCitationFocus, type CitationTarget } from '@/lib/citationTarget'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
@@ -45,12 +57,6 @@ import { VerifiedCitation } from './VerifiedCitation'
 // 시작 전에는 필수 문서 4종 칸과 기획 분석을 여는 '설계 초안 만들기'(4종 승인 전에는 잠김), 시작 뒤에는 현재 문서만 두고 문서 수정은 변경 제안으로 보낸다.
 const KINDS = ['PLAN', 'REQUIREMENTS', 'ERD', 'API_SPEC'] as const
 type Kind = (typeof KINDS)[number]
-const kindIcon = {
-  PLAN: [FileText, 'bg-amber-100 text-amber-800'],
-  REQUIREMENTS: [ListChecks, 'bg-blue-100 text-blue-800'],
-  ERD: [Database, 'bg-teal-100 text-teal-800'],
-  API_SPEC: [Code, 'bg-violet-100 text-violet-800'],
-} as const
 const day = (value: string) =>
   new Intl.DateTimeFormat('ko-KR', {
     dateStyle: 'medium',
@@ -63,62 +69,16 @@ const stamp = (value: string) =>
     timeZone: 'Asia/Seoul',
   }).format(new Date(value))
 
-// 시작 준비 카드: 마지막 비비 검토가 실패한 문서의 다음 할 일. 실패를 '비비가 검토하고 있어요'로 보여
-// 끝없이 기다리게 했다(S15P31A108-383). 다시 검토는 올린 사람만, 등록 취소는 올린 사람과 팀장이 한다(DOC-A25).
-function failedReviewHint(rejected: boolean, owner: boolean, leader: boolean) {
-  const what = rejected
-    ? '반려 뒤 비비 검토를 마치지 못했어요.'
-    : '비비 검토를 마치지 못했어요.'
-  if (owner) return `${what} 열어서 다시 검토해 주세요`
-  if (leader)
-    return `${what} 올린 사람이 다시 검토하거나, 열어서 등록을 취소할 수 있어요`
-  return `${what} 올린 사람이 다시 검토해요`
-}
-
-function KindTile({ kind }: { kind: string }) {
-  const [Icon, color] = kindIcon[kind as Kind] ?? kindIcon.PLAN
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'grid size-9 shrink-0 place-items-center rounded-lg',
-        color,
-      )}
-    >
-      <Icon className="size-4" />
-    </span>
-  )
-}
-
-function Chip({ tone, children }: { tone: string; children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-xs font-semibold whitespace-nowrap',
-        {
-          muted: 'bg-muted text-muted-foreground',
-          blue: 'bg-blue-100 text-blue-800',
-          amber: 'bg-amber-100 text-amber-800',
-          orange: 'bg-orange-100 text-orange-800',
-          red: 'bg-red-100 text-red-800',
-          green: 'bg-green-100 text-green-800',
-        }[tone],
-      )}
-    >
-      {children}
-    </span>
-  )
-}
-
-// 버전 이력의 상태 칩 색. 승인 = 현재 기준 후보, 초안 = 아직 쓸 수 있는 후보, 이전 버전 = 대체된 승인본,
+// 버전 이력의 상태 이름 모양. 승인 = 현재 기준 후보, 초안 = 아직 쓸 수 있는 후보는 테두리로, 이전 버전 = 대체된 승인본과
 // 미채택(REJECTED) = 채택되지 않았고 다시 쓸 수 없는 것(제안을 거뒀거나, 다시 제출했거나, 다른 제안이 먼저 발행됨,
-// 문서함 반려). 잘못이 아니라 결과라 이전 버전과 같은 회색 계열로 낮춘다.
-const versionTone: Record<DocumentVersion['status'], string> = {
-  APPROVED: 'green',
-  DRAFT: 'orange',
-  SUPERSEDED: 'muted',
-  REJECTED: 'muted',
-}
+// 문서함 반려)은 잘못이 아니라 결과라 회색 바탕으로 낮춘다. 노란색은 주 행동과 선택에만 쓴다(D49).
+const versionTone: Record<DocumentVersion['status'], 'outline' | 'secondary'> =
+  {
+    APPROVED: 'outline',
+    DRAFT: 'outline',
+    SUPERSEDED: 'secondary',
+    REJECTED: 'secondary',
+  }
 // 버전 상태 이름은 이력과 버전 드롭다운이 같게 보인다. 채택되지 않은 버전은 '반려'가 아니라 '미채택'이다.
 const versionStatusLabel = (status: DocumentVersion['status']) =>
   status === 'REJECTED' ? '미채택' : statusLabel(status)
@@ -167,7 +127,6 @@ export function DocumentsPanel({
   isLeader: boolean
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
-  const session = useSession()
   // 알림·근거·가이드에서 들어오면 그 문서(또는 'upload:종류' 등록 화면)를 바로 연다.
   // 그냥 열면 이 프로젝트에서 마지막으로 보던 화면(연 문서 등)을 다시 연다(S15P31A108-431).
   const [view, setView] = useRemembered<View>(
@@ -254,33 +213,112 @@ export function DocumentsPanel({
     </Toast>
   )
 
-  const back = (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="shrink-0 justify-self-start"
-      onClick={() => setView({ name: 'list' })}
-    >
-      <ChevronLeft />
-      {started ? '현재 문서' : '공용 문서함'}
-    </Button>
+  // 목록·상세 2단(S15P31A108-445): 왼쪽 목록은 늘 보이고, 고른 문서의 상세·검토·등록을 오른쪽에 연다.
+  // 시작 뒤 목록은 승인본이 있는 문서 전부(같은 종류가 여럿일 수 있다), 시작 전 목록은 필수 문서 4종 칸이다.
+  type Slot = (typeof slots)[number]
+  const readable = (slot: Slot) =>
+    started ? !!slot.document?.approved_version : slot.approved
+  const open = (slot: Slot): View =>
+    !slot.document
+      ? { name: 'upload', kind: slot.kind }
+      : readable(slot)
+        ? { name: 'detail', id: slot.document.id }
+        : { name: 'review', id: slot.document.id }
+  const rows: Slot[] = started
+    ? current.map((document) => ({
+        kind: document.kind,
+        document,
+        copy: undefined,
+        approved: true,
+      }))
+    : slots
+  // 그냥 열면 올라온 첫 문서를 오른쪽에 펼친다. 문서를 하나씩 열고 돌아오지 않아도 차례로 읽는다.
+  const first = rows.find((slot) => slot.document)
+  const shown: View = view.name === 'list' && first ? open(first) : view
+  const selectedId = 'id' in shown ? shown.id : undefined
+  const selected = (slot: Slot) =>
+    slot.document
+      ? slot.document.id === selectedId
+      : shown.name === 'upload' && shown.kind === slot.kind
+  // 행에는 이름과 버전·날짜만 둔다. 승인 전 문서는 그 자리에 지금 단계를 쓴다.
+  const rowStatus = (slot: Slot): [text: string, tone?: 'todo' | 'failed'] => {
+    const { document, copy } = slot
+    if (!document) return ['올리기']
+    if (readable(slot)) {
+      const { version_no, created_at } = document.approved_version!
+      return [`${started ? '' : '승인 '}v${version_no} · ${day(created_at)}`]
+    }
+    const stage = copy ? reviewStage(copy) : undefined
+    if (!stage) return ['비비 검토 중']
+    if (stage.failed || stage.label === '반려됨') return [stage.label, 'failed']
+    return [stage.label, stage.stale || stage.step > 1 ? 'todo' : undefined]
+  }
+  // 걸린 변경 제안은 그 제안이 만든 미승인 초안(latest_draft)으로 안다. 있을 때만 한 줄 더한다.
+  const proposing = (slot: Slot) =>
+    started &&
+    slot.document?.latest_draft?.status === 'DRAFT' &&
+    !!slot.document.latest_draft.change_proposal_id
+  const kindRows = (
+    <ul aria-labelledby="documents-list-title" className="grid gap-1.5">
+      {rows.map((slot) => {
+        const [status, tone] = rowStatus(slot)
+        const name = slot.document?.title ?? statusLabel(slot.kind)
+        return (
+          <li key={slot.document?.id ?? slot.kind}>
+            <button
+              type="button"
+              aria-current={selected(slot)}
+              onClick={() => setView(open(slot))}
+              className={cn(
+                'grid gap-[3px]',
+                LIST_ROW,
+                selected(slot) ? LIST_SELECTED : 'hover:bg-muted/40',
+              )}
+            >
+              <strong className="truncate text-sm leading-5 font-semibold">
+                {name}
+              </strong>{' '}
+              {/* 줄 사이 공백은 화면 읽기 프로그램이 읽는 이름('기획안 올리기')을 띄어 쓰게 한다. */}
+              <span
+                className={cn(
+                  'flex items-center gap-1 text-caption',
+                  tone === 'failed'
+                    ? 'text-destructive'
+                    : tone === 'todo'
+                      ? 'font-medium text-foreground'
+                      : 'text-muted-foreground',
+                )}
+              >
+                {!slot.document && (
+                  <Plus aria-hidden="true" className="size-3.5" />
+                )}
+                {/* 제목을 종류 이름과 다르게 지었을 때만 종류를 앞에 붙인다. */}
+                {slot.document && name !== statusLabel(slot.kind)
+                  ? `${statusLabel(slot.kind)} · `
+                  : ''}
+                {status}
+              </span>{' '}
+              {proposing(slot) && (
+                <span className="text-caption font-medium text-foreground">
+                  변경 제안 진행 중
+                </span>
+              )}
+            </button>
+          </li>
+        )
+      })}
+    </ul>
   )
 
-  if (view.name === 'invalidCitation')
-    return (
-      <div className="grid gap-4">
-        {back}
-        <p role="alert">인용 위치가 올바르지 않아 문서를 열지 않았어요.</p>
-      </div>
-    )
-
-  if (view.name === 'reupload')
-    return (
+  const right =
+    shown.name === 'invalidCitation' ? (
+      <p role="alert">인용 위치가 올바르지 않아 문서를 열지 않았어요.</p>
+    ) : shown.name === 'reupload' ? (
       <UploadDocument
         projectId={projectId}
-        kind={view.kind}
-        replace={view}
-        onCancel={() => setView({ name: 'review', id: view.id })}
+        kind={shown.kind}
+        replace={shown}
+        onCancel={() => setView({ name: 'review', id: shown.id })}
         onDone={(id, title) => {
           // 파일을 바꿔 올리면 리비전이 올라 비비 검토가 처음부터 다시 시작한다.
           setView({ name: 'review', id })
@@ -290,12 +328,11 @@ export function DocumentsPanel({
           })
         }}
       />
-    )
-  if (view.name === 'upload')
-    return (
+    ) : shown.name === 'upload' ? (
       <UploadDocument
+        key={shown.kind}
         projectId={projectId}
-        kind={view.kind}
+        kind={shown.kind}
         onCancel={() => setView({ name: 'list' })}
         onDone={(id, title) => {
           openPane('documents', id)
@@ -307,316 +344,159 @@ export function DocumentsPanel({
           })
         }}
       />
-    )
-  if (view.name === 'review') {
-    const document = docs.find((item) => item.id === view.id)
-    return (
-      <div className="grid gap-4">
-        {toast}
-        {back}
-        <DocumentReview
-          key={view.id}
-          projectId={projectId}
-          documentId={view.id}
-          title={document?.title ?? ''}
-          kind={document?.kind ?? 'PLAN'}
-          isLeader={isLeader}
-          locked={started}
-          onClose={() => setView({ name: 'list' })}
-          // 승인하면 검토 화면에 머물지 않고 목록으로 돌아가 같은 알림을 띄운다(실패하면 검토 화면에 남는다).
-          onApproved={(message) => {
-            setView({ name: 'list' })
-            setNotice({ text: message })
-          }}
-          // 등록을 취소하면 목록으로 돌아가 알린다. 같은 종류를 새로 올릴 수 있다(DOC-A25).
-          onDiscarded={(message) => {
-            setView({ name: 'list' })
-            setNotice({ text: message })
-          }}
-          // 검토가 실패하면 처음 등록 화면으로 돌아가 파일을 다시 올린다(S15P31A108-382).
-          onReupload={(current) =>
-            setView({
-              name: 'reupload',
-              id: view.id,
-              kind: (document?.kind ?? 'PLAN') as Kind,
-              title: document?.title ?? '',
-              domain: document?.domain,
-              ...current,
-            })
-          }
-        />
-      </div>
-    )
-  }
-  if (view.name === 'baseline')
-    return (
-      <div className="grid gap-4">
-        {back}
-        <BaselineDocuments
-          projectId={projectId}
-          versionNo={view.versionNo}
-          titleOf={(id) => docs.find((item) => item.id === id)?.title ?? '문서'}
-          onOpen={(id, versionId) => setView({ name: 'detail', id, versionId })}
-        />
-      </div>
-    )
-  if (view.name === 'detail')
-    return (
-      <DocumentDetail
-        key={view.id}
-        back={back}
+    ) : shown.name === 'review' ? (
+      <DocumentReview
+        key={shown.id}
         projectId={projectId}
-        documentId={view.id}
-        versionId={view.versionId}
-        citation={view.citation}
-        started={started}
-        onEdit={() => openPane('changes', `doc:${view.id}`)}
+        documentId={shown.id}
+        title={docs.find((item) => item.id === shown.id)?.title ?? ''}
+        kind={docs.find((item) => item.id === shown.id)?.kind ?? 'PLAN'}
+        isLeader={isLeader}
+        locked={started}
+        onClose={() => setView({ name: 'list' })}
+        // 승인하면 검토 화면에 머물지 않고 목록으로 돌아가 같은 알림을 띄운다(실패하면 검토 화면에 남는다).
+        onApproved={(message) => {
+          setView({ name: 'list' })
+          setNotice({ text: message })
+        }}
+        // 등록을 취소하면 목록으로 돌아가 알린다. 같은 종류를 새로 올릴 수 있다(DOC-A25).
+        onDiscarded={(message) => {
+          setView({ name: 'list' })
+          setNotice({ text: message })
+        }}
+        // 검토가 실패하면 처음 등록 화면으로 돌아가 파일을 다시 올린다(S15P31A108-382).
+        onReupload={(current) => {
+          const document = docs.find((item) => item.id === shown.id)
+          setView({
+            name: 'reupload',
+            id: shown.id,
+            kind: (document?.kind ?? 'PLAN') as Kind,
+            title: document?.title ?? '',
+            domain: document?.domain,
+            ...current,
+          })
+        }}
       />
+    ) : shown.name === 'baseline' ? (
+      <BaselineDocuments
+        projectId={projectId}
+        versionNo={shown.versionNo}
+        titleOf={(id) => docs.find((item) => item.id === id)?.title ?? '문서'}
+        onOpen={(id, versionId) => setView({ name: 'detail', id, versionId })}
+      />
+    ) : shown.name === 'detail' ? (
+      <DocumentDetail
+        key={`${shown.id}:${shown.versionId ?? ''}`}
+        projectId={projectId}
+        documentId={shown.id}
+        versionId={shown.versionId}
+        citation={shown.citation}
+        started={started}
+        onEdit={() => openPane('changes', `doc:${shown.id}`)}
+      />
+    ) : (
+      <EmptyState>
+        {started
+          ? '아직 승인된 문서가 없어요.'
+          : '필수 문서 4종을 올리면 비비가 검토하고 팀장이 승인해요. 왼쪽에서 올릴 문서를 골라 주세요.'}
+      </EmptyState>
     )
 
   return (
-    <div className="grid gap-4">
-      {/* 머리 줄(상태 칩·설명·'변경 제안 쓰기')은 두지 않는다. 시작 전에는 필수 문서 빈 칸으로 등록하고,
-          시작 뒤에는 문서를 열어 '수정 제안하기'로 간다(PNL-02-v2 10-29). 검색칸은 사용자 결정으로 둔다. */}
-      <SearchBar value={query} onSearch={setQuery} />
-      {started && isLeader && !query && (
-        <Button
-          className="justify-self-start"
-          variant="outline"
-          onClick={() => openPane('planning')}
-        >
-          <Sparkles />
-          작업 분해·배정
-        </Button>
+    <section
+      aria-label="공용 문서"
+      className="space-y-4 lg:flex lg:h-0 lg:min-h-full lg:flex-col"
+    >
+      {started && isLeader && (
+        <PaneHeaderAction>
+          <Button variant="outline" onClick={() => openPane('planning')}>
+            <Sparkles />
+            작업 분해·배정
+          </Button>
+        </PaneHeaderAction>
       )}
-      {query ? (
-        <SearchResults
-          projectId={projectId}
-          query={query}
-          onClear={() => setQuery('')}
-          onOpen={(id) => setView({ name: 'detail', id })}
-        />
-      ) : (
-        <>
-          {started ? null : (
-            <section
-              aria-labelledby="start-title"
-              className="grid gap-3.5 rounded-2xl border bg-card p-5 shadow-xs"
-            >
-              <div className="grid gap-2">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <h3 id="start-title" className="font-semibold">
-                    프로젝트 시작 준비 · 필수 문서 4종
-                  </h3>
-                  <span className="text-sm font-semibold text-green-800">
-                    팀장 승인 {approvedCount} / 4
+      <div
+        className={cn(
+          'grid gap-5 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)] lg:items-start',
+          SPLIT_COLUMNS,
+        )}
+      >
+        {/* 검색칸은 사용자 결정으로 둔다. 검색하면 목록 자리에 결과가 나오고, 결과를 눌러도 결과는 남는다. */}
+        <div className="grid content-start gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto">
+          <SearchBar value={query} onSearch={setQuery} />
+          {query ? (
+            <SearchResults
+              projectId={projectId}
+              query={query}
+              onClear={() => setQuery('')}
+              onOpen={(id) => setView({ name: 'detail', id })}
+            />
+          ) : (
+            <>
+              <h3
+                id="documents-list-title"
+                className="flex items-baseline gap-1.5 text-sm font-semibold"
+              >
+                {started ? '현재 문서' : '필수 문서 4종'}
+                {started && ' '}
+                {started && (
+                  <span className="text-caption font-normal text-muted-foreground">
+                    {rows.length}개
                   </span>
-                </div>
-              </div>
-              <ul className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-                {slots.map(({ kind, document, copy, approved }) => {
-                  const stage = copy && !approved ? reviewStage(copy) : null
-                  const status = !document
-                    ? (['muted', '아직 없음'] as const)
-                    : approved
-                      ? ([
-                          'green',
-                          `승인 v${document.approved_version!.version_no}`,
-                        ] as const)
-                      : stage?.stale
-                        ? (['amber', stage.label] as const)
-                        : stage?.failed
-                          ? (['red', stage.label] as const)
-                          : stage?.label === '팀장 승인 대기'
-                            ? (['orange', stage.label] as const)
-                            : stage?.label === '반려됨'
-                              ? (['red', stage.label] as const)
-                              : stage?.step === 2
-                                ? (['amber', stage.label] as const)
-                                : ([
-                                    'blue',
-                                    stage?.label ?? '비비 검토 중',
-                                  ] as const)
-                  const next = approved
-                    ? '현재 문서로 들어갔어요'
-                    : stage?.stale
-                      ? '참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'
-                      : stage?.failed && copy
-                        ? failedReviewHint(
-                            copy.status === 'REJECTED',
-                            copy.owner_account_id === session.data?.id,
-                            isLeader,
-                          )
-                        : stage?.label === '팀장 승인 대기'
-                          ? isLeader
-                            ? '승인 검토하기'
-                            : '팀장 승인을 기다리고 있어요'
-                          : stage?.label === '반려됨'
-                            ? '반려 사유를 보고 다시 검토를 받아요'
-                            : stage?.step === 2
-                              ? '비비 제안을 확인하고 반영해 주세요'
-                              : stage?.step === 3
-                                ? '최종본을 확인하고 검토를 요청해요'
-                                : '비비가 검토하고 있어요'
-                  return (
-                    <li
-                      key={kind}
-                      className={cn(
-                        'relative grid gap-3 rounded-xl p-3.5',
-                        document
-                          ? 'border'
-                          : 'border-[1.5px] border-dashed bg-muted/30 hover:bg-muted/60',
+                )}
+              </h3>
+              <AsyncState query={documents}>{() => kindRows}</AsyncState>
+              {!started && (
+                <div className="grid gap-2 border-t pt-3">
+                  <p className="text-sub text-muted-foreground">
+                    팀장 승인 {approvedCount} / 4
+                  </p>
+                  {approvedCount === 4 ? (
+                    <>
+                      <strong className="text-sm">
+                        {isLeader
+                          ? '문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요'
+                          : '문서 승인을 마쳤어요. 팀장이 설계 초안을 만들면 시작돼요'}
+                      </strong>
+                      <p className="text-sub text-muted-foreground">
+                        {isLeader
+                          ? "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 설계 기준 v1이 생기고 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요."
+                          : '팀장이 프로젝트를 시작하면 알려 드려요.'}
+                      </p>
+                      {/* 기준 v1 발행(PLN-A10)은 기획 분석의 '프로젝트 시작' 한 곳에서 한다. '설계 초안 만들기'는 그 창을 연다. */}
+                      {isLeader && (
+                        <Button onClick={() => openPane('planning')}>
+                          <Sparkles />
+                          설계 초안 만들기
+                        </Button>
                       )}
-                    >
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <KindTile kind={kind} />
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold">
-                            {statusLabel(kind)}
-                          </p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {document
-                              ? `${document.title} · 담당 ${document.domain || '공통'}`
-                              : '아직 올리지 않았어요'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <Chip tone={status[0]}>{status[1]}</Chip>
-                        {document ? (
-                          <button
-                            type="button"
-                            className="text-right text-xs text-muted-foreground hover:underline"
-                            onClick={() =>
-                              setView(
-                                approved
-                                  ? { name: 'detail', id: document.id }
-                                  : { name: 'review', id: document.id },
-                              )
-                            }
-                          >
-                            {next}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            aria-label={`${statusLabel(kind)} 올리기`}
-                            className="text-sm font-semibold text-amber-800 after:absolute after:inset-0 after:content-[''] hover:underline"
-                            onClick={() => setView({ name: 'upload', kind })}
-                          >
-                            올리기 ›
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-              {approvedCount === 4 ? (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/50 bg-primary/10 p-4">
-                  <div className="grid min-w-0 flex-1 gap-1">
-                    <strong>
-                      {isLeader
-                        ? '문서 승인을 마쳤어요. 설계 초안을 만들면 시작할 수 있어요'
-                        : '문서 승인을 마쳤어요. 팀장이 설계 초안을 만들면 시작돼요'}
-                    </strong>
-                    <span className="text-sm text-muted-foreground">
-                      {isLeader
-                        ? "기획 분석에서 설계 항목을 검토하고 '프로젝트 시작'을 누르면 설계 기준 v1이 생기고 시작돼요. 그 뒤 문서 수정은 변경 제안으로 해요."
-                        : '팀장이 프로젝트를 시작하면 알려 드려요.'}
-                    </span>
-                  </div>
-                  {/* 기준 v1 발행(PLN-A10)은 기획 분석의 '프로젝트 시작' 한 곳에서 한다.
-                      '설계 초안 만들기'는 그 창을 연다. 남은 후보 안내도 기획 분석의 '프로젝트 시작' 위에 보인다. */}
-                  {isLeader && (
-                    <Button onClick={() => openPane('planning')}>
-                      <Sparkles />
-                      설계 초안 만들기
-                    </Button>
+                    </>
+                  ) : (
+                    // 팀원은 설계 초안을 만들 수 없어 끝까지 풀리지 않는 버튼이라 팀장에게만 보인다.
+                    isLeader && (
+                      <Button variant="secondary" disabled>
+                        <Lock />
+                        설계 초안 만들기
+                      </Button>
+                    )
                   )}
                 </div>
-              ) : (
-                // 팀원은 설계 초안을 만들 수 없어 끝까지 풀리지 않는 버튼이라 팀장에게만 보인다.
-                isLeader && (
-                  <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3.5">
-                    <Button variant="secondary" disabled>
-                      <Lock />
-                      설계 초안 만들기
-                    </Button>
-                  </div>
-                )
               )}
-            </section>
+            </>
           )}
-          <section
-            aria-labelledby="current-title"
-            className="overflow-hidden rounded-2xl border bg-card shadow-xs"
-          >
-            <div className="flex flex-wrap items-baseline gap-x-2 px-5 pt-4 pb-2.5">
-              <h3 id="current-title" className="font-semibold">
-                현재 문서
-              </h3>
-              <span className="text-sm text-muted-foreground">
-                {current.length}개
-              </span>
-              {current.length > 0 && (
-                <p className="w-full text-sm text-muted-foreground">
-                  팀장이 승인해 지금 기준으로 쓰는 문서예요.
-                </p>
-              )}
-            </div>
-            <AsyncState query={documents}>
-              {() =>
-                current.length ? (
-                  <ul>
-                    {current.map((document) => (
-                      <li key={document.id} className="border-t">
-                        <button
-                          type="button"
-                          className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 text-left hover:bg-muted/40"
-                          onClick={() =>
-                            setView({ name: 'detail', id: document.id })
-                          }
-                        >
-                          <span className="flex min-w-0 flex-[999_1_240px] items-center gap-3">
-                            <KindTile kind={document.kind} />
-                            <span className="min-w-0">
-                              <span className="block font-medium">
-                                {document.title} v
-                                {document.approved_version!.version_no}
-                              </span>
-                              <span className="block truncate text-xs text-muted-foreground">
-                                담당 {document.domain || '공통'}
-                              </span>
-                            </span>
-                          </span>
-                          <span className="w-28 text-sm text-muted-foreground">
-                            {statusLabel(document.kind)}
-                          </span>
-                          <Chip tone="green">승인 완료</Chip>
-                          <span className="w-24 text-xs text-muted-foreground">
-                            {day(document.approved_version!.created_at)}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="grid justify-items-center gap-1.5 border-t px-5 py-8 text-center">
-                    <strong>아직 승인된 문서가 없어요</strong>
-                    <span className="text-sm text-muted-foreground">
-                      위의 필수 문서 4종부터 올려 주세요. 승인되면 여기에
-                      들어와요.
-                    </span>
-                  </div>
-                )
-              }
-            </AsyncState>
-          </section>
-        </>
-      )}
+        </div>
+        {/* 상세가 길면 이 칸만 스크롤한다. 문서 머리 줄은 이 칸 위에 붙는다. */}
+        <div
+          className={cn(
+            'min-w-0 rounded-xl bg-card p-5 ring-1 ring-foreground/10 lg:max-h-full lg:overflow-y-auto',
+            SPLIT_DETAIL,
+          )}
+        >
+          {right}
+        </div>
+      </div>
       {toast}
-    </div>
+    </section>
   )
 }
 
@@ -646,7 +526,7 @@ function SearchBar({
       <div className="flex gap-2">
         <Input
           aria-label="검색어"
-          placeholder="문서 이름이나 내용으로 검색"
+          placeholder="이름·내용으로 검색"
           aria-invalid={!!errors.q}
           {...register('q')}
         />
@@ -699,8 +579,8 @@ function SearchResults({
   ] as const
   return (
     <section aria-labelledby="search-title" className="grid gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <h3 id="search-title" className="font-semibold">
+      <div className="flex flex-wrap items-center justify-between gap-x-2">
+        <h3 id="search-title" className="text-sm font-semibold">
           ‘{query}’ 검색 결과 {words.length + similar.length}건
           {keyword.hasNextPage || semantic.hasNextPage ? ' 이상' : ''}
         </h3>
@@ -716,25 +596,31 @@ function SearchResults({
                 ([title, hits, pages]) =>
                   (hits.length > 0 || pages.hasNextPage) && (
                     <div key={title} className="grid gap-2">
-                      <h4 className="text-sm font-medium text-muted-foreground">
+                      <h4 className="text-sub font-medium text-muted-foreground">
                         {title}
                       </h4>
-                      <ul className="grid gap-2">
+                      <ul className="grid gap-1.5">
                         {hits.map((hit) => (
                           <li key={`${hit.type}:${hit.id}`}>
                             <button
                               type="button"
                               disabled={!hit.source}
-                              className="grid w-full gap-1 rounded-xl border p-3 text-left text-sm hover:bg-muted/40"
+                              className={cn(
+                                'grid gap-1 text-sm',
+                                LIST_ROW,
+                                'hover:bg-muted/40',
+                              )}
                               onClick={() =>
                                 hit.source && onOpen(hit.source.document_id)
                               }
                             >
-                              <strong>{hit.title}</strong>
-                              <span className="leading-6 whitespace-pre-wrap">
+                              <strong className="font-semibold">
+                                {hit.title}
+                              </strong>
+                              <span className="line-clamp-3 text-sub whitespace-pre-wrap">
                                 {hit.snippet}
                               </span>
-                              <small className="text-muted-foreground">
+                              <small className="text-caption text-muted-foreground">
                                 {hit.source
                                   ? `v${hit.source.version_no} · ${hit.source.location}`
                                   : '문서 출처 없이 승인된 설계 항목'}
@@ -758,7 +644,7 @@ function SearchResults({
                     </div>
                   ),
               )}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 단어가 들어간 문서를 먼저, 뜻이 비슷한 문서를 그 아래에 함께
                 보여 줘요.
               </p>
@@ -962,10 +848,7 @@ function UploadDocument({
         <div className="grid gap-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-muted/50 px-4 py-3 text-sm">
             <span className="text-muted-foreground">문서 유형</span>
-            <span className="flex items-center gap-2 font-semibold">
-              <KindTile kind={kind} />
-              {label}
-            </span>
+            <span className="font-semibold">{label}</span>
             <span className="basis-full text-xs text-muted-foreground">
               공용 문서함에서 누른 칸의 종류라 바꿀 수 없어요
             </span>
@@ -1195,7 +1078,6 @@ function BaselineDocuments({
 // 문서 상세 (F-20) · 보기 전용. 탭 두 개: 문서 내용 · 버전 이력. 버전 비교는 팀장 승인 화면의 '변경 내용'에서 본다.
 // versionId를 주면(기준 vN 문서나 근거에서 열면) 그 버전부터 보인다.
 function DocumentDetail({
-  back,
   projectId,
   documentId,
   versionId,
@@ -1203,8 +1085,6 @@ function DocumentDetail({
   started,
   onEdit,
 }: {
-  /** 문서 목록으로 돌아가는 버튼. 창 머리 줄 맨 앞에 둔다. */
-  back: ReactNode
   projectId: string
   documentId: string
   versionId?: string
@@ -1284,68 +1164,75 @@ function DocumentDetail({
         ? 'border-primary font-semibold'
         : 'border-transparent text-muted-foreground hover:text-foreground',
     )
-  // 문서 머리(돌아가기·제목·버튼 줄과 탭·버전 줄)는 본문 위에 붙여 두고 본문은 창의 스크롤 하나로 읽는다(디자인 검수 F04).
-  // 창 본문의 안쪽 여백만큼(-top-5 sm:-top-8) 올려 붙여, 문서를 내려도 창 머리 바로 아래에 제목과 돌아가기가 남는다.
+  // 문서 머리(제목·버튼 줄과 탭·버전 줄)는 본문 위에 붙여 두고 본문은 상세 칸의 스크롤 하나로 읽는다(디자인 검수 F04).
+  // 상세 칸의 안쪽 여백(p-5)만큼 올려 붙여, 문서를 내려도 칸 맨 위에 제목이 남는다.
+  // 원본 다운로드·분류 수정은 자주 쓰지 않아 ⋯ 메뉴에 둔다(S15P31A108-445).
   const shown = unresolved ? undefined : document.data
   const header = (
-    <div className="sticky -top-5 z-10 -mt-5 grid gap-2 border-b bg-background pt-5 sm:-top-8 sm:-mt-8 sm:pt-8">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {back}
-        {shown && (
-          <>
-            <span aria-hidden="true" className="h-6 w-px shrink-0 bg-border" />
-            <KindTile kind={shown.document.kind} />
-            <div
-              className="min-w-0 flex-[1_1_12rem]"
-              title={`${shown.document.title} v${shown.version.version_no}`}
-            >
-              <h3 className="truncate text-base leading-6 font-semibold">
-                {shown.document.title} v{shown.version.version_no}
-              </h3>
-              <p className="truncate text-xs leading-4 text-muted-foreground">
-                담당 {shown.document.domain || '공통'} ·{' '}
-                {shown.document.approved_version
-                  ? `현재 기준 v${shown.document.approved_version.version_no}`
-                  : '승인 전'}{' '}
-                · {stamp(shown.version.created_at)}
-              </p>
-            </div>
-            <div className="ml-auto flex shrink-0 gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={action.busy}
-                onClick={() =>
-                  void download(shown.version).catch(() => undefined)
-                }
-              >
-                <Download />
-                원본 다운로드
+    <div className="sticky -top-5 z-10 -mx-5 -mt-5 grid gap-2 border-b bg-card px-5 pt-5">
+      {shown && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div
+            className="min-w-0 flex-[1_1_12rem]"
+            title={`${shown.document.title} v${shown.version.version_no}`}
+          >
+            <h3 className="truncate text-base leading-6 font-semibold">
+              {shown.document.title} v{shown.version.version_no}
+            </h3>
+            <p className="truncate text-caption text-muted-foreground">
+              {shown.document.title !== statusLabel(shown.document.kind) &&
+                `${statusLabel(shown.document.kind)} · `}
+              담당 {shown.document.domain || '공통'} ·{' '}
+              {shown.document.approved_version
+                ? `현재 기준 v${shown.document.approved_version.version_no}`
+                : '승인 전'}{' '}
+              · {stamp(shown.version.created_at)}
+            </p>
+          </div>
+          <div className="ml-auto flex shrink-0 gap-2">
+            {started && (
+              <Button size="sm" onClick={onEdit}>
+                수정 제안하기
               </Button>
-              {author && (
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
-                  size="sm"
-                  disabled={locked}
-                  title={
-                    locked
-                      ? '팀장 검토를 요청한 뒤에는 고칠 수 없어요.'
-                      : undefined
-                  }
-                  onClick={() => setClassification(true)}
+                  size="icon-sm"
+                  aria-label="문서 메뉴"
+                  disabled={action.busy}
                 >
-                  분류 수정
+                  <Ellipsis />
                 </Button>
-              )}
-              {started && (
-                <Button size="sm" onClick={onEdit}>
-                  수정 제안하기
-                </Button>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onSelect={() =>
+                    void download(shown.version).catch(() => undefined)
+                  }
+                >
+                  <Download />
+                  원본 다운로드
+                </DropdownMenuItem>
+                {author && (
+                  <DropdownMenuItem
+                    disabled={locked}
+                    onSelect={() => setClassification(true)}
+                  >
+                    분류 수정
+                    {locked && (
+                      <span className="text-caption text-muted-foreground">
+                        검토 요청 중에는 못 고쳐요
+                      </span>
+                    )}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      )}
       {shown && (
         <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
           <div role="tablist" aria-label="문서 보기" className="flex gap-5">
@@ -1394,11 +1281,11 @@ function DocumentDetail({
       )}
     </div>
   )
-  // 문서 읽기는 넓은 창에서도 읽기 좋은 폭(920px)으로 두고, 왼쪽을 창 머리 제목과 같은 선에 맞춘다.
+  // 문서 본문은 한 줄 40자 안팎(640px, MarkdownView)으로 읽고, 머리 줄은 상세 칸 폭을 다 쓴다.
   if (unresolved)
     // 이력을 읽는 중이면 불러오는 중, 실패하면 오류와 다시 불러오기를 AsyncState가 보인다.
     return (
-      <div className="grid w-full max-w-[920px] min-w-0 gap-4">
+      <div className="grid min-w-0 gap-4">
         {header}
         {versions.isSuccess ? (
           <p
@@ -1406,8 +1293,7 @@ function DocumentDetail({
             className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm"
           >
             열려던 버전을 버전 이력에서 찾을 수 없어요. 지워졌거나 볼 수 없는
-            버전이에요. 위의 &lsquo;현재 문서&rsquo;로 돌아가 문서를 다시 열어
-            주세요.
+            버전이에요. 왼쪽 목록에서 문서를 다시 열어 주세요.
           </p>
         ) : (
           <AsyncState query={versions}>{() => null}</AsyncState>
@@ -1415,7 +1301,7 @@ function DocumentDetail({
       </div>
     )
   return (
-    <div className="grid w-full max-w-[920px] min-w-0 gap-4">
+    <div className="grid min-w-0 gap-4">
       {header}
       <AsyncState query={document}>
         {(data) => {
@@ -1423,13 +1309,13 @@ function DocumentDetail({
           return (
             <div className="grid min-w-0 gap-4">
               {!started && (
-                <p className="rounded-xl bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
+                <p className="text-sub text-muted-foreground">
                   승인된 버전은 바뀌지 않아요. 고칠 내용은 새 .md를 올려 비비
                   검토와 팀장 승인을 거쳐요.
                 </p>
               )}
               {base && base.id !== data.version.id && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-orange-50 p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-muted p-3 text-sm">
                   v{data.version.version_no}를 보고 있어요. 팀의 기준은 v
                   {base.version_no}예요.
                   <Button
@@ -1457,7 +1343,10 @@ function DocumentDetail({
                         </p>
                       )}
                       {data.version.content !== undefined ? (
-                        <MarkdownView source={data.version.content} />
+                        <MarkdownView
+                          source={data.version.content}
+                          className="overflow-visible rounded-none bg-transparent px-0 pt-1 pb-0"
+                        />
                       ) : (
                         <EmptyState>
                           이 파일은 본문 미리보기를 제공하지 않아요. 원본 파일을
@@ -1470,25 +1359,25 @@ function DocumentDetail({
               ) : (
                 <AsyncState query={versions}>
                   {(history) => (
-                    <ul className="rounded-xl border">
+                    <ul aria-label="버전 이력" className="divide-y">
                       {history.items.map((version) => (
                         <li
                           key={version.id}
-                          className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-sm last:border-b-0"
+                          className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
                         >
                           <span className="flex flex-wrap items-center gap-2">
                             <strong>v{version.version_no}</strong>
-                            <Chip tone={versionTone[version.status]}>
+                            <Badge variant={versionTone[version.status]}>
                               {versionStatusLabel(version.status)}
-                            </Chip>
+                            </Badge>
                             {(version.is_current_baseline === true ||
                               (!history.items.some(
                                 (item) => item.is_current_baseline,
                               ) &&
                                 version.id === base?.id)) && (
-                              <Chip tone="muted">현재 기준</Chip>
+                              <Badge variant="outline">현재 기준</Badge>
                             )}
-                            <span className="text-xs text-muted-foreground">
+                            <span className="text-caption text-muted-foreground">
                               {stamp(version.created_at)}
                               {uploaderName(version) &&
                                 ` · ${uploaderName(version)}`}

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
-// 공용 문서 본문 뷰어(PNL-02 수정안 v367 면형): 연회색 면, 본문 15px·줄간격 1.7·폭 680px.
+// 공용 문서 본문 뷰어(PNL-02 수정안 v367 면형): 연회색 면, 본문 15px·줄간격 1.7·폭 640px(한 줄 40자 안팎, S15P31A108-445).
+// 공용 문서함 상세는 면 없이 패널 바탕 위에 둔다(className으로 바탕·여백을 지운다).
 // 문서는 .md만 올라오므로 제목·목록·표·코드·인용·굵게만 그린다. HTML은 넣지 않고 React 요소로만 만든다.
 // ponytail: 줄 단위로 읽는 간단한 해석기다. 중첩 목록·링크·이미지가 필요해지면 라이브러리를 검토한다.
 const soft = 'bg-[#eceef2]'
@@ -203,7 +204,7 @@ export function MarkdownView({
         className,
       )}
     >
-      <div className="max-w-[680px]">{blocks}</div>
+      <div className="max-w-[640px]">{blocks}</div>
     </article>
   )
 }

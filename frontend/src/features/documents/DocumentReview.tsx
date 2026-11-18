@@ -5,7 +5,7 @@ import {
 } from '@/lib/pollIntervals'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, LoaderCircle } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import {
   getApiErrorCode,
   getApiErrorMessage,
@@ -254,15 +254,14 @@ export function DocumentReview({
       aria-label={`${title} 검토`}
       className="grid min-w-0 content-start gap-4"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          <ArrowLeft />
-          목록
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {statusLabel(kind)}
-        </span>
+      {/* 문서함 목록이 왼쪽에 늘 있어 '목록'으로 돌아가는 버튼은 두지 않는다(S15P31A108-445). */}
+      <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="text-lg font-bold">{title}</h3>
+        {title !== statusLabel(kind) && (
+          <span className="text-caption text-muted-foreground">
+            {statusLabel(kind)}
+          </span>
+        )}
       </div>
       {/* 팀장 승인·반려 알림은 가운데 위(승인 초록, 반려 빨강, PNL-02 수정안 10-29). */}
       {action.message && (

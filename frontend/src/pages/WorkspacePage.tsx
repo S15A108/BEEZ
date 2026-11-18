@@ -301,6 +301,7 @@ function Workspace({ projectId }: { projectId: string }) {
         )
         // 목록·상세 창은 1200px 기둥 대신 화면 폭을 다 써서 왼쪽 목록을 창 왼쪽에 붙이고 상세를 가운데에 넓힌다(S15P31A108-455).
         const splitPane =
+          pane === 'documents' ||
           pane === 'tasks' ||
           pane === 'changes' ||
           pane === 'meetings' ||
