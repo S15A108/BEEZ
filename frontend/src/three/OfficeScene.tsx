@@ -14,7 +14,6 @@ import {
   movementInput,
   movementKey,
   movementSpeed,
-  smoothRoute,
 } from './office/motion'
 import type { Point } from './office/motion'
 import { OfficeRenderer3D } from './office/OfficeRenderer3D'
@@ -29,10 +28,13 @@ import {
   type BibiActivity,
 } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
-import { officeLanding, officeWalkable } from './office/office-navigation'
+import {
+  officeLanding,
+  officeWalkable,
+  officeWalkRoute,
+} from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
-import { findPath } from './office/path'
 import { officeDesignOf, type OfficeTime } from './office/officeLook'
 import type { OfficeScreens } from './office/office-screens'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
@@ -172,20 +174,13 @@ function OfficeRuntime(
     clearInput.current = clear
     const free = (x: number, y: number) =>
       officeWalkable(latest.current.floor, x, y)
+    // 시뮬레이션의 사람들과 같은 판정·길찾기(office-nav)로 걷는다. 갇힌 틈을 누르면 가장 가까운 걸을 수 있는 곳으로 간다.
     const walkTo = (destination: Point) => {
-      const currentFloor = latest.current.floor
-      const blocked = currentFloor.blocked.map((row, y) =>
-        row.map((value, x) => value || currentFloor.grid[y][x] === '#'),
+      route.current = officeWalkRoute(
+        latest.current.floor,
+        player.current,
+        destination,
       )
-      const points = findPath(
-        blocked,
-        Math.floor(player.current.x / 32),
-        Math.floor((player.current.y - 4) / 32),
-        Math.floor(destination.x / 32),
-        Math.floor(destination.y / 32),
-      ).map(([x, y]) => ({ x: x * 32 + 16, y: y * 32 + 27 }))
-      points.push(destination)
-      route.current = smoothRoute(player.current, points, free)
     }
     const exit = () => {
       const portal = latest.current.floor.outdoorExit

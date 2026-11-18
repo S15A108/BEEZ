@@ -5,6 +5,8 @@ import { characterOf } from '@/lib/characters'
 import type { OfficeAppearance, OfficeEntity3D } from './OfficeRenderer3D'
 import type { Floor } from './floors'
 import { officeWorkZone } from './office-layout'
+import { officeLanding } from './office-navigation'
+import { navNearest, navOf, STAND_CLEARANCE } from './office-nav'
 import { RECEPTIONIST } from './social'
 
 // 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D34).
@@ -16,6 +18,14 @@ export function avatarAppearance(avatar?: string): OfficeAppearance {
 
 /** 비비 현재 상태(BEE-A04 activity) */
 export type BibiActivity = 'DOCUMENT_REVIEW' | 'MEETING' | 'IDLE'
+
+/**
+ * 사람이 서는 발 위치(px)가 가구·의자·벽에 걸치면 엘리베이터 앞에서 걸어갈 수 있는 가장 가까운 빈 곳으로 옮긴다
+ * (office-nav, 몸 반지름 16px). 칸 단위 막기(60% 규칙)만 보면 칸에 반쯤 걸친 가구에 묻혀 섰다.
+ */
+export function clearFeet(floor: Floor, at: { x: number; y: number }) {
+  return navNearest(navOf(floor), at, -1, undefined, true) ?? at
+}
 
 // 비비 상태 → 자리(D35). 문서 검토는 공용 문서함, 회의는 회의실이고, 그 밖(한가함·상태 없음·없는 API)은 라운지 가운데다.
 export function bibiSpot(floor: Floor, activity?: BibiActivity | null) {
@@ -50,12 +60,18 @@ export function officeActors(
   // 고정 사무실(D36)에서 상태를 읽은 뒤에는 상태가 바뀔 때만 새 자리로 걸어가 머문다(D37 에이전트와 같은 방식). 'meeting'은
   // 일하는 상태라 산책하지 않는다. 처음 자리는 걷지 않고 바로 선다.
   const walks = phase >= 3 && !!floor.zoneSigns && bibiActivity !== undefined
+  const at = clearFeet(
+    floor,
+    spot
+      ? { x: spot.x * 32 + 16, y: spot.y * 32 + 27 }
+      : { x: 4.5 * 32, y: 3.5 * 32 },
+  )
   if (phase < 3 || !bibiOf(agents) || floor.zoneSigns)
     result.push({
       id: lead.id,
       name: '비비 · AI 팀장',
-      x: spot ? spot.x * 32 + 16 : 4.5 * 32,
-      y: spot ? spot.y * 32 + 27 : 3.5 * 32,
+      x: at.x,
+      y: at.y,
       dir: spot?.facing ?? 'down',
       moving: false,
       floor: 1,
@@ -171,10 +187,12 @@ function fixedOfficeActors(
       agent.kind !== 'lead' && !agent.hired_by && agent.duty_status !== 'off',
   )
   // 자리(의자)에서 앉는 방향 반대쪽으로 back칸, 옆으로 side칸 떨어진 빈 곳. 막혔거나 이미 누가 선 곳이면 없다.
+  // 칸은 비어도 발 위치가 가구·의자에 걸치면(office-nav) 없고, snap이면 가장 가까운 빈 곳에 선다.
   const standAt = (
     seat: Spot,
     back: number,
     side: number,
+    snap = false,
   ): Spot | undefined => {
     const [dx, dy] = {
       down: [0, -1],
@@ -189,9 +207,42 @@ function fixedOfficeActors(
     }
     const free =
       !floor.blocked[Math.floor(spot.y + 23 / 32)]?.[Math.floor(spot.x + 0.5)]
-    return free && !taken.has(key(spot))
-      ? (taken.add(key(spot)), spot)
-      : undefined
+    if (!free || taken.has(key(spot))) return undefined
+    const feet = { x: spot.x * 32 + 16, y: spot.y * 32 + 27 }
+    const at = clearFeet(floor, feet)
+    const moved = at.x !== feet.x || at.y !== feet.y
+    if (moved && !snap) return undefined
+    taken.add(key(spot))
+    standing.push(at)
+    return { x: (at.x - 16) / 32, y: (at.y - 27) / 32, facing: spot.facing }
+  }
+  // 세 곳이 다 막힌 팀원은 4칸 안에서 둘레가 넓은 가장 가까운 빈 곳(STAND_CLEARANCE)에 선다. 의자 곁의 좁은
+  // 통로(유리 회의실 의자 뒤 한 칸)에 서면 비비와 에이전트가 지나가지 못하고, 먼저 선 사람·비비 자리와는 사람 사이
+  // 거리만큼 떨어진다. 4칸 안에 없으면 세 곳 중 처음 곳에서 가장 가까운 빈 곳에 선다.
+  const standing: { x: number; y: number }[] = []
+  const bibiSpots = [
+    floor.seats.lead?.[0],
+    floor.bibiSpots?.documents,
+    floor.bibiSpots?.meeting,
+  ].flatMap((spot) =>
+    spot ? [{ x: spot.x * 32 + 16, y: spot.y * 32 + 27 }] : [],
+  )
+  const landNear = (seat: Spot): Spot | undefined => {
+    const home = { x: seat.x * 32 + 16, y: seat.y * 32 + 27 }
+    const at = officeLanding(
+      floor,
+      home,
+      [...standing, ...bibiSpots],
+      STAND_CLEARANCE,
+    )
+    if (!at || Math.hypot(at.x - home.x, at.y - home.y) > 4 * 32)
+      return (
+        standAt(seat, 1.5, 0.9, true) ??
+        standAt(seat, 1.5, -0.9, true) ??
+        standAt(seat, 1.5, 0, true)
+      )
+    standing.push(at)
+    return { x: (at.x - 16) / 32, y: (at.y - 27) / 32, facing: seat.facing }
   }
   for (const agent of people) {
     const seat = homeSeats.get(agent.id)
@@ -205,7 +256,8 @@ function fixedOfficeActors(
     const spot =
       standAt(seat, 1.5, 0.9) ??
       standAt(seat, 1.5, -0.9) ??
-      standAt(seat, 1.5, 0)
+      standAt(seat, 1.5, 0) ??
+      landNear(seat)
     if (!spot) continue
     result.push({
       id: agent.id,
@@ -224,7 +276,7 @@ function fixedOfficeActors(
     })
   }
   // 주인 자리 뒤(앉는 방향 반대쪽) 0.9칸에 선다. 막혔으면 자리 옆에 앉는다.
-  const behind = (seat: Spot) => standAt(seat, 0.9, 0)
+  const behind = (seat: Spot) => standAt(seat, 0.9, 0, true)
   const ownerChairs = new Set<string>()
   for (const agent of agents.filter(
     (item) => item.hired_by && item.duty_status !== 'off',

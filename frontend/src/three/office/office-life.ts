@@ -1,7 +1,14 @@
 import type { Dir, Floor } from './floors'
 import { T } from './floors'
-import { gridWalkable, moveContinuous, smoothRoute, type Point } from './motion'
-import { findPath } from './path'
+import { moveContinuous, type Point } from './motion'
+import {
+  navChairAt,
+  navClear,
+  navNearest,
+  navOf,
+  navRoute,
+  type Nav,
+} from './office-nav'
 import { officeSeats, seatApproach } from './social'
 import type { OfficeBehavior } from '@/lib/scene/office-intent'
 
@@ -70,6 +77,9 @@ const WALK_LABELS: Record<OfficeLifeDestination, string> = {
 }
 // 사람끼리 지킬 거리(px, 1타일 = 32). 로봇 팀원 머리 지름(1.1타일, 약 35px)에 맞춘다.
 export const PERSONAL_SPACE = 34
+// 걷는 사람이 의자에 앉은 사람에게 다가갈 수 있는 거리(px). 의자 반 폭과 몸 반지름만큼이다. 앉은 사람은 의자가 막아 주고,
+// 34px를 지키면 몸 반지름만큼 가구를 피해 걷는 길(office-nav)에서 회의실 스툴 뒤 통로를 못 지나 D35를 못 지킨다.
+const SEATED_SPACE = 24
 // 이 거리 안의 사람에게서 조금씩 비켜 걷는다.
 const AVOID_RADIUS = 50
 // 이만큼 못 나아가면 지금 자리에서 길을 다시 찾는다(초).
@@ -78,7 +88,6 @@ const STUCK_SECONDS = 1.2
 const BLOCKED_RETRY_SECONDS = 5
 const hash = (id: string) =>
   [...id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 7)
-const feet = (x: number, y: number): Point => ({ x: x * T + 16, y: y * T + 27 })
 
 interface Destination {
   id: string
@@ -88,6 +97,8 @@ interface Destination {
   dir: Dir
   heading?: number
   seated: boolean
+  /** 앉으러 가는 의자 번호(office-nav). 그 의자만 지나갈 수 있다. 의자가 아니면 없다. */
+  chair?: number
 }
 interface Resident {
   x: number
@@ -132,7 +143,9 @@ export class OfficeLifeSimulation {
   private lastFloor?: Floor
   private floorKey = ''
   private destinations: Destination[] = []
-  private blocked: boolean[][] = []
+  private nav!: Nav
+  /** 이번 프레임에 제자리에 있는 사람(서 있는 팀원, 비비 등). 길을 찾을 때 그 둘레를 돌아간다. */
+  private still: Point[] = []
 
   private readonly projectId: string
   constructor(projectId: string) {
@@ -140,24 +153,28 @@ export class OfficeLifeSimulation {
     lifeByProject.set(projectId, new Map())
   }
 
-  private free = (x: number, y: number) =>
-    gridWalkable({ x, y: y - 4 }, this.blocked, T, 6)
+  /** 몸이 벽·가구·의자에 닿지 않는 곳인지(office-nav). chair 번호의 의자는 지나갈 수 있다. */
+  private free = (x: number, y: number, chair = -1) =>
+    navClear(this.nav, x, y, chair)
 
-  private nearestLanding(point: Point): Point | undefined {
-    if (this.free(point.x, point.y)) return point
-    let nearest: Point | undefined,
-      distance = Infinity
-    for (let y = 0; y < this.blocked.length; y++)
-      for (let x = 0; x < this.blocked[y].length; x++) {
-        if (this.blocked[y][x]) continue
-        const candidate = feet(x, y),
-          next = Math.hypot(candidate.x - point.x, candidate.y - point.y)
-        if (next < distance && this.free(candidate.x, candidate.y)) {
-          nearest = candidate
-          distance = next
-        }
-      }
-    return nearest
+  /**
+   * point가 막혔으면 가장 가까운 빈 곳. 가는 곳(reachable)은 엘리베이터 앞에서 걸어갈 수 있는 곳만 고른다(가구 사이에
+   * 갇힌 틈은 뺀다). 지금 선 곳을 고칠 때는 벽 너머로 옮기지 않게 가장 가까운 빈 곳이다.
+   */
+  private nearestLanding(
+    point: Point,
+    chair = -1,
+    reachable = true,
+  ): Point | undefined {
+    return navNearest(this.nav, point, chair, undefined, reachable)
+  }
+
+  /**
+   * 자리에서 일어나 서는 곳. 앉을 때 내린 곳(landing)은 그 의자를 지나갈 수 있는 곳이라, 다른 곳으로 가는 길에서는 의자에
+   * 닿아 한 걸음도 못 나갔다. 의자에서도 몸 반지름만큼 떨어진 가장 가까운 곳에 선다.
+   */
+  private offSeat(target: Destination): Point {
+    return this.nearestLanding(target.landing, -1, false) ?? target.landing
   }
 
   private configure(floor: Floor): boolean {
@@ -166,25 +183,36 @@ export class OfficeLifeSimulation {
     const key = `${floor.staticKey ?? ''}/${floor.W}/${floor.H}/${JSON.stringify(floor.furniture)}/${floor.grid.map((row) => row.join('')).join('')}`
     if (this.floorKey === key) return false
     this.floorKey = key
-    this.blocked = floor.blocked.map((row, y) =>
+    this.nav = navOf(floor)
+    const blocked = floor.blocked.map((row, y) =>
       row.map(
-        (blocked, x) =>
-          blocked ||
+        (cell, x) =>
+          cell ||
           floor.grid[y][x] === '#' ||
           floor.grid[y][x] === 'g' ||
           floor.grid[y][x] === 'o',
       ),
     )
-    this.destinations = officeSeats({ ...floor, blocked: this.blocked })
+    this.destinations = officeSeats({ ...floor, blocked })
       .filter((seat) => seat.kind === 'sofa' || seat.kind === 'bench')
-      .map((seat) => ({
-        id: seat.id,
-        activity: 'resting',
-        landing: seatApproach(seat),
-        pose: { x: seat.x, y: seat.y },
-        dir: seat.facing,
-        seated: true,
-      }))
+      .flatMap((seat): Destination[] => {
+        // 라운지 리클라이너는 의자라 앉는 사람만 그 곁을 지난다. 소파·벤치는 앞의 빈 곳에서 올라앉는다.
+        const chair = navChairAt(this.nav, seat)
+        const landing = this.nearestLanding(seatApproach(seat), chair)
+        return landing
+          ? [
+              {
+                id: seat.id,
+                activity: 'resting',
+                landing,
+                pose: { x: seat.x, y: seat.y },
+                dir: seat.facing,
+                seated: true,
+                chair,
+              },
+            ]
+          : []
+      })
     // The dream office has full-height rear windows even while wall decoration is hidden.
     const windows = floor.decor
       .filter((decor) => decor.kind === 'window')
@@ -252,42 +280,41 @@ export class OfficeLifeSimulation {
     return true
   }
 
-  // avoid: 다른 사람이 서 있는 자리. 그 칸을 막힌 칸으로 보고 길을 찾는다(막혔을 때 돌아가는 길).
+  /** 걷는 사람이 other에게 다가갈 수 있는 거리. 의자에 앉은 사람은 SEATED_SPACE, 그 밖은 사람 사이 거리다. */
+  private spaceTo(other: Point): number {
+    const seated =
+      ('seated' in other && !!other.seated) ||
+      ('stationary' in other &&
+        !!other.stationary &&
+        !('standing' in other && other.standing) &&
+        navChairAt(this.nav, other) >= 0)
+    return seated ? SEATED_SPACE : PERSONAL_SPACE
+  }
+
+  // avoid: 다른 사람이 서 있는 자리. 그 둘레(space, 없으면 38px)를 피해 길을 찾는다(막혔을 때 돌아가는 길). chair는 앉으러
+  // 가는 의자다.
   private route(
     from: Point,
     to: Point,
-    avoid: readonly Point[] = [],
+    avoid: readonly (Point & { space?: number })[] = [],
+    chair = -1,
   ): Point[] | undefined {
-    if (!this.free(to.x, to.y)) return undefined
-    const tile = (point: Point) =>
-      [Math.floor(point.x / T), Math.floor((point.y - 4) / T)] as const
-    const [sx, sy] = tile(from),
-      [gx, gy] = tile(to)
-    const taken = new Set(
-      avoid
-        .map(tile)
-        .filter(([x, y]) => !(x === sx && y === sy) && !(x === gx && y === gy))
-        .map(([x, y]) => `${x}/${y}`),
+    // 제자리에 있는 사람 둘레도 처음부터 돌아간다. 몸 반지름만큼 가구를 피하는 길은 가구에 붙어 서 있는 사람 곁을
+    // 사람 사이 거리보다 가깝게 지나, 걷다가 막혀 서곤 했다. 그 사람이 하나뿐인 길(문)을 막고 있으면 그 길로 가서
+    // 비킬 때까지 기다린다.
+    const still = this.still.map((other) => ({
+      x: other.x,
+      y: other.y,
+      space: this.spaceTo(other),
+    }))
+    return (
+      (still.length
+        ? navRoute(this.nav, from, to, {
+            avoid: [...still, ...avoid],
+            exempt: chair,
+          })
+        : undefined) ?? navRoute(this.nav, from, to, { avoid, exempt: chair })
     )
-    const blocked = taken.size
-      ? this.blocked.map((row, y) =>
-          row.map((cell, x) => cell || taken.has(`${x}/${y}`)),
-        )
-      : this.blocked
-    const free = taken.size
-      ? (x: number, y: number) =>
-          this.free(x, y) && !taken.has(tile({ x, y }).join('/'))
-      : this.free
-    const tiles = findPath(blocked, sx, sy, gx, gy)
-    const route = smoothRoute(
-      from,
-      [...tiles.map(([x, y]) => feet(x, y)), to],
-      free,
-    )
-    const end = route.at(-1)
-    return end && Math.hypot(end.x - to.x, end.y - to.y) < 0.1
-      ? route
-      : undefined
   }
 
   private choose(
@@ -296,7 +323,10 @@ export class OfficeLifeSimulation {
     completed: boolean,
     homeOnly = false,
   ): boolean {
-    const home = this.nearestLanding(actor)
+    // 앉는 자리는 의자 번호를 알아 두고, 곁의 빈 곳까지 걸어가 자리로 옮겨 앉는다. 서는 자리가 가구에 걸치면 가장
+    // 가까운 빈 곳에 선다.
+    const seat = actor.standing ? -1 : navChairAt(this.nav, actor)
+    const home = this.nearestLanding(actor, seat)
     let choices: Destination[]
     if (resident.working || homeOnly)
       choices = home
@@ -306,9 +336,10 @@ export class OfficeLifeSimulation {
               activity:
                 resident.working && !actor.standing ? 'working' : 'waiting',
               landing: home,
-              pose: home,
+              pose: actor.standing ? home : { x: actor.x, y: actor.y },
               dir: actor.dir,
               seated: !actor.standing,
+              chair: seat,
             },
           ]
         : []
@@ -353,10 +384,13 @@ export class OfficeLifeSimulation {
     const start = resident.transfer?.leaving
       ? resident.transfer.to
       : leavingSeat && resident.target
-        ? resident.target.landing
+        ? this.offSeat(resident.target)
         : resident
     const next = choices
-      .map((target) => ({ target, route: this.route(start, target.landing) }))
+      .map((target) => ({
+        target,
+        route: this.route(start, target.landing, [], target.chair),
+      }))
       .find((choice) => choice.route)
     if (!next) {
       resident.dwell = 3
@@ -428,7 +462,7 @@ export class OfficeLifeSimulation {
     const start = resident.transfer?.leaving
       ? resident.transfer.to
       : leavingSeat && resident.target
-        ? resident.target.landing
+        ? this.offSeat(resident.target)
         : resident
     const candidates = [48, 64]
       .flatMap((radius) =>
@@ -597,6 +631,7 @@ export class OfficeLifeSimulation {
       dt = Math.min(0.1, Math.max(0, seconds))
     const live = new Set(actors.map((actor) => actor.id)),
       snapshots = lifeByProject.get(this.projectId)!
+    this.still = actors.filter((actor) => actor.stationary)
     // 나를 뺀 사람들의 지금 자리: 걷는 사람, 앉거나 서 있는 사람, 제자리 배우(비비), 나(caller)
     const neighbors = (selfId: string): Point[] => [
       ...[...this.residents.entries()]
@@ -624,7 +659,7 @@ export class OfficeLifeSimulation {
           : isOfficeWorkingStatus(actor.status)
       const homeKey = `${actor.x}/${actor.y}/${actor.dir}`
       if (!resident) {
-        const spawn = this.nearestLanding(actor) ?? actor
+        const spawn = this.nearestLanding(actor, -1, false) ?? actor
         resident = {
           ...spawn,
           dir: actor.dir,
@@ -657,11 +692,15 @@ export class OfficeLifeSimulation {
                 target.pose.y - position.y,
               ) < 2,
           )
-        if (changed && !stillOnCushion && !this.free(resident.x, resident.y)) {
+        if (
+          changed &&
+          !stillOnCushion &&
+          !this.free(resident.x, resident.y, resident.target?.chair)
+        ) {
           resident.seated = false
           resident.transfer = undefined
           resident.target = undefined
-          Object.assign(resident, this.nearestLanding(resident))
+          Object.assign(resident, this.nearestLanding(resident, -1, false))
         }
         if (!resident.behavior || resident.behavior === 'autonomous')
           this.choose(resident, actor, completed)
@@ -731,6 +770,10 @@ export class OfficeLifeSimulation {
           else {
             // 곁의 사람에게서 밀려나는 힘을 더해 비켜 걷고, 다른 사람에게 너무 붙는 걸음은 내딛지 않는다.
             const others = neighbors(actor.id)
+            const spaced = (point: Point) =>
+              others.every((other) =>
+                keepsSpace(resident!, point, [other], this.spaceTo(other)),
+              )
             let vx = ((next.x - resident.x) / distance) * step,
               vy = ((next.y - resident.y) / distance) * step
             for (const other of others) {
@@ -747,11 +790,14 @@ export class OfficeLifeSimulation {
               vx = (vx / length) * step
               vy = (vy / length) * step
             }
-            const moved = moveContinuous(resident, { x: vx, y: vy }, this.free)
+            // 앉으러 가는 의자는 지나갈 수 있다.
+            const chair = resident.target?.chair ?? -1
+            const free = (x: number, y: number) => this.free(x, y, chair)
+            const moved = moveContinuous(resident, { x: vx, y: vy }, free)
             const stuckBefore = resident.stuck ?? 0
             // 벽에 막혀 한 걸음도 못 나간 것도 막힌 것으로 센다(옆걸음 뒤 지름길이 벽을 지날 때).
             if (
-              keepsSpace(resident, moved, others) &&
+              spaced(moved) &&
               Math.hypot(moved.x - resident.x, moved.y - resident.y) > 0.001
             ) {
               Object.assign(resident, moved)
@@ -765,13 +811,13 @@ export class OfficeLifeSimulation {
                   moveContinuous(
                     resident,
                     { x: -uy * step * side, y: ux * step * side },
-                    this.free,
+                    free,
                   ),
                 )
                 .find(
                   (point) =>
                     Math.hypot(point.x - resident.x, point.y - resident.y) >
-                      0.001 && keepsSpace(resident, point, others),
+                      0.001 && spaced(point),
                 )
               if (sidestep) Object.assign(resident, sidestep)
             }
@@ -812,7 +858,12 @@ export class OfficeLifeSimulation {
               const detour = this.route(
                 resident,
                 resident.target.landing,
-                blockers,
+                blockers.map((other) => ({
+                  x: other.x,
+                  y: other.y,
+                  space: this.spaceTo(other),
+                })),
+                resident.target.chair,
               )
               if (detour) resident.route = detour
               else if (
