@@ -9,6 +9,7 @@ import {
   authApi,
   dashboardApi,
   documentsApi,
+  inboxApi,
   membersApi,
   planningApi,
   presenceApi,
@@ -53,6 +54,7 @@ beforeEach(async () => {
 afterEach(() => {
   restore()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 // 예시 데이터를 읽고 상황에 맞게 바꿔 HUD를 그린다. 102는 문서 4종을 초안으로 올린 시작 전 프로젝트, 101은 시작한 프로젝트다.
@@ -403,4 +405,101 @@ it('사람 줄은 접속 상태를, 에이전트 줄은 연결 상태를 이름�
   const recheck = lineOf('박팀원의 에이전트')
   expect(recheck).toMatch(/^연결 미확인 · 마지막 보고 /)
   expect(recheck).not.toMatch(/오프라인|연결 끊김/)
+})
+
+// S15P31A108-444: '검토할 변경'이 수치 칸·할 일·단축 바 배지·종에 동시에 떴다. 받은편지함은 할 일 하나다.
+// 예시 101: 팀장(나)에게 변경 제안 71 검토 요청과 회의 901 열림 알림이 안 읽은 채 있다. 팀원(김동료)에게는 회의 901 알림이 있다.
+// 오른쪽 패널은 제목이 '할 일'과 줄 수이고, 가이드가 떠 있으면 '팀원 시작 가이드'다.
+const todo = () => screen.getByRole('region', { name: /^할 일|시작 가이드/ })
+const loginAsMember = async () => {
+  accountId = (
+    await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  ).id
+}
+
+it('팀장의 할 일은 변경 검토·회의 줄에 같은 대상 알림을 접고, 종과 단축 바 숫자 배지는 없다', async () => {
+  const user = userEvent.setup()
+  const markRead = vi.spyOn(inboxApi, 'markRead')
+  await renderHud()
+  const review = await within(todo()).findByRole('button', {
+    name: /^변경 검토새 알림 1/,
+  })
+  expect(
+    within(todo()).getByRole('button', { name: /^회의새 알림 1/ }),
+  ).toBeInTheDocument()
+  // 두 알림이 모두 줄에 접혀 새 소식은 없고, 알림함 입구만 남는다.
+  expect(within(todo()).queryByText(/^새 소식/)).not.toBeInTheDocument()
+  expect(
+    within(todo()).getByRole('button', { name: '알림함 열기' }),
+  ).toBeInTheDocument()
+  // 종 버튼은 '알림' 또는 '알림 2건'이었다.
+  expect(
+    screen.queryByRole('button', { name: /^알림( \S+건)?$/ }),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByLabelText(/새 항목/)).not.toBeInTheDocument()
+  await user.click(review)
+  expect(markRead).toHaveBeenCalledWith({ ids: ['1101'] })
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+})
+
+it('시작 가이드가 떠 있는 팀원에게는 회의 초대 알림을 가이드 아래 새 소식으로 보인다', async () => {
+  await loginAsMember()
+  localStorage.setItem('beez.tour.12', 'seen')
+  await renderHud()
+  const news = await within(todo()).findByRole('button', {
+    name: /비비가 회의를 열었어요/,
+  })
+  expect(news).toHaveTextContent('회의실')
+  expect(within(todo()).getByText(/^새 소식/)).toHaveTextContent('새 소식 1')
+  expect(
+    within(todo()).queryByRole('button', { name: /^회의/ }),
+  ).not.toBeInTheDocument()
+})
+
+it('팀원의 할 일에는 변경 검토 줄이 없다', async () => {
+  await loginAsMember()
+  // 가이드를 숨겨 할 일 줄을 보인다.
+  localStorage.setItem('beez.guide.101.member', '1')
+  await renderHud()
+  expect(
+    await within(todo()).findByRole('button', { name: /^회의새 알림 1/ }),
+  ).toBeInTheDocument()
+  expect(
+    within(todo()).queryByRole('button', { name: /^변경 검토/ }),
+  ).not.toBeInTheDocument()
+})
+
+// S15P31A108-443: 1024px에서 340px '지금 할 일'이 3D 장면과 이름표를 가렸다.
+it('1280px 미만에서는 할 일이 접힌 채 시작하고 제목을 누르면 펼쳐진다', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
+  const user = userEvent.setup()
+  await renderHud()
+  const toggle = screen.getByRole('button', { name: /^할 일/ })
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(
+    screen.queryByRole('list', { name: '할 일 목록' }),
+  ).not.toBeInTheDocument()
+  await user.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByRole('list', { name: '할 일 목록' })).toBeInTheDocument()
+})
+
+it('1280px 이상에서는 할 일이 펼쳐진 채 시작한다', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: true,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }))
+  await renderHud()
+  expect(screen.getByRole('button', { name: /^할 일/ })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  expect(screen.getByRole('list', { name: '할 일 목록' })).toBeInTheDocument()
 })

@@ -3,8 +3,8 @@ import { webcrypto } from 'node:crypto'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { authApi } from '@/api/services'
 import type { MeResponse } from '@/features/auth/schemas'
 import {
@@ -26,7 +26,10 @@ beforeEach(() => {
   resetMockApi()
   restore = setupMockApi()
 })
-afterEach(() => restore())
+afterEach(() => {
+  restore()
+  vi.restoreAllMocks()
+})
 
 function renderPage() {
   const client = new QueryClient({
@@ -85,4 +88,82 @@ it('임시 비밀번호로 로그인한 뒤 그 비밀번호를 현재 비밀번
   expect(
     client.getQueryData<MeResponse>(['account'])?.must_change_password,
   ).toBe(false)
+})
+
+function Address() {
+  const location = useLocation()
+  return (
+    <p>
+      주소 {location.pathname}
+      {location.search}
+    </p>
+  )
+}
+
+// PR #316 머지 뒤 리뷰: 바꾼 뒤 계정 재조회(/me)가 늦으면 X가 먼저 켜졌다. X로 도시에 돌아온 뒤 응답이 오면
+// 바꿀 때의 기록 수로 한 번 더 되돌아가 /prior까지 갔다.
+it('비밀번호를 바꾼 뒤 계정을 다시 불러올 때까지 X가 잠기고, 다 불러오면 회원 설정으로 돌아간다', async () => {
+  await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+  // /prior → 도시 → 회원 설정 → 비밀번호 변경 순서로 들어왔다.
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <MemoryRouter
+        initialEntries={[
+          '/prior',
+          '/',
+          {
+            pathname: '/',
+            search: '?account=profile',
+            state: { accountDepth: 1 },
+          },
+          {
+            pathname: '/',
+            search: '?account=password',
+            state: { accountDepth: 2 },
+          },
+        ]}
+        initialIndex={3}
+      >
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <Address />
+                <AccountDialog />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findByLabelText('현재 비밀번호')
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const me = authApi.me
+  const refetch = vi
+    .spyOn(authApi, 'me')
+    .mockImplementation(async (...args) => {
+      await held
+      return me(...args)
+    })
+  await change(DEMO_PASSWORD)
+  await waitFor(() => expect(refetch).toHaveBeenCalled())
+
+  const user = userEvent.setup()
+  const close = screen.getByRole('button', { name: '닫기' })
+  await user.click(close)
+  release()
+  expect(await screen.findByText(/비밀번호를 바꿨어요/)).toBeInTheDocument()
+  expect(screen.getByText(/^주소 /)).toHaveTextContent(
+    /^주소 \/\?account=profile$/,
+  )
+  await waitFor(() => expect(close).toBeEnabled())
 })

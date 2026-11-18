@@ -483,7 +483,7 @@ it('조회한 리비전과 해시가 지금과 다르면 409 version_conflict', 
   expect(getApiErrorCode(stale)).toBe('version_conflict')
 })
 
-// '지금 할 일' 미리 보기용 항목별 −/+ 문장(item_texts, 195 미구현). 목은 채운다.
+// 변경 제안 미리 보기용 항목별 −/+ 문장(item_texts, 195 미구현). 목은 채운다.
 it('목 상세는 항목별 바뀌기 전·뒤 문장을 item_texts로 준다', async () => {
   const detail = await changesApi.get('101', '71')
   expect(detail.item_texts?.[0]).toMatchObject({
@@ -1577,7 +1577,7 @@ function renderWithHotbar() {
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <Hotbar locked={[]} badges={{}} />
+        <Hotbar locked={[]} />
         <ChangesPanel projectId="101" isLeader />
       </MemoryRouter>
     </QueryClientProvider>,

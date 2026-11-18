@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { authApi, inboxApi } from '@/api/services'
@@ -13,7 +13,7 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { InboxPopover } from './InboxPopover'
+import { InboxPanel } from './InboxPanel'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -29,42 +29,7 @@ const notification = (id: string, read: boolean) => ({
   ...(read ? { read_at: '2026-11-01T01:00:00Z' } : {}),
 })
 
-// PR #72 전수 리뷰 TC-6: 최신 20건이 모두 읽은 알림이어도, 그 밖의 안 읽은 알림을 배지에 센다.
-// PR #326 리뷰(11-17): '전체'·'읽지 않음' 알약을 없애 목록은 늘 최신 20건이다. 그 밖의 알림은 '지난 알림 더 보기'에서 본다.
-it('최신 20건 밖의 안 읽은 알림도 배지에 세고, 목록은 거르지 않고 최신 알림을 보인다', async () => {
-  const user = userEvent.setup()
-  vi.spyOn(inboxApi, 'list').mockImplementation(async (query) =>
-    query?.unread
-      ? { items: [notification('99', false)], has_more: false }
-      : {
-          items: Array.from({ length: 20 }, (_, index) =>
-            notification(String(index + 1), true),
-          ),
-          has_more: true,
-          next_cursor: 'next',
-        },
-  )
-  render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <InboxPopover projectId="10" />
-    </QueryClientProvider>,
-  )
-  await user.click(await screen.findByRole('button', { name: '알림 1건' }))
-  expect(await screen.findByText('알림 1')).toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: /^읽지 않음/ }),
-  ).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: '전체' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '모두 읽음' })).toBeEnabled()
-  expect(
-    screen.getByRole('button', { name: '지난 알림 더 보기' }),
-  ).toBeInTheDocument()
-})
-
+// S15P31A108-444: 종 팝오버를 없애고 '모두 읽음'을 알림함 창으로 옮겼다. 아래 시험은 알림함 창에서 같은 동작을 본다.
 // PR #72 3차 조사 THIRD-TC-02: '모두 읽음'은 불러온 첫 20건 ID만 보내지 않고 이 프로젝트의 안 읽은 알림 전체를 읽음 처리한다.
 it('모두 읽음은 첫 페이지 ID 대신 이 프로젝트 알림 전체 읽음을 보낸다', async () => {
   const user = userEvent.setup()
@@ -84,11 +49,12 @@ it('모두 읽음은 첫 페이지 ID 대신 이 프로젝트 알림 전체 읽�
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <InboxPopover projectId="10" />
+      <InboxPanel projectId="10" />
     </QueryClientProvider>,
   )
-  await user.click(await screen.findByRole('button', { name: '알림 20+건' }))
-  await user.click(screen.getByRole('button', { name: '모두 읽음' }))
+  const all = await screen.findByRole('button', { name: '모두 읽음' })
+  await waitFor(() => expect(all).toBeEnabled())
+  await user.click(all)
   expect(markRead).toHaveBeenCalledWith({ all: true, project_id: '10' })
 })
 
@@ -115,12 +81,10 @@ it('문서 알림을 누르면 버전 ID가 아니라 그 문서의 상세를 �
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <InboxPopover projectId="10" />
+      <InboxPanel projectId="10" />
     </QueryClientProvider>,
   )
-  await user.click(await screen.findByRole('button', { name: '알림 1건' }))
-  expect(screen.getByText(/공용 문서함/)).toBeInTheDocument()
-  await user.click(screen.getByText('문서 승인'))
+  await user.click(await screen.findByRole('button', { name: '문서 승인' }))
   expect(useWorkspaceStore.getState()).toMatchObject({
     pane: 'documents',
     focusId: '7',
@@ -170,12 +134,13 @@ it('승인 전 문서의 승인 요청 알림을 누르면 공용 문서함에�
           new QueryClient({ defaultOptions: { queries: { retry: false } } })
         }
       >
-        <InboxPopover projectId="102" />
+        <InboxPanel projectId="102" />
         <DocumentsPane projectId="102" />
       </QueryClientProvider>,
     )
-    await user.click(await screen.findByRole('button', { name: '알림 1건' }))
-    await user.click(screen.getByText('기획안 승인 요청'))
+    await user.click(
+      await screen.findByRole('button', { name: '기획안 승인 요청' }),
+    )
     const review = await screen.findByRole('region', { name: '기획안 검토' })
     expect(
       await within(review).findByRole('list', { name: '검토 단계' }),

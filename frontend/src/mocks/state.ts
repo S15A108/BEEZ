@@ -1078,7 +1078,7 @@ export function createMockDatabase(): MockDatabase {
         id: '1101',
         account_id: '11',
         project_id: '101',
-        type: 'CHANGE_REVIEW_REQUESTED',
+        type: 'CHANGE_PROPOSAL_REVIEW_REQUESTED',
         title: '프로젝트 목록 빈 화면 안내 검토 요청',
         body: '김동료가 REQ-001을 고치자고 제안했어요.',
         target_type: 'CHANGE_PROPOSAL',

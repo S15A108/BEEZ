@@ -21,7 +21,10 @@ test('비비와 대화해 반영하고 팀장에게 요청한 뒤 취소하면 �
   await expect(page.locator('canvas')).toBeVisible()
   await page.getByRole('button', { name: '공용 문서함', exact: true }).click()
   const dialog = page.getByRole('dialog')
-  await dialog.locator('li', { hasText: '기획안' }).getByRole('button').click()
+  await dialog
+    .getByRole('list', { name: '필수 문서 4종' })
+    .getByRole('button', { name: /기획안/ })
+    .click()
   await expect(
     dialog.getByText(/비비가 수정 제안 \d개를 남겼어요/),
   ).toBeVisible()

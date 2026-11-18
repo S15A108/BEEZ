@@ -451,8 +451,9 @@ it('시작 전에는 필수 문서 4종 칸과 잠긴 설계 초안 만들기를
     screen.getByRole('button', { name: '설계 초안 만들기' }),
   ).toBeDisabled()
   expect(screen.queryByRole('button', { name: '프로젝트 시작' })).toBeNull()
-  expect(screen.getAllByText('승인 v1')).toHaveLength(2)
-  await user.click(screen.getByRole('button', { name: '기획안 올리기' }))
+  const list = await screen.findByRole('list', { name: '필수 문서 4종' })
+  expect(within(list).getAllByText(/승인 v1 ·/)).toHaveLength(2)
+  await user.click(within(list).getByRole('button', { name: '기획안 올리기' }))
   // 유형은 고르지 않고 누른 칸의 종류로 고정해 보인다(사용자 승인으로 라디오 확인을 바꿈).
   expect(
     screen.getByRole('heading', { name: '기획안 등록' }),
@@ -470,7 +471,7 @@ it('시작 전에는 문서 등록 버튼이 없고, 형식이 다르면 파일 
   expect(
     screen.queryByRole('button', { name: '문서 등록' }),
   ).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '기획안 올리기' }))
+  await user.click(await screen.findByRole('button', { name: '기획안 올리기' }))
   await user.upload(
     screen.getByLabelText(/원본 파일/),
     new File(['png'], 'erd_diagram.png', { type: 'image/png' }),
@@ -664,7 +665,11 @@ it('기준 vN 문서에서 문서를 누르면 그 기준의 버전으로 연다
   expect(
     await screen.findByRole('heading', { name: '기준 v2 문서' }),
   ).toBeInTheDocument()
-  await user.click(await screen.findByRole('button', { name: /같은 제목/ }))
+  await user.click(
+    await within(
+      screen.getByRole('region', { name: '기준 v2 문서' }),
+    ).findByRole('button', { name: /같은 제목/ }),
+  )
   await waitFor(() =>
     expect(documentsApi.get).toHaveBeenCalledWith('10', '2', {
       version_no: 1,
@@ -719,7 +724,13 @@ it('검색 결과가 더 있으면 더 보기로 다음 페이지를 불러온�
 
 // PR #72 4차 조사 FOURTH-DOC-01: 서버는 문서를 등록한 사람만 분류를 고치게 한다. 등록한 사람에게만 버튼을 보이고,
 // 팀장 검토를 요청한 동안(SUBMITTED)은 끈다.
+// S15P31A108-445: 원본 다운로드·분류 수정은 문서 머리의 ⋯ 메뉴에 있다.
 it('분류 수정은 문서를 등록한 사람에게만 보이고 검토 요청 중에는 꺼진다', async () => {
+  const user = userEvent.setup()
+  const openMenu = async () => {
+    await user.click(await screen.findByRole('button', { name: '문서 메뉴' }))
+    return screen.findByRole('menu')
+  }
   useWorkspaceStore.setState({ focusId: '2' })
   vi.spyOn(authApi, 'me').mockResolvedValue({
     id: '11',
@@ -738,21 +749,27 @@ it('분류 수정은 문서를 등록한 사람에게만 보이고 검토 요청
   })
   vi.mocked(documentsApi.workingCopy).mockResolvedValue(copy('12', 'EDITING'))
   const first = mount()
-  await screen.findByRole('button', { name: /원본 다운로드/ })
   await waitFor(() => expect(documentsApi.workingCopy).toHaveBeenCalled())
+  let menu = await openMenu()
+  within(menu).getByRole('menuitem', { name: /원본 다운로드/ })
   expect(
-    screen.queryByRole('button', { name: '분류 수정' }),
+    within(menu).queryByRole('menuitem', { name: /분류 수정/ }),
   ).not.toBeInTheDocument()
   first.unmount()
   vi.mocked(documentsApi.workingCopy).mockResolvedValue(copy('11', 'EDITING'))
   const second = mount()
-  expect(await screen.findByRole('button', { name: '분류 수정' })).toBeEnabled()
+  await waitFor(() => expect(authApi.me).toHaveBeenCalled())
+  menu = await openMenu()
+  expect(
+    await within(menu).findByRole('menuitem', { name: '분류 수정' }),
+  ).not.toHaveAttribute('aria-disabled', 'true')
   second.unmount()
   vi.mocked(documentsApi.workingCopy).mockResolvedValue(copy('11', 'SUBMITTED'))
   mount()
+  menu = await openMenu()
   expect(
-    await screen.findByRole('button', { name: '분류 수정' }),
-  ).toBeDisabled()
+    await within(menu).findByRole('menuitem', { name: /분류 수정/ }),
+  ).toHaveAttribute('aria-disabled', 'true')
 })
 
 it('서버가 비었거나 UTF-8이 아닌 파일을 거절하면 파일 줄 아래에 안내한다', async () => {
@@ -888,7 +905,8 @@ it('올린 사람이 구성원 목록에 없으면 팀원으로 보인다', asyn
   })
   mount()
   await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
-  const rows = await screen.findAllByRole('listitem')
+  const history = await screen.findByRole('list', { name: '버전 이력' })
+  const rows = within(history).getAllByRole('listitem')
   expect(await within(rows[0]).findByText(/· 팀원/)).toBeInTheDocument()
 })
 
@@ -935,8 +953,9 @@ it('버전 이력은 승인·이전 버전·초안·미채택을 구분해 보�
   expect(within(row(1)).getByText('초안')).toBeInTheDocument()
 })
 
-// S15P31A108-362: 참고 승인본이 바뀌어 서버가 검토를 쓸 수 없다고 알리면, 카드는 '팀장 검토 요청 전'이 아니라 다시 검토를 안내한다.
-it('시작 준비 카드는 서버가 검토를 쓸 수 없다고 알린 문서를 다시 검토 필요로 보인다', async () => {
+// S15P31A108-362: 참고 승인본이 바뀌어 서버가 검토를 쓸 수 없다고 알리면, 목록은 '팀장 검토 요청 전'이 아니라 다시 검토를 안내한다.
+// S15P31A108-445: 목록 줄에는 단계 이름만 두고, 무엇을 할지는 오른쪽에 함께 열리는 검토 화면이 알린다.
+it('시작 전 목록은 서버가 검토를 쓸 수 없다고 알린 문서를 다시 검토 필요로 보인다', async () => {
   vi.mocked(documentsApi.workingCopy).mockResolvedValue({
     document_id: '1',
     owner_account_id: '11',
@@ -961,16 +980,18 @@ it('시작 준비 카드는 서버가 검토를 쓸 수 없다고 알린 문서�
     review_stale: true,
   })
   mount()
-  expect(await screen.findByText('다시 검토 필요')).toBeInTheDocument()
+  const list = await screen.findByRole('list', { name: '필수 문서 4종' })
+  expect(await within(list).findByText(/다시 검토 필요/)).toBeInTheDocument()
+  expect(within(list).queryByText(/팀장 검토 요청 전/)).not.toBeInTheDocument()
   expect(
-    screen.getByText('참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'),
+    await screen.findByText('이 검토는 더 쓸 수 없어요'),
   ).toBeInTheDocument()
-  expect(screen.queryByText('팀장 검토 요청 전')).not.toBeInTheDocument()
 })
 
 // S15P31A108-383: -382가 작업본에 검토 실패(bee_review_request)를 실었지만 시작 준비 카드는 그대로
 // '비비 검토 중 · 비비가 검토하고 있어요'를 보여, 팀원은 끝나지 않을 검토를 기다렸다.
 // 다시 검토는 올린 사람만, 등록 취소는 올린 사람과 팀장이 하므로 보는 사람마다 할 일을 다르게 알린다.
+// S15P31A108-445: 목록 줄은 '검토 실패'만 보이고, 할 일은 문서함을 열면 오른쪽에 함께 열리는 검토 화면이 알린다.
 const failedCopy = (status: 'EDITING' | 'REJECTED' = 'EDITING') => ({
   document_id: '1',
   owner_account_id: '11',
@@ -987,27 +1008,12 @@ const failedCopy = (status: 'EDITING' | 'REJECTED' = 'EDITING') => ({
 })
 
 it.each([
-  [
-    '11',
-    false,
-    '검토 실패',
-    '비비 검토를 마치지 못했어요. 열어서 다시 검토해 주세요',
-  ],
-  [
-    '12',
-    false,
-    '검토 실패',
-    '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토해요',
-  ],
-  [
-    '12',
-    true,
-    '검토 실패',
-    '비비 검토를 마치지 못했어요. 올린 사람이 다시 검토하거나, 열어서 등록을 취소할 수 있어요',
-  ],
+  ['11', false, '다시 검토하기', true],
+  ['12', false, '올린 사람이 다시 검토하거나 문서를 고쳐야 해요.', false],
+  ['12', true, '올린 사람이 다시 검토하거나 문서를 고쳐야 해요.', true],
 ])(
-  '시작 준비 카드는 검토가 실패한 문서를 보는 사람(%s, 팀장 %s)에게 할 일을 알린다',
-  async (viewer, isLeader, label, hint) => {
+  '시작 전 목록은 검토가 실패한 문서를 보는 사람(%s, 팀장 %s)에게 할 일을 알린다',
+  async (viewer, isLeader, todo, canDiscard) => {
     const me = vi.spyOn(authApi, 'me').mockResolvedValue({
       id: viewer,
       email: 'viewer@beez.local',
@@ -1017,23 +1023,28 @@ it.each([
     try {
       vi.mocked(documentsApi.workingCopy).mockResolvedValue(failedCopy())
       mount(isLeader)
-      expect(await screen.findByText(label)).toBeInTheDocument()
-      expect(screen.getByText(hint)).toBeInTheDocument()
+      const list = await screen.findByRole('list', { name: '필수 문서 4종' })
+      expect(await within(list).findByText(/검토 실패/)).toBeInTheDocument()
+      expect(within(list).queryByText(/비비 검토 중/)).not.toBeInTheDocument()
+      expect(await screen.findByText(todo)).toBeInTheDocument()
       expect(
-        screen.queryByText('비비가 검토하고 있어요'),
-      ).not.toBeInTheDocument()
+        screen.queryAllByRole('button', { name: '등록 취소' }).length > 0,
+      ).toBe(canDiscard)
     } finally {
       me.mockRestore()
     }
   },
 )
 
-it('반려 뒤 다시 받던 검토가 실패해도 시작 준비 카드는 반려됨을 지킨다', async () => {
+it('반려 뒤 다시 받던 검토가 실패해도 시작 전 목록은 반려됨을 지킨다', async () => {
   vi.mocked(documentsApi.workingCopy).mockResolvedValue(failedCopy('REJECTED'))
   mount(false)
-  expect(await screen.findByText('반려됨')).toBeInTheDocument()
+  const list = await screen.findByRole('list', { name: '필수 문서 4종' })
+  expect(await within(list).findByText(/반려됨/)).toBeInTheDocument()
+  expect(within(list).queryByText(/검토 실패/)).not.toBeInTheDocument()
+  // 반려 사유와 검토 실패 안내는 오른쪽에 함께 열린 검토 화면이 보인다.
   expect(
-    screen.getByText(/^반려 뒤 비비 검토를 마치지 못했어요\./),
+    await screen.findByText('비비 검토 시간이 초과됐어요'),
   ).toBeInTheDocument()
 })
 
@@ -1090,4 +1101,69 @@ it('근거 인용으로 연 문서를 다시 열면 인용 표시 없이 그 문
   } finally {
     HTMLElement.prototype.scrollIntoView = original
   }
+})
+
+// S15P31A108-445: 시작 뒤 목록은 이름과 버전·날짜만 보이고 늘 남는다. 그냥 열면 첫 문서가 오른쪽에 펼쳐지고,
+// 다른 줄을 누르면 오른쪽만 바뀐다. 문서 4개를 차례로 읽는 데 창 열기 포함 4번이면 된다.
+it('시작 뒤에는 목록을 남긴 채 고른 문서만 오른쪽에서 바꿔 연다', async () => {
+  const user = userEvent.setup()
+  const approved = { ...version, status: 'APPROVED' as const }
+  vi.mocked(documentsApi.baseline).mockResolvedValue({ version_no: 1 } as never)
+  vi.mocked(documentsApi.list).mockResolvedValue({
+    items: [
+      {
+        ...listedDocument,
+        id: '1',
+        kind: 'PLAN' as const,
+        title: '서비스 기획안',
+        approved_version: approved,
+        latest_draft: { ...version, id: '31', change_proposal_id: '7' },
+      },
+      {
+        ...listedDocument,
+        id: '2',
+        kind: 'ERD' as const,
+        title: 'ERD',
+        approved_version: approved,
+      },
+    ],
+    has_more: false,
+  })
+  vi.mocked(documentsApi.get).mockImplementation(async (_project, id) => ({
+    document: {
+      ...listedDocument,
+      id,
+      kind: id === '1' ? ('PLAN' as const) : ('ERD' as const),
+      title: id === '1' ? '서비스 기획안' : 'ERD',
+    },
+    version: approved,
+  }))
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [approved],
+    has_more: false,
+  })
+  mount()
+  const list = await screen.findByRole('list', { name: '현재 문서 2개' })
+  const plan = within(list).getByRole('button', { name: /서비스 기획안/ })
+  const erd = within(list).getByRole('button', { name: /^ERD/ })
+  // 이름이 종류와 다를 때만 종류를 붙이고, 같은 '승인 완료'는 줄마다 되풀이하지 않는다.
+  expect(plan).toHaveTextContent('기획안 · v1 ·')
+  expect(erd).not.toHaveTextContent('ERD · ')
+  expect(within(list).queryByText(/승인 완료/)).not.toBeInTheDocument()
+  // 걸린 변경 제안은 그 문서에만 한 줄 보인다.
+  expect(within(plan).getByText('변경 제안 진행 중')).toBeInTheDocument()
+  expect(erd).not.toHaveTextContent('변경 제안 진행 중')
+  expect(
+    await screen.findByRole('heading', { name: '서비스 기획안 v1' }),
+  ).toBeInTheDocument()
+  expect(plan).toHaveAttribute('aria-current', 'true')
+  await user.click(erd)
+  expect(
+    await screen.findByRole('heading', { name: 'ERD v1' }),
+  ).toBeInTheDocument()
+  expect(erd).toHaveAttribute('aria-current', 'true')
+  expect(plan).toHaveAttribute('aria-current', 'false')
+  expect(
+    screen.getByRole('list', { name: '현재 문서 2개' }),
+  ).toBeInTheDocument()
 })

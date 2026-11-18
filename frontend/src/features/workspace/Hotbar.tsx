@@ -23,10 +23,9 @@ const hotbarSlots = [
 ] satisfies { pane: WorkspacePane; label: string; icon: typeof FileText }[]
 
 // 단축 바 D안(캔버스 v437~438 이름 보이는 얇은 핫바): 높이 44 바에 칸을 하나씩 떼어 숫자 키캡·아이콘·이름을 늘 보이고,
-// 비비는 가운데 80px 둥근 버튼(Enter, 캔버스 v483). 배지는 칸 오른쪽 위.
+// 비비는 가운데 80px 둥근 버튼(Enter, 캔버스 v483). 숫자 배지는 두지 않는다. 검토·회의는 사무실 '할 일'에서 본다(S15P31A108-444).
 export function Hotbar({
   locked,
-  badges,
   highlight,
   lockedReason = '문서 4종을 올리면 열려요',
   shortcutsOff,
@@ -37,7 +36,6 @@ export function Hotbar({
   locked: WorkspacePane[]
   /** 잠긴 칸을 눌렀을 때 알려 줄 이유 */
   lockedReason?: string
-  badges: Partial<Record<WorkspacePane, number>>
   /** '여기부터 시작' 표시를 붙일 칸 */
   highlight?: WorkspacePane
 }) {
@@ -82,7 +80,6 @@ export function Hotbar({
     // '여기부터 시작' 강조 칸은 밝은 노란 바탕이라, 열린 칸이어도 열린 칸의 흰 글자·번호 대신 검정 글자를 쓴다(사용자 요청 11-02).
     const highlighted = highlight === item.pane
     const dark = isOpen && !highlighted
-    const badge = badges[item.pane]
     return (
       <button
         key={item.pane}
@@ -114,8 +111,9 @@ export function Hotbar({
           {index + 1}
         </span>
         <item.icon aria-hidden="true" className="size-[17px]" />
-        {/* 좁은 화면(xl 미만)에서는 이름을 숨겨 바를 줄인다. 이름은 aria-label과 title로 남는다. */}
-        <span className="max-xl:hidden">{item.label}</span>
+        {/* 이름까지 보인 바(시작 전 880px)는 1360px 미만에서 왼쪽 아래 시점·산책 버튼에 닿아(1280에서 14px 겹침) 이름을 숨긴다.
+            이름은 aria-label과 title로 남는다(S15P31A108-443). */}
+        <span className="max-[1360px]:hidden">{item.label}</span>
         {isLocked && (
           <Lock
             aria-hidden="true"
@@ -132,14 +130,6 @@ export function Hotbar({
             />
           </span>
         )}
-        {badge ? (
-          <span
-            aria-label={`새 항목 ${badge}개`}
-            className="absolute -top-2 -right-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[#e7000b] px-[5px] text-[11px] font-bold text-white shadow-[0_0_0_2px_#fff]"
-          >
-            {badge}
-          </span>
-        ) : null}
       </button>
     )
   }
@@ -148,8 +138,9 @@ export function Hotbar({
       aria-label="프로젝트 메뉴 단축 바"
       data-tour="hotbar"
       className={cn(
-        // 좁은 화면에서는 왼쪽 아래 시점·산책 버튼과 겹치지 않게 오른쪽 아래로 옮긴다(PR #72 전수 리뷰 UI-2).
-        'pointer-events-auto absolute bottom-[18px] left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-1 rounded-[14px] border border-[rgba(44,41,31,0.08)] bg-white/92 px-[5px] shadow-[0_18px_32px_-16px_rgba(44,41,31,0.35),0_2px_6px_rgba(44,41,31,0.06)] backdrop-blur-[8px] max-xl:right-4 max-xl:left-auto max-xl:translate-x-0',
+        // 늘 가운데에 둔다. 좁은 화면은 이름을 숨긴 바(약 530px)라 1024에서도 왼쪽 아래 시점·산책 버튼과 겹치지 않는다
+        // (S15P31A108-443, 전에는 xl 미만에서 오른쪽 아래로 옮겨 비비가 가운데를 벗어났다).
+        'pointer-events-auto absolute bottom-[18px] left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-1 rounded-[14px] border border-[rgba(44,41,31,0.08)] bg-white/92 px-[5px] shadow-[0_18px_32px_-16px_rgba(44,41,31,0.35),0_2px_6px_rgba(44,41,31,0.06)] backdrop-blur-[8px]',
         // 업무 창은 화면 전체로 열리고 단축 바는 숨는다(S15P31A108-431). 숫자 키는 숨어 있어도 메뉴를 바꾼다.
         pane && pane !== 'settings' && 'hidden',
       )}

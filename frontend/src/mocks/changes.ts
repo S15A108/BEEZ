@@ -761,7 +761,7 @@ export function changeRoutes(
           ],
           explicit_candidates: [],
           candidates_truncated: false,
-          // 195 미구현(#218 요청) 항목별 −/+ 문장. 목은 채워 '지금 할 일' 미리 보기를 보여 준다.
+          // 195 미구현(#218 요청) 항목별 −/+ 문장. 목은 채워 변경 제안 창의 미리 보기를 보여 준다.
           item_texts: proposal!.items.flatMap((change) => {
             if (!change.design_item_id) return []
             const base = change.base_design_item_version_id
