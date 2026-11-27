@@ -1,3 +1,4 @@
+import { useSuggestionRequestStore } from '@/features/documents/suggestionRequestStore'
 import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
@@ -10,4 +11,5 @@ afterEach(() => {
   cleanup()
   // 업무 창이 기억한 자리(useRemembered)가 다음 테스트로 넘어가지 않게 비운다.
   useWorkspaceStore.setState({ paneMemory: {} })
+  useSuggestionRequestStore.setState({ requests: {}, sources: {} })
 })

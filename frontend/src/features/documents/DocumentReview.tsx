@@ -31,6 +31,8 @@ import { DiscardDocument } from './DiscardDocument'
 import { WorkingCopyEditor } from './WorkingCopyEditor'
 import { PartialReviewNotice } from './PartialReviewNotice'
 import { SuggestionCard } from './SuggestionCard'
+import { useSuggestionRequestStore } from './suggestionRequestStore'
+import { suggestionIndexes } from './suggestionNumbers'
 import { SubmissionHistory } from './SubmissionHistory'
 import { membersQuery } from '@/features/members/membersQuery'
 
@@ -829,6 +831,8 @@ function ReviewNotes({
   busy: boolean
   onStale: () => void
 }) {
+  const sources = useSuggestionRequestStore((state) => state.sources)
+  const indexes = suggestionIndexes(review.suggestions, sources)
   const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
   if (!comments.length && !review.unavailable_references.length) return null
   return (
@@ -837,7 +841,7 @@ function ReviewNotes({
         <>
           <strong>비비 의견 {comments.length}개</strong>
           <ol aria-label="비비 의견" className="grid gap-2">
-            {comments.map((comment, index) => (
+            {comments.map((comment) => (
               <SuggestionCard
                 key={comment.id}
                 projectId={projectId}
@@ -845,7 +849,7 @@ function ReviewNotes({
                 reviewId={review.id}
                 revision={revision}
                 suggestion={comment}
-                index={index}
+                index={indexes.get(comment.id) ?? 0}
                 owner={owner}
                 stale={false}
                 busy={busy}
@@ -880,7 +884,12 @@ function ChangeHistory({
   revision: number
   onStale: () => void
 }) {
-  const patches = review.suggestions.filter((item) => item.type === 'PATCH')
+  const sources = useSuggestionRequestStore((state) => state.sources)
+  const indexes = suggestionIndexes(review.suggestions, sources)
+  // 아직 처리하지 않은 제안은 제안 목록에 있으므로 여기에는 반영·넘긴 것만 둔다.
+  const patches = review.suggestions.filter(
+    (item) => item.type === 'PATCH' && item.decision !== 'PENDING',
+  )
   if (!patches.length) return null
   const applied = patches.filter((item) => item.decision === 'APPLIED').length
   return (
@@ -890,7 +899,7 @@ function ChangeHistory({
         개
       </summary>
       <ol aria-label="비비 제안 처리 내역" className="mt-2 grid gap-2">
-        {patches.map((suggestion, index) => (
+        {patches.map((suggestion) => (
           <SuggestionCard
             key={suggestion.id}
             projectId={projectId}
@@ -898,7 +907,7 @@ function ChangeHistory({
             reviewId={review.id}
             revision={revision}
             suggestion={suggestion}
-            index={index}
+            index={indexes.get(suggestion.id) ?? 0}
             owner={false}
             stale={false}
             busy={false}
@@ -934,12 +943,25 @@ function Suggestions({
   ) => void
   onStale: () => void
 }) {
+  const sources = useSuggestionRequestStore((state) => state.sources)
+  const indexes = suggestionIndexes(review.suggestions, sources)
   const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
+  // 이미 반영하거나 넘긴 제안은 '처리 내역'에서 보므로 여기서는 처리할 것만 보인다.
+  const visible = review.suggestions.filter(
+    (item) => item.type === 'COMMENT' || item.decision === 'PENDING',
+  )
   return (
     <div className="grid gap-3">
+      <ChangeHistory
+        projectId={projectId}
+        documentId={documentId}
+        review={review}
+        revision={revision}
+        onStale={onStale}
+      />
       <div className="rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
         <strong>
-          비비가 수정 제안 {review.suggestions.length - comments.length}개
+          비비가 수정 제안 {visible.length - comments.length}개
           {comments.length > 0 && `와 의견 ${comments.length}개`}를 남겼어요
         </strong>
         <p className="mt-1 leading-6">{review.summary}</p>
@@ -963,7 +985,7 @@ function Suggestions({
         )}
       </div>
       <ol className="grid gap-2">
-        {review.suggestions.map((suggestion, index) => (
+        {visible.map((suggestion) => (
           <SuggestionCard
             key={suggestion.id}
             projectId={projectId}
@@ -971,7 +993,7 @@ function Suggestions({
             reviewId={review.id}
             revision={revision}
             suggestion={suggestion}
-            index={index}
+            index={indexes.get(suggestion.id) ?? 0}
             owner={owner}
             stale={false}
             busy={busy}

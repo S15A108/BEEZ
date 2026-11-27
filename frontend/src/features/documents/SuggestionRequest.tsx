@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle } from 'lucide-react'
 import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { documentsApi } from '@/api/services/documents'
@@ -7,6 +7,7 @@ import type { DocumentReviewSuggestion } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { REVIEW_TEXT_MAX, noChangeReason } from './schemas'
+import { useSuggestionRequestStore } from './suggestionRequestStore'
 
 // 대상 문장은 비비가 본문에서 고칠 자리를 정확히 찾도록 함께 보낸다. 너무 길면 앞부분만 쓴다.
 const QUOTE_MAX = 600
@@ -44,40 +45,71 @@ export function SuggestionRequest({
 }) {
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [text, setText] = useState('')
-  const request = useMutation({
-    mutationFn: (value: string) =>
-      documentsApi.requestBeeSuggestion(projectId, documentId, reviewId, {
+  const key = `${reviewId}:${suggestion.id}`
+  // 요청 상태는 저장소에 있어 다른 요청 때문에 카드가 다시 만들어져도 남는다.
+  const state = useSuggestionRequestStore((store) => store.requests[key])
+  const pending = state?.status === 'pending'
+  const reason = state?.status === 'no_change' ? state.message : undefined
+  const [text, setText] = useState(
+    () => useSuggestionRequestStore.getState().requests[key]?.draft ?? '',
+  )
+  const trimmed = text.trim()
+  const send = (value: string) => {
+    const store = useSuggestionRequestStore.getState()
+    store.begin(key, value)
+    setOpen(false)
+    documentsApi
+      .requestBeeSuggestion(projectId, documentId, reviewId, {
         expected_revision: revision,
         text: value,
-      }),
-    // 고칠 곳이 없다는 답이면 닫지 않고 이유를 보여, 요청을 고쳐 다시 보낼 수 있게 한다.
-    onSuccess: (result) => {
-      if (!noChangeReason(result)) setOpen(false)
-    },
-    onError: (cause) => {
-      if (getApiErrorCode(cause) === 'review_stale') onStale()
-    },
-    onSettled: () =>
-      client.invalidateQueries({ queryKey: ['projects', projectId] }),
-  })
-  const trimmed = text.trim()
-  const reason = noChangeReason(request.data)
-  if (!open)
+      })
+      .then((result) => {
+        const store = useSuggestionRequestStore.getState()
+        // 고칠 곳이 없다는 답은 제안이 없다. 이유와 쓰던 글을 남겨 고쳐 다시 보낼 수 있게 한다.
+        const reason = noChangeReason(result)
+        if (reason) store.noChange(key, reason, value)
+        else store.succeed(key, result.suggestion?.id, suggestion.id)
+      })
+      .catch((cause) => {
+        useSuggestionRequestStore
+          .getState()
+          .fail(key, getApiErrorMessage(cause))
+        if (getApiErrorCode(cause) === 'review_stale') onStale()
+      })
+      .finally(() =>
+        client.invalidateQueries({ queryKey: ['projects', projectId] }),
+      )
+  }
+  if (!open && !reason)
     return (
-      <Button
-        size="xs"
-        variant="outline"
-        className="justify-self-start"
-        disabled={disabled}
-        onClick={() => {
-          request.reset()
-          setText(requestTextFor(suggestion))
-          setOpen(true)
-        }}
-      >
-        비비에게 요청하기
-      </Button>
+      <div className="grid justify-items-start gap-1">
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={disabled || pending}
+          onClick={() => {
+            useSuggestionRequestStore.getState().clear(key)
+            setText(requestTextFor(suggestion))
+            setOpen(true)
+          }}
+        >
+          {pending ? (
+            <>
+              <LoaderCircle className="animate-spin" />
+              비비가 제안을 만들고 있어요
+            </>
+          ) : state ? (
+            '다시 요청하기'
+          ) : (
+            '비비에게 요청하기'
+          )}
+        </Button>
+        {state?.status === 'failed' && (
+          <p role="alert" className="text-xs text-destructive">
+            {state.message}
+          </p>
+        )}
+      </div>
     )
   return (
     <form
@@ -85,15 +117,17 @@ export function SuggestionRequest({
       className="grid gap-2 rounded-lg border bg-muted/30 p-2"
       onSubmit={(event) => {
         event.preventDefault()
-        if (trimmed) request.mutate(trimmed)
+        if (trimmed) send(trimmed)
       }}
     >
       <Textarea
         aria-label="비비에게 요청할 내용"
         maxLength={REVIEW_TEXT_MAX}
         value={text}
-        disabled={request.isPending}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          setOpen(true)
+          setText(event.target.value)
+        }}
       />
       <span className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
@@ -105,35 +139,21 @@ export function SuggestionRequest({
             type="button"
             size="sm"
             variant="ghost"
-            disabled={request.isPending}
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              useSuggestionRequestStore.getState().clear(key)
+              setOpen(false)
+            }}
           >
             닫기
           </Button>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={!trimmed || request.isPending}
-          >
-            {request.isPending ? (
-              <>
-                <LoaderCircle className="animate-spin" />
-                비비가 제안을 만들고 있어요
-              </>
-            ) : (
-              '요청 보내기'
-            )}
+          <Button type="submit" size="sm" disabled={!trimmed}>
+            요청 보내기
           </Button>
         </span>
       </span>
       {reason && (
         <p role="status" className="text-xs text-muted-foreground">
           비비가 고칠 곳을 찾지 못했어요: {reason}
-        </p>
-      )}
-      {request.error && (
-        <p role="alert" className="text-xs text-destructive">
-          {getApiErrorMessage(request.error)}
         </p>
       )}
     </form>
