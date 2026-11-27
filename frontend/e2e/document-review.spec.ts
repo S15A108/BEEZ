@@ -36,6 +36,8 @@ test('비비와 대화해 반영하고 팀장에게 요청한 뒤 취소하면 �
     .fill('목적을 더 짧게 쓸 수 있을까?')
   await dialog.getByRole('button', { name: '보내기' }).click()
   await dialog.getByRole('button', { name: '이 문장으로 반영' }).click()
+  // 반영한 제안은 목록에서 빠져 접힌 처리 내역에서 본다.
+  await dialog.getByText(/비비 제안 처리 내역/).click()
   await expect(
     dialog.getByText('비비가 대화에서 낸 문장으로 반영했어요.'),
   ).toBeVisible()
