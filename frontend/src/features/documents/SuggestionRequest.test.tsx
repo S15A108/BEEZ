@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -64,4 +64,26 @@ it('새 제안이 붙으면 요청 창을 닫는다', async () => {
   await waitFor(() =>
     expect(screen.queryByRole('button', { name: '요청 보내기' })).toBeNull(),
   )
+})
+
+// 화면 단계가 바뀌면 카드가 다시 만들어진다. 돌고 있던 요청의 진행 표시와 실패 안내는 남아야 한다(S15P31A108-382).
+it('카드가 다시 만들어져도 진행 표시와 실패 안내가 남는다', async () => {
+  const user = userEvent.setup()
+  let reject: (cause: Error) => void = () => undefined
+  vi.spyOn(documentsApi, 'requestBeeSuggestion').mockReturnValue(
+    new Promise((_, fail) => {
+      reject = fail
+    }),
+  )
+  mount()
+  await user.click(screen.getByRole('button', { name: '비비에게 요청하기' }))
+  await user.click(screen.getByRole('button', { name: '요청 보내기' }))
+  cleanup()
+  mount()
+  expect(
+    screen.getByRole('button', { name: '비비가 제안을 만들고 있어요' }),
+  ).toBeDisabled()
+  reject(new Error('실패'))
+  expect(await screen.findByRole('alert')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 요청하기' })).toBeEnabled()
 })
